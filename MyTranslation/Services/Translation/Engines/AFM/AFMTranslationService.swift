@@ -44,6 +44,7 @@ final class AFMTranslationService: AFMClient {
             let len = text.count
             do {
                 let response = try await session.translate(text)
+                print("[AFM] \(text)\n=> \(response.targetText)")
                 out.append(response.targetText)
             } catch {
                 // 내부 에러/언어 인식 실패 케이스 로그 강화

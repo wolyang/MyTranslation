@@ -1,6 +1,6 @@
 # mirror bundle
 # root: /Users/sailor.m/PrivateDevelop/MyTranslation/MyTranslation
-# files: 65
+# files: 66
 # note: Each section is bounded by MARK_BEGIN/MARK_END lines.
 
 >>>>> MIRROR FILE BEGIN: Application/AppContainer.swift
@@ -20,7 +20,6 @@ final class AppContainer: ObservableObject {
     let router: TranslationRouter
     
     let postEditor: PostEditor
-    let riskScorer: RiskScorer
     let comparer: ResultComparer?
     let reranker: Reranker?
     
@@ -42,13 +41,11 @@ final class AppContainer: ObservableObject {
             self.fmManager = modelMgr
             self.fmQuery = DefaultFMQueryService(fm: modelMgr)
             self.postEditor = fmConfig.enablePostEdit ? FMPostEditor(fm: modelMgr) : NopPostEditor()
-            self.riskScorer = FMRiskScorer(fm: modelMgr)
             self.comparer = fmConfig.enableComparer ? CrossEngineComparer(fm: modelMgr) : nil
             self.reranker = fmConfig.enableRerank ? RerankerImpl() : nil
         } else {
             self.fmManager = FMModelManager() // 더미로 유지
             self.postEditor = NopPostEditor()
-            self.riskScorer = DefaultRiskScorer()      // 기존 구현체명에 맞춰 변경
             self.comparer = nil
             self.reranker = nil
             self.fmQuery = NopQueryService()
@@ -64,7 +61,6 @@ final class AppContainer: ObservableObject {
             cache: cache,
             glossaryStore: glossaryStore,
             postEditor: postEditor,
-            riskScorer: riskScorer,
             comparer: comparer,
             reranker: reranker
         )
@@ -94,8 +90,8 @@ struct MyTranslateApp: App {
     @StateObject private var container: AppContainer
     
     init() {
-        let schema = Schema([Term.self])
-        let modelContainer = try! ModelContainer(for: schema)
+        let modelContainer = try! ModelContainer(for: Person.self, Alias.self, Term.self,
+                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         
         _container = StateObject(wrappedValue: AppContainer(context: modelContainer.mainContext, useOnDeviceFM: true, fmConfig: FMConfig(enablePostEdit: true, enableComparer: false, enableRerank: false)))
         self.modelContainer = modelContainer
@@ -140,7 +136,7 @@ public final class UserSettings: ObservableObject {
 
 import Foundation
 
-public struct Segment: Identifiable, Hashable {
+public struct Segment: Identifiable, Hashable, Sendable {
     public let id: String
     public let url: URL
     public let indexInPage: Int
@@ -201,17 +197,51 @@ import SwiftData
 final class Term {
     @Attribute(.unique) var source: String
     var target: String
-    var strict: Bool
-    var variants: [String]
-    var notes: String?
-    var category: String?
-    init(source: String, target: String, strict: Bool = true, variants: [String] = [], notes: String? = nil, category: String? = nil) {
+    var category: String
+    init(source: String, target: String, category: String) {
         self.source = source
         self.target = target
-        self.strict = strict
-        self.variants = variants
-        self.notes = notes
         self.category = category
+    }
+}
+
+@Model
+final class Person {
+    @Attribute(.unique) var personId: String
+    var familySources: [String]
+    var familyTarget: String?
+    var givenSources:  [String]
+    var givenTarget:   String?
+
+    // 이명/별칭 (동일 target 아래 여러 source를 묶음)
+    @Relationship(deleteRule: .cascade, inverse: \Alias.person)
+    var aliases: [Alias]
+
+    init(personId: String,
+         familySources: [String] = [],
+         familyTarget: String? = nil,
+         givenSources: [String] = [],
+         givenTarget: String? = nil,
+         aliases: [Alias] = []) {
+        self.personId = personId
+        self.familySources = familySources
+        self.familyTarget  = familyTarget
+        self.givenSources  = givenSources
+        self.givenTarget   = givenTarget
+        self.aliases       = aliases
+    }
+}
+
+@Model
+final class Alias {
+    var sources: [String]
+    var target:  String?
+    @Relationship var person: Person?
+
+    init(sources: [String], target: String?, person: Person? = nil) {
+        self.sources = sources
+        self.target  = target
+        self.person  = person
     }
 }
 
@@ -575,49 +605,69 @@ struct WebContainerView: UIViewRepresentable {
         private var overlayInstalled = false
         var bridge: SelectionBridge?
         private weak var webView: WKWebView?
+        private var lastMarkRunKey: String?
         
         init(parent: WebContainerView) { self.parent = parent }
         
         
         func install(on webView: WKWebView) {
             self.webView = webView
+            webView.isInspectable = true
             self.bridge = SelectionBridge(webView: webView)
             ensureOverlay(on: webView)
 
             // 기존 bridge.onSelect 제거됨
             webView.configuration.userContentController.removeScriptMessageHandler(forName: "selection")
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "mtconsole")
             webView.configuration.userContentController.add(self, name: "selection")
+            webView.configuration.userContentController.add(self, name: "mtconsole")
         }
 
         func userContentController(_ ucc: WKUserContentController, didReceive msg: WKScriptMessage) {
-            guard msg.name == "selection",
-                  let segId = msg.body as? String,
-                  let web = self.webView else { return }
+            print("[UCC] didReceive message")
+            
+            switch msg.name {
+            case "mtconsole":
+                if let m = msg.body as? [String: Any],
+                               let level = m["level"] as? String,
+                               let args = m["args"] as? [String] {
+                                print("[JS.\(level)]", args.joined(separator: " "))
+                            }
+            case "selection":
+                guard let segId = msg.body as? String,
+                      let web = self.webView else {
+                    print("[SEL] invalid body:", type(of: msg.body))
+                    return
+                }
 
-            // 1️⃣ parent로 segId 전달
-            self.parent.onSelectSegmentID?(segId)
+                // 1️⃣ parent로 segId 전달
+                self.parent.onSelectSegmentID?(segId)
 
-            // 2️⃣ rect 조회 후 오버레이 표시
-            Task { [weak self] in
-                guard let self else { return }
-                let exec = WKWebViewScriptAdapter(webView: web)
-                struct R: Decodable { let x: CGFloat; let y: CGFloat; let width: CGFloat; let height: CGFloat }
-                if let rectJSON: String = try? await exec.runJS(#"window.MT_GET_RECT(\#(String(reflecting: segId)))"#),
-                   let data = rectJSON.data(using: .utf8),
-                   let r = try? JSONDecoder().decode(R.self, from: data)
-                {
-                    await MainActor.run {
-                        self.ensureOverlay(on: web)
-                        /*let selectedText = self.parent.vm?.lastSegments.first(where: { $0.id == segId })?.originalText ?? ""*/
+                // 2️⃣ rect 조회 후 오버레이 표시
+                Task { [weak self] in
+                    guard let self else { return }
+                    let exec = WKWebViewScriptAdapter(webView: web)
+                    struct R: Decodable { let x: CGFloat; let y: CGFloat; let width: CGFloat; let height: CGFloat }
+                    if let rectJSON: String = try? await exec.runJS(#"window.MT_GET_RECT(\#(String(reflecting: segId)))"#),
+                       let data = rectJSON.data(using: .utf8),
+                       let r = try? JSONDecoder().decode(R.self, from: data)
+                    {
+                        await MainActor.run {
+                            self.ensureOverlay(on: web)
+                            /*let selectedText = self.parent.vm?.lastSegments.first(where: { $0.id == segId })?.originalText ?? ""*/
 
-                        self.overlay?.update(selectedText: "", improved: nil)
-                        self.overlay?.present(
-                            near: CGRect(x: r.x, y: r.y, width: r.width, height: r.height),
-                            in: web
-                        )
+                            self.overlay?.update(selectedText: "", improved: nil)
+                            self.overlay?.present(
+                                near: CGRect(x: r.x, y: r.y, width: r.width, height: r.height),
+                                in: web
+                            )
+                        }
                     }
                 }
+            default:
+                break
             }
+            
         }
         
         private func ensureOverlay(on webView: WKWebView) {
@@ -650,6 +700,16 @@ struct WebContainerView: UIViewRepresentable {
         }
         
         func markSegments(_ pairs: [(id: String, text: String)]) async {
+            // 같은 페이지(=URL)에서 같은 runKey로 두 번 이상 호출 방지
+                    let urlKey = webView?.url?.absoluteString ?? UUID().uuidString
+                    let runKey = urlKey + "|count=\(pairs.count)"
+                    if lastMarkRunKey == runKey { return }
+                    lastMarkRunKey = runKey
+
+                    // 로그
+                    let totalChars = pairs.reduce(0) { $0 + $1.text.count }
+                    print("[MARK] calling MT_MARK_SEGMENTS_ALL list=\(pairs.count) chars=\(totalChars) url=\(urlKey)")
+
             await bridge?.mark(segments: pairs)
         }
 
@@ -710,7 +770,7 @@ import WebKit
 
 @MainActor
 final class BrowserViewModel: ObservableObject {
-    @Published var urlString: String = "https://xinjinjumin617262919231.lofter.com/post/8c9245ae_2bf5e094e?incantation=rz0xYPla9DXn"
+    @Published var urlString: String = "https://nakazaki.lofter.com/post/1ea19791_2bfbab779?incantation=rzRAnYWzp157"/*"https://xinjinjumin617262919231.lofter.com/post/8c9245ae_2bf5e094e?incantation=rz0xYPla9DXn"*/
     @Published var isTranslating: Bool = false
     @Published var showOriginal: Bool = false
     @Published var engineBadgeEnabled: Bool = true
@@ -744,6 +804,8 @@ final class BrowserViewModel: ObservableObject {
     
     private var selectedSegment: Segment?
     private var pendingImproved: String?
+    
+    @Published var translateRunID: String = ""
 
     init(
         container: AppContainer,
@@ -797,6 +859,7 @@ final class BrowserViewModel: ObservableObject {
     
     // WebContainerView.onSelectSegmentID 에 연결
     func onSegmentTapped(id: String) async {
+        print("[onSegmentTapped] id: \(id)")
         guard let webView = attachedWebView, let seg = lastSegments.first(where: { $0.id == id }) else { return }
         self.selectedSegment = seg
         self.pendingImproved = nil
@@ -837,7 +900,6 @@ final class BrowserViewModel: ObservableObject {
             lastResults[i] = TranslationResult(
                 id: lastResults[i].id, segmentID: seg.id,
                 engine: lastResults[i].engine, text: improved,
-                hasReviewTag: lastResults[i].hasReviewTag,
                 residualSourceRatio: lastResults[i].residualSourceRatio,
                 createdAt: Date()
             )
@@ -854,29 +916,12 @@ final class BrowserViewModel: ObservableObject {
         if hasAttemptedTranslationForCurrentPage == false {
             pendingAutoTranslateID = UUID()
         }
-
-        // 비동기 추출 및 문장 마킹
-        Task { [weak self, weak webView] in
-            guard let self, let webView else { return }
-            do {
-                let exec = WKWebViewScriptAdapter(webView: webView)
-                        
-                let segs = try await self.extractor.extract(using: exec, url: url)
-                self.lastSegments = segs
-
-                // Coordinator 경유로 문장 마킹 (아래 3번의 공개 메서드 사용)
-                if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
-                    let pairs = segs.map { (id: $0.id, text: $0.originalText) }
-                    await coord.markSegments(pairs)
-                }
-            } catch {
-                print("extract error: \(error)")
-            }
-        }
     }
 
     func startTranslate(on webView: WKWebView) async {
         guard let url = webView.url else { return }
+        translateRunID = UUID().uuidString
+        
         hasAttemptedTranslationForCurrentPage = true
         
         isTranslating = true
@@ -895,6 +940,11 @@ final class BrowserViewModel: ObservableObject {
                 segs = try await extractor.extract(using: exec, url: url)
                 self.lastSegments = segs
             }
+            
+            if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
+                    let pairs = segs.map { (id: $0.id, text: $0.originalText) }
+                    await coord.markSegments(pairs)
+                }
             
             let opts = TranslationOptions()
             do {
@@ -915,6 +965,28 @@ final class BrowserViewModel: ObservableObject {
             } catch {
                 print("translate error: \(error)")
                 replacer.restore(using: exec)
+                // 해시/토큰 누수 조사(간단)
+                let jsSnapshot = #"""
+                (function(){
+                  try{
+                    var t = (document.body||document.documentElement).innerText || "";
+                    var hasG = /⟪G\d+⟫/.test(t);
+                    var hasHex = /[0-9a-f]{32,40}/i.test(t);
+                    var segSpans = document.querySelectorAll('[data-seg-id]').length;
+                    return JSON.stringify({
+                      len: t.length,
+                      hasG: hasG,
+                      hasHex: hasHex,
+                      segSpans: segSpans
+                    });
+                  }catch(e){
+                    return JSON.stringify({error:String(e)});
+                  }
+                })()
+                """#
+                    let leak = (try? await exec.runJS(jsSnapshot)) ?? ""
+                    print("[VM] after-restore snapshot: \(leak)")
+        
                 _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
             }
 //            toggleOverlayVisibility(showOriginal)
@@ -977,15 +1049,10 @@ final class BrowserViewModel: ObservableObject {
 //  Created by sailor.m on 10/14/25.
 //
 
+import Foundation
+
 enum GlossaryConstants {
-    static let categories: [String] = [
-        "울트라맨",
-        "커플링명",
-        "캐릭터명",
-        "괴수, 성인",
-        "도구, 폼, 기술명",
-        "기타"
-    ]
+static let exportFileName = "glossary_v3.json"
 }
 <<<<< MIRROR FILE END
 
@@ -997,163 +1064,173 @@ import SwiftUI
 
 // 내보내기/가져오기 JSON 포맷
 struct GlossaryJSON: Codable {
-    struct Item: Codable {
+    struct Meta: Codable { let version: Int; let lang: String
+        public init(version: Int = 3, lang: String = "zh->ko") {
+        self.version = version
+        self.lang = lang
+        }
+    }
+    struct NameVariant: Codable {
+        let source: [String]
+        let target: String?
+    }
+
+    struct PeopleName: Codable {
+        let family: NameVariant
+        let given:  NameVariant
+    }
+
+    struct PersonItem: Codable {
+        let person_id: String
+        let name: PeopleName
+        let aliases: [NameVariant]
+    }
+
+    struct TermItem: Codable {
         let source: String
         let target: String
-        let strict: Bool?
-        let variants: [String]?
-        let notes: String?
-        let category: String?
+        let category: String
     }
-    let meta: Meta
-    let terms: [Item]
 
-    struct Meta: Codable { let version: Int; let lang: String }
+    let meta: Meta
+    let terms: [TermItem]
+    let people: [PersonItem]
+    
+    public init(terms: [TermItem], people: [PersonItem] = [], meta: Meta = .init()) {
+    self.meta = meta
+    self.terms = terms
+    self.people = people
+    }
 }
 
 // FileExporter 용 문서 래퍼
-struct GlossaryJSONDocument: FileDocument, Sendable {
-    static var readableContentTypes: [UTType] { [.json] }
-    
-    var payload: GlossaryJSON
+public struct GlossaryJSONDocument: FileDocument {
+public static var readableContentTypes: [UTType] { [.json] }
+public static var writableContentTypes: [UTType] { [.json] }
 
-    init(terms: [Term]) {
-        self.payload = GlossaryJSON(
-            meta: .init(version: 2, lang: "zh->ko"),
-            terms: terms.map {
-                .init(
-                    source: $0.source,
-                    target: $0.target,
-                    strict: $0.strict,
-                    variants: $0.variants,
-                    notes: $0.notes,
-                    category: $0.category
-                )
-            }
-        )
-    }
 
-    init(configuration: ReadConfiguration) throws {
-        // 가져오기는 GlossaryTabView에서 처리
-        self.payload = GlossaryJSON(meta: .init(version: 2, lang: "zh->ko"), terms: [])
-    }
+var payload: GlossaryJSON
 
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        let data = try JSONEncoder().encode(payload)
-        return .init(regularFileWithContents: data)
+
+init(payload: GlossaryJSON) {
+self.payload = payload
+}
+
+
+init(terms: [Term], people: [Person] = []) {
+let termsItems = terms.map { GlossaryJSON.TermItem(source: $0.source, target: $0.target, category: $0.category) }
+    let personItems = people.map {
+        GlossaryJSON.PersonItem(person_id: $0.personId, name: .init(family: .init(source: $0.familySources, target: $0.familyTarget), given: .init(source: $0.givenSources, target: $0.givenTarget)), aliases: $0.aliases.map({ a in
+                .init(source: a.sources, target: a.target)
+        }))
     }
+self.payload = GlossaryJSON(terms: termsItems, people: personItems)
+}
+
+
+// FileDocument
+public init(configuration: ReadConfiguration) throws {
+guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+self.payload = try JSONDecoder().decode(GlossaryJSON.self, from: data)
+}
+
+
+public func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+let data = try JSONEncoder().encode(payload)
+return .init(regularFileWithContents: data)
+}
 }
 <<<<< MIRROR FILE END
 
 >>>>> MIRROR FILE BEGIN: Presentation/Glossary/View/GlossaryTabView.swift
 // File: GlossaryTabView.swift
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct GlossaryTabView: View {
-    @Environment(\.modelContext) private var modelContext
-    
-    var body: some View {
-        GlossaryContentView(modelContext: modelContext)
-    }
-}
-
-private struct GlossaryContentView: View {
-    let modelContext: ModelContext
     @StateObject private var vm: GlossaryViewModel
 
-    @State private var isExporting = false
-    @State private var isImporting = false
+    @State private var showEditor: Bool = false
+    @State private var editing: Term? = nil
+
+    @State private var showImporter: Bool = false
+    @State private var showExporter: Bool = false
 
     init(modelContext: ModelContext) {
-        self.modelContext = modelContext
         _vm = StateObject(wrappedValue: GlossaryViewModel(modelContext: modelContext))
     }
 
     var body: some View {
-        VStack {
-            HStack {
-                TextField("검색(중/한)", text: Binding(
-                    get: { vm.query },
-                    set: { vm.query = $0 }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .onReceive(
-                    vm.$query
-                        .removeDuplicates()
-                        .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
-                ) { _ in
-                    vm.refresh()
+        NavigationStack {
+            VStack(spacing: 8) {
+                HStack {
+                    TextField("검색(원문/번역/카테고리)", text: $vm.query)
+                        .textFieldStyle(.roundedBorder)
                 }
+                .padding(.horizontal)
 
-                Picker("분류", selection: Binding(
-                    get: { vm.selectedCategory },
-                    set: { vm.selectedCategory = $0 }
-                  )) {
-                      Text("전체").tag("전체")
-                      ForEach(GlossaryConstants.categories, id: \.self) { Text($0).tag($0) }
-                  }
-                .onChange(of: vm.selectedCategory) { _, _ in vm.refresh() }
-                
-                Button("추가") { vm.addNew() }
-
-                Menu("가져오기/내보내기") {
-                    Button("JSON 가져오기…") { isImporting = true }
-                    Button("JSON 내보내기…") { isExporting = true }
-                }
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
-
-            List {
-                ForEach(vm.terms) { term in
-                    Button {
-                        vm.edit(term)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(term.source).font(.headline)
-                                if term.strict { Text("strict").font(.caption).foregroundStyle(.secondary) }
-                                if let cat = term.category, !cat.isEmpty {
-                                    Text(cat).font(.caption2).padding(4).background(.thinMaterial).cornerRadius(6)
+                List {
+                    ForEach(vm.terms) { term in
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(term.source)
+                                    .font(.headline)
+                                Text(term.target)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                if !term.category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text(term.category)
+                                        .font(.caption)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(.thinMaterial)
+                                        .clipShape(Capsule())
                                 }
                             }
-                            HStack(spacing: 8) {
-                                Text(term.target).foregroundStyle(.secondary)
-                                if !term.variants.isEmpty {
-                                    Text(term.variants.joined(separator: ", "))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
+                            Spacer()
+                            Button {
+                                editing = term
+                                showEditor = true
+                            } label: {
+                                Image(systemName: "square.and.pencil")
                             }
-                            if let notes = term.notes, !notes.isEmpty {
-                                Text(notes).font(.caption).foregroundStyle(.tertiary)
-                            }
+                            .buttonStyle(.borderless)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .onDelete { idx in
+                        idx.compactMap { vm.terms[$0] }.forEach { vm.delete($0) }
+                    }
                 }
-                .onDelete { vm.delete(at: $0) }
             }
-        }
-        .onAppear { vm.refresh() }
-
-        // ✅ VM의 @Published Bool에 직접 바인딩
-        .sheet(isPresented: $vm.isPresentingEditor) {
-            TermEditorSheet(
-                term: vm.editingTerm,               // 편집이면 대상, 신규면 nil
-                onSave: { vm.upsert($0) },
-                onCancel: { vm.isPresentingEditor = false }
-            )
-            .presentationDetents([.medium, .large])
-        }
-
-        // Export / Import
-        .fileExporter(isPresented: $isExporting,
-                      document: GlossaryJSONDocument(terms: vm.terms),
-                      contentType: .json,
-                      defaultFilename: "terms.json") { _ in }
-        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
-            if case let .success(url) = result { vm.importJSON(from: url) }
+            .navigationTitle("용어집")
+            .toolbar {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button { showImporter = true } label: { Image(systemName: "tray.and.arrow.down") }
+                    Button { showExporter = true } label: { Image(systemName: "tray.and.arrow.up") }
+                    Button { editing = nil; showEditor = true } label: { Image(systemName: "plus") }
+                }
+            }
+            .sheet(isPresented: $showEditor) {
+                TermEditorSheet(term: editing) { s, t, c in
+                    vm.upsert(source: s, target: t, category: c)
+                }
+            }
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.json]) { result in
+                switch result {
+                case .success(let url):
+                    do { try vm.importJSON(from: url) } catch { print("import error: \(error)") }
+                case .failure(let err):
+                    print("import picker error: \(err)")
+                }
+            }
+            .fileExporter(
+                isPresented: $showExporter,
+                document: vm.makeExportDocument(),
+                contentType: .json,
+                defaultFilename: GlossaryConstants.exportFileName
+            ) { result in
+                if case .failure(let err) = result { print("export error: \(err)") }
+            }
         }
     }
 }
@@ -1161,113 +1238,58 @@ private struct GlossaryContentView: View {
 
 >>>>> MIRROR FILE BEGIN: Presentation/Glossary/View/TermEditorSheet.swift
 // File: TermEditorSheet.swift
+import SwiftData
 import SwiftUI
 
 struct TermEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
 
-    /// 편집 대상(nil이면 신규)
-    let original: Term?
-    /// 저장 콜백: 신규/수정 모두 Term 반환
-    let onSave: (Term) -> Void
-    let onCancel: () -> Void
+    let onSave: (String, String, String) -> Void
 
-    @State private var draft: TermDraft
+    @State private var source: String
+    @State private var target: String
+    @State private var category: String
 
-    init(term: Term?, onSave: @escaping (Term) -> Void, onCancel: @escaping () -> Void) {
-        self.original = term
+    init(term: Term?, onSave: @escaping (String, String, String) -> Void) {
         self.onSave = onSave
-        self.onCancel = onCancel
-        _draft = State(initialValue: term.map(TermDraft.init(from:)) ?? TermDraft())
+        _source = State(initialValue: term?.source ?? "")
+        _target = State(initialValue: term?.target ?? "")
+        _category = State(initialValue: term?.category ?? "")
     }
-
-    private var isNew: Bool { original == nil }
-    private var titleText: String { isNew ? "용어 추가" : "용어 편집" }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("기본") {
-                    TextField("source", text: Binding(
-                        get: { draft.source },
-                        set: { draft.source = $0 }
-                    ))
-                    TextField("target", text: Binding(
-                        get: { draft.target },
-                        set: { draft.target = $0 }
-                    ))
-                    Toggle("strict", isOn: Binding(
-                        get: { draft.strict },
-                        set: { draft.strict = $0 }
-                    ))
-                    Picker("카테고리", selection: Binding(
-                        get: { draft.category ?? "" },
-                        set: { draft.category = $0.isEmpty ? nil : $0 }
-                    )) {
-                        Text("선택 안 함").tag("")
-                        ForEach(GlossaryConstants.categories, id: \.self) { Text($0).tag($0) }
-                    }
+                Section(header: Text("원문")) {
+                    TextField("source", text: $source)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
-                Section("옵션") {
-                    TextField("variants(쉼표로 구분)", text: Binding(
-                        get: { draft.variants.joined(separator: ",") },
-                        set: { draft.variants = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
-                    ))
-                    TextField("notes", text: Binding(
-                        get: { draft.notes ?? "" },
-                        set: { draft.notes = $0.isEmpty ? nil : $0 }
-                    ))
+                Section(header: Text("번역")) {
+                    TextField("target", text: $target)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                Section(header: Text("카테고리 (선택)")) {
+                    TextField("category", text: $category)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
             }
-            .navigationTitle(titleText)
+            .navigationTitle("용어 편집")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { onCancel(); dismiss() }
+                    Button("닫기") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("저장") {
-                        let out = draft.toModel(into: original)
-                        onSave(out)
+                        onSave(source, target, category)
                         dismiss()
-                    }
-                    .disabled(draft.source.trimmingCharacters(in: .whitespaces).isEmpty ||
-                              draft.target.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }.disabled(source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-        }
-    }
-}
-
-
-private struct TermDraft {
-    var source: String = ""
-    var target: String = ""
-    var strict: Bool = true
-    var variants: [String] = []
-    var notes: String? = nil
-    var category: String? = nil
-
-    init() {}
-    init(from term: Term) {
-        source = term.source
-        target = term.target
-        strict = term.strict
-        variants = term.variants
-        notes = term.notes
-        category = term.category
-    }
-
-    func toModel(into existing: Term? = nil) -> Term {
-        if let t = existing {
-            t.source = source
-            t.target = target
-            t.strict = strict
-            t.variants = variants
-            t.notes = notes
-            t.category = category
-            return t
-        } else {
-            return Term(source: source, target: target, strict: strict, variants: variants, notes: notes, category: category)
         }
     }
 }
@@ -1277,113 +1299,103 @@ private struct TermDraft {
 // File: GlossaryViewModel.swift
 import Foundation
 import SwiftData
+import SwiftUI
 
 @MainActor
 final class GlossaryViewModel: ObservableObject {
-    @Published var query: String = ""
-    @Published var terms: [Term] = []
-    @Published var isPresentingEditor: Bool = false
-    @Published var editingTerm: Term? = nil
-    @Published var selectedCategory: String = "전체"
+    @Published var query: String = "" { didSet { refresh() } }
+    @Published private(set) var terms: [Term] = []
 
     private let modelContext: ModelContext
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
+        refresh()
     }
 
     func refresh() {
-        // 1) 우선 카테고리만 DB에서 걸러서 가져오기 (이건 SQL로 안전)
-        var desc = FetchDescriptor<Term>()
-        desc.sortBy = [SortDescriptor(\.source, order: .forward)]
-
-        if selectedCategory != "전체" {
-            let cat = selectedCategory
-            desc.predicate = #Predicate<Term> { ($0.category ?? "") == cat }
-        }
-
-        let fetched = (try? modelContext.fetch(desc)) ?? []
-
-        // 2) 검색어는 메모리에서 로케일 친화적으로 필터
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if q.isEmpty {
-            terms = fetched
-        } else {
-            terms = fetched.filter {
-                $0.source.localizedStandardContains(q)
-                || $0.target.localizedStandardContains(q)
-                || ($0.notes?.localizedStandardContains(q) ?? false)
-            }
-        }
-    }
-
-    func addNew() { editingTerm = nil; isPresentingEditor = true }
-    func edit(_ term: Term) { editingTerm = term; isPresentingEditor = true }
-
-    func upsert(_ t: Term) {
-        if let existing = editingTerm {
-            existing.source = t.source
-            existing.target = t.target
-            existing.strict = t.strict
-            existing.variants = t.variants
-            existing.notes = t.notes
-        } else {
-            modelContext.insert(t)
-        }
-        try? modelContext.save()
-        isPresentingEditor = false
-        editingTerm = nil
-        refresh()
-    }
-
-    func delete(at offsets: IndexSet) {
-        for idx in offsets { modelContext.delete(terms[idx]) }
-        try? modelContext.save()
-        refresh()
-    }
-
-    // MARK: - Import / Export
-    func exportJSON(to url: URL) {
-        let payload = GlossaryJSON(
-            meta: .init(version: 1, lang: "zh->ko"),
-            terms: terms.map {
-                .init(source: $0.source, target: $0.target,
-                      strict: $0.strict, variants: $0.variants, notes: $0.notes, category: $0.category)
-            }
-        )
         do {
-            let data = try JSONEncoder().encode(payload)
-            try data.write(to: url, options: .atomic)
-        } catch { print("Export error:", error) }
-    }
-
-    func importJSON(from url: URL) {
-        do {
-            let data = try Data(contentsOf: url)
-            let decoded = try JSONDecoder().decode(GlossaryJSON.self, from: data)
-            let all: [Term] = (try? modelContext.fetch(FetchDescriptor<Term>())) ?? []
-            let existingBySource = Dictionary(uniqueKeysWithValues: all.map { ($0.source, $0) })
-            for item in decoded.terms {
-                if let exist = existingBySource[item.source] {
-                    exist.target = item.target
-                    exist.strict = item.strict ?? true
-                    exist.variants = item.variants ?? []
-                    exist.notes = item.notes
-                    exist.category = item.category ?? exist.category
-                } else {
-                    modelContext.insert(
-                        Term(source: item.source,
-                             target: item.target,
-                             strict: item.strict ?? true,
-                             variants: item.variants ?? [],
-                             notes: item.notes,
-                             category: item.category)
-                    )
+            if q.isEmpty {
+                let descriptor = FetchDescriptor<Term>(sortBy: [SortDescriptor(\.source, comparator: .localizedStandard)])
+                terms = try modelContext.fetch(descriptor)
+            } else {
+                // source/target/category 부분 일치 검색 (대소문자 구분 없음)
+                let predicate: Predicate<Term> = #Predicate { t in
+                    t.source.localizedStandardContains(q) ||
+                        t.target.localizedStandardContains(q) ||
+                        t.category.localizedStandardContains(q)
                 }
+                let descriptor = FetchDescriptor<Term>(
+                    predicate: predicate,
+                    sortBy: [SortDescriptor(\.source, comparator: .localizedStandard)]
+                )
+                terms = try modelContext.fetch(descriptor)
             }
-            try modelContext.save()
-            refresh()
-        } catch { print("Import error:", error) }
+        } catch {
+            print("[GlossaryVM] fetch error: \(error)")
+            terms = []
+        }
+    }
+
+    func upsert(source: String, target: String, category: String) {
+        let s = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        let c = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty, !t.isEmpty else { return }
+
+        // 동일 source 존재 시 업데이트, 없으면 생성
+        if let exist = terms.first(where: { $0.source == s }) {
+            exist.target = t
+            exist.category = c
+        } else {
+            let term = Term(source: s, target: t, category: c)
+            modelContext.insert(term)
+        }
+        try? modelContext.save()
+        refresh()
+    }
+
+    func delete(_ term: Term) {
+        modelContext.delete(term)
+        try? modelContext.save()
+        refresh()
+    }
+    
+    func importJSON(from url: URL) throws {
+        let data = try Data(contentsOf: url)
+        // v3: GlossaryJSONDocument(payload: GlossaryJSON)
+        let doc = try JSONDecoder().decode(GlossaryJSON.self, from: data)
+
+        for item in doc.terms {
+            if let exist = try? modelContext.fetch(FetchDescriptor<Term>(predicate: #Predicate { $0.source == item.source })).first {
+                exist.target = item.target
+                exist.category = item.category
+            } else {
+                let t = Term(source: item.source, target: item.target, category: item.category)
+                modelContext.insert(t)
+            }
+        }
+        try modelContext.save()
+        refresh()
+    }
+
+    /// fileImporter onCompletion 어댑터: View에서 직접 넘겨 쓰기 용도
+    func importFromPicker(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            do { try importJSON(from: url) } catch {
+                print("import error: \(error)")
+            }
+        case .failure(let err):
+            print("import picker error: \(err)")
+        }
+    }
+
+    func makeExportDocument() -> GlossaryJSONDocument {
+        let items = terms.map { GlossaryJSON.TermItem(source: $0.source, target: $0.target, category: $0.category) }
+        let payload = GlossaryJSON(terms: items, people: [])
+        return GlossaryJSONDocument(payload: payload)
     }
 }
 <<<<< MIRROR FILE END
@@ -1400,7 +1412,7 @@ struct RootTabView: View {
         TabView {
             BrowserTabView(container: container)
                 .tabItem { Label("브라우저", systemImage: "globe") }
-            GlossaryTabView()
+            GlossaryTabView(modelContext: modelContext)
                 .tabItem { Label("용어집", systemImage: "book") }
         }
         .task {
@@ -1464,71 +1476,196 @@ final class DefaultCacheStore: CacheStore {
 }
 <<<<< MIRROR FILE END
 
+>>>>> MIRROR FILE BEGIN: Services/Data/Glossary/GlossaryBuilder.swift
+// Services/GlossaryBuilder.swift
+import SwiftData
+
+struct GlossaryBuilder {
+    /// SwiftData에서 사람/용어를 읽어 GlossaryEntry[]로 전개
+    @MainActor
+    static func makeGlossaryEntries(modelContext: ModelContext) throws -> [GlossaryEntry] {
+        var entries: [GlossaryEntry] = []
+
+        // 1) PEOPLE → person 엔트리 생성
+        let people: [Person] = (try? modelContext.fetch(FetchDescriptor<Person>())) ?? []
+        for p in people {
+            // family/given 풀네임 후보 생성(구분자: "", " ", "·", "・", "-")
+            let seps = ["", " ", "·", "・", "-"]
+            for f in p.familySources {
+                for g in p.givenSources {
+                    for s in seps {
+                        let full = f + s + g
+                        let fullKo = [p.familyTarget, p.givenTarget].compactMap { $0 }.joined(separator: " ")
+                        if !fullKo.isEmpty {
+                            entries.append(.init(source: full, target: fullKo, category: .person))
+                        }
+                    }
+                }
+            }
+            // 단일 성/이름
+            if let ft = p.familyTarget {
+                for fs in p.familySources { entries.append(.init(source: fs, target: ft, category: .person)) }
+            }
+            if let gt = p.givenTarget {
+                for gs in p.givenSources { entries.append(.init(source: gs, target: gt, category: .person)) }
+            }
+            // alias
+            for a in p.aliases {
+                let tgt = a.target // nil 가능
+                for s in a.sources {
+                    if let tgt = tgt, !tgt.isEmpty {
+                        entries.append(.init(source: s, target: tgt, category: .person))
+                    } else {
+                        // target이 없는 위험 약칭은 기본적으로 제외(원하면 정책적으로 포함)
+                        // entries.append(.init(source: s, target: (p.givenTarget ?? p.familyTarget ?? ""), category: .person))
+                    }
+                }
+            }
+        }
+
+        // 2) TERMS → term/other
+        let terms: [Term] = (try? modelContext.fetch(FetchDescriptor<Term>())) ?? []
+        for t in terms {
+            let cat: TermCategory = .init(with: t.category)
+            entries.append(.init(source: t.source, target: t.target, category: cat))
+        }
+
+        // 최장일치가 유리하므로 길이 내림차순으로 정렬해 두면 좋습니다(마스커에서 한 번 더 정렬해도 OK)
+        entries.sort { $0.source.count > $1.source.count }
+        return entries
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Data/Glossary/GlossaryEntry.swift
+//
+//  GlossaryEntry.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/17/25.
+//
+
+import Foundation
+
+// MARK: - Glossary Types
+
+public enum TermCategory: String, Codable, Sendable {
+    case person
+    case organization
+    case term       // 기술/전문 용어, 기술명 등
+    case other
+    
+    init(with category: String?) {
+        switch category {
+        case "울트라맨", "캐릭터명", "괴수, 성인":
+            self = .person
+        case "도구, 폼, 기술명":
+            self = .term
+        case "조직":
+            self = .organization
+        default:
+            self = .other
+        }
+    }
+}
+
+public struct GlossaryEntry: Sendable {
+    public let source: String
+    public let target: String
+    public let category: TermCategory
+    public init(source: String, target: String, category: TermCategory) {
+        self.source = source
+        self.target = target
+        self.category = category
+    }
+}
+<<<<< MIRROR FILE END
+
 >>>>> MIRROR FILE BEGIN: Services/Data/Glossary/GlossarySeeder.swift
 // Services/GlossarySeeder.swift
 import Foundation
 import SwiftData
 
-/// 앱 번들에 포함된 terms.json을 처음 실행 시(or 버전 갱신 시) SwiftData로 시드.
 enum GlossarySeeder {
-    private static let seededVersionKey = "seededTermsVersion" // UserDefaults key
+    private static let seededVersionKey = "seededTermsVersion"
 
     static func seedIfNeeded(_ modelContext: ModelContext) {
-        // 1) 번들에서 terms.json 찾기
-        guard let url = Bundle.main.url(forResource: "terms", withExtension: "json") else {
-            print("GlossarySeeder: terms.json not found in bundle.")
-            return
+        guard let url = Bundle.main.url(forResource: "glossary", withExtension: "json") else {
+            print("GlossarySeeder: glossary.json not found"); return
         }
-
-        // 2) 디코드
         do {
             let data = try Data(contentsOf: url)
             let decoded = try JSONDecoder().decode(GlossaryJSON.self, from: data)
 
-            // 3) 이미 같은/더 높은 버전을 시드했다면 스킵
-            let currentSeededVer = UserDefaults.standard.integer(forKey: seededVersionKey)
-            if decoded.meta.version <= currentSeededVer {
-                print("GlossarySeeder: already seeded version \(currentSeededVer). skip.")
-                return
-            }
-
-            // 4) 기존 용어들 로드 (중복/업데이트 처리 대비)
-            var fetch = FetchDescriptor<Term>()
-            fetch.fetchLimit = 0
-            let existing = (try? modelContext.fetch(fetch)) ?? []
-            var existingBySource: [String: Term] = [:]
-            existing.forEach { existingBySource[$0.source] = $0 }
-
-            // 5) upsert
-            for item in decoded.terms {
-                if let exist = existingBySource[item.source] {
-                    // 업데이트
-                    exist.target = item.target
-                    exist.strict = item.strict ?? exist.strict
-                    exist.variants = item.variants ?? exist.variants
-                    exist.notes = item.notes
-                    exist.category = item.category ?? exist.category
-                } else {
-                    // 신규
-                    let t = Term(
-                        source: item.source,
-                        target: item.target,
-                        strict: item.strict ?? true,
-                        variants: item.variants ?? [],
-                        notes: item.notes,
-                        category: item.category
-                    )
-                    modelContext.insert(t)
-                }
-            }
-
+            // 개발 중엔 항상 갱신(배포 전엔 버전가드 복구)
+            try seedPeople(decoded.people, in: modelContext)
+            try seedTerms(decoded.terms, in: modelContext)
             try modelContext.save()
 
-            // 6) 성공적으로 저장했다면 버전 기록
             UserDefaults.standard.set(decoded.meta.version, forKey: seededVersionKey)
-            print("GlossarySeeder: seeded terms v\(decoded.meta.version) (\(decoded.terms.count) items).")
+            print("GlossarySeeder: seeded v\(decoded.meta.version) (people:\(decoded.people.count), terms:\(decoded.terms.count))")
         } catch {
             print("GlossarySeeder error:", error)
+        }
+    }
+
+    private static func uniqSorted(_ arr: [String]) -> [String] {
+        var seen = Set<String>()
+        var order: [String] = []
+        for v in arr.map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
+            if seen.insert(v).inserted { order.append(v) }
+        }
+        return order.sorted { (a, b) in
+            if a.count != b.count { return a.count > b.count } // 길이 내림차순(최장일치 유리)
+            return a < b
+        }
+    }
+
+    // PEOPLE
+    private static func seedPeople(_ items: [GlossaryJSON.PersonItem], in ctx: ModelContext) throws {
+        let existing = (try? ctx.fetch(FetchDescriptor<Person>())) ?? []
+        var byId = Dictionary(uniqueKeysWithValues: existing.map { ($0.personId, $0) })
+
+        for p in items {
+            let person = byId[p.person_id] ?? {
+                let np = Person(personId: p.person_id)
+                ctx.insert(np); byId[p.person_id] = np
+                return np
+            }()
+
+            person.familySources = uniqSorted(p.name.family.source)
+            person.givenSources  = uniqSorted(p.name.given.source)
+            person.familyTarget  = p.name.family.target
+            person.givenTarget   = p.name.given.target
+
+            // aliases: target별로 source 병합
+            var exByTarget = Dictionary(uniqueKeysWithValues: person.aliases.map { (($0.target ?? "<nil>"), $0) })
+            var newAliases: [Alias] = []
+            for a in p.aliases {
+                let key = a.target ?? "<nil>"
+                if let ex = exByTarget[key] {
+                    ex.sources = uniqSorted(ex.sources + a.source)
+                    newAliases.append(ex)
+                } else {
+                    newAliases.append(Alias(sources: uniqSorted(a.source), target: a.target, person: person))
+                }
+            }
+            person.aliases = newAliases
+        }
+    }
+
+    // TERMS
+    private static func seedTerms(_ items: [GlossaryJSON.TermItem], in ctx: ModelContext) throws {
+        let existing = (try? ctx.fetch(FetchDescriptor<Term>())) ?? []
+        var bySource = Dictionary(uniqueKeysWithValues: existing.map { ($0.source, $0) })
+        for t in items {
+            if let ex = bySource[t.source] {
+                ex.target = t.target
+                ex.category = t.category
+            } else {
+                let nt = Term(source: t.source, target: t.target, category: t.category)
+                ctx.insert(nt); bySource[t.source] = nt
+            }
         }
     }
 }
@@ -1544,37 +1681,94 @@ protocol GlossaryStore {
     func fetchTerms(query: String?) throws -> [Term]
     func upsert(term: Term) throws
     func delete(term: Term) throws
-    func snapshotDictionary() throws -> [String: String] // source→target
+    func snapshot() throws -> [GlossaryEntry]
 }
 
 final class NopGlossaryStore: GlossaryStore {
     func fetchTerms(query: String?) throws -> [Term] { [] }
     func upsert(term: Term) throws { }
     func delete(term: Term) throws { }
-    func snapshotDictionary() throws -> [String: String] { [:] }
+    func snapshot() throws -> [GlossaryEntry] { [] }
 }
 
 final class DefaultGlossaryStore: GlossaryStore {
     private let context: ModelContext
     init(context: ModelContext) { self.context = context }
-    
-    func fetchTerms(query: String?) throws -> [Term] {
-        let descriptor = FetchDescriptor<Term>()
-        // (필요시 query로 predicate 구성)
+
+    // MARK: - Basic CRUD for Terms
+    func fetchTerms(query: String? = nil) throws -> [Term] {
+        var descriptor = FetchDescriptor<Term>()
+        if let q = query, !q.isEmpty {
+            descriptor.predicate = #Predicate { $0.source.contains(q) || $0.target.contains(q) }
+        }
         return try context.fetch(descriptor)
     }
-    func upsert(term: Term) throws { try context.save() }
-    func delete(term: Term) throws { context.delete(term); try context.save() }
-    func snapshotDictionary() throws -> [String: String] {
-        let terms = try fetchTerms(query: nil)
-        var dict: [String:String] = [:]
-        for t in terms {
-            dict[t.source] = t.target
-            // variants → 동일 타겟으로 맵핑
-            for v in t.variants { dict[v] = t.target }
+
+    func upsert(term: Term) throws {
+        try context.save()
+    }
+
+    func delete(term: Term) throws {
+        context.delete(term)
+        try context.save()
+    }
+
+    // MARK: - Snapshot → GlossaryEntry[]
+    func snapshot() throws -> [GlossaryEntry] {
+        var entries: [GlossaryEntry] = []
+
+        // 1️⃣ People
+        let people: [Person] = (try? context.fetch(FetchDescriptor<Person>())) ?? []
+        for p in people {
+            let seps = ["", " ", "·", "・", "-"]
+
+            // full name 조합
+            for f in p.familySources {
+                for g in p.givenSources {
+                    for sep in seps {
+                        let fullZh = f + sep + g
+                        let fullKo = [p.familyTarget, p.givenTarget].compactMap { $0 }.joined(separator: " ")
+                        if !fullKo.isEmpty {
+                            entries.append(
+                                GlossaryEntry(source: fullZh, target: fullKo, category: .person)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 성/이름 단독
+            if let ft = p.familyTarget {
+                for fs in p.familySources {
+                    entries.append(.init(source: fs, target: ft, category: .person))
+                }
+            }
+            if let gt = p.givenTarget {
+                for gs in p.givenSources {
+                    entries.append(.init(source: gs, target: gt, category: .person))
+                }
+            }
+
+            // aliases
+            for alias in p.aliases {
+                guard let tgt = alias.target else { continue }
+                for src in alias.sources {
+                    entries.append(.init(source: src, target: tgt, category: .person))
+                }
+            }
         }
-        print("snapshotDictionary count: \(dict.count)")
-        return dict
+
+        // 2️⃣ Terms
+        let terms: [Term] = try fetchTerms(query: nil)
+        for t in terms {
+            let cat = TermCategory(with: t.category)
+            entries.append(.init(source: t.source, target: t.target, category: cat))
+        }
+
+        // 3️⃣ 정렬(긴 용어 우선)
+        entries.sort { $0.source.count > $1.source.count }
+
+        return entries
     }
 }
 <<<<< MIRROR FILE END
@@ -1589,10 +1783,9 @@ final class DefaultTranslationRouter: TranslationRouter {
     private let google: TranslationEngine
     private let cache: CacheStore
     private let glossaryStore: GlossaryStore
-    private let postEditor: PostEditor        // 유지(호출 제거)
-    private let riskScorer: RiskScorer
-    private let comparer: ResultComparer?     // 유지(호출 제거)
-    private let reranker: Reranker?           // 유지(호출 제거)
+    private let postEditor: PostEditor // 유지(호출 제거)
+    private let comparer: ResultComparer? // 유지(호출 제거)
+    private let reranker: Reranker? // 유지(호출 제거)
 
     // private lazy var fm: FMOrchestrator = .init(...)
 
@@ -1603,7 +1796,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         cache: CacheStore,
         glossaryStore: GlossaryStore,
         postEditor: PostEditor,
-        riskScorer: RiskScorer,
         comparer: ResultComparer?,
         reranker: Reranker?
     ) {
@@ -1613,7 +1805,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.cache = cache
         self.glossaryStore = glossaryStore
         self.postEditor = postEditor
-        self.riskScorer = riskScorer
         self.comparer = comparer
         self.reranker = reranker
     }
@@ -1623,11 +1814,11 @@ final class DefaultTranslationRouter: TranslationRouter {
         options: TranslationOptions
     ) async throws -> [TranslationResult] {
         // 1) Glossary 스냅샷 (옵션이 켜진 경우에만)
-        let dict: [String: String]
+        let entries: [GlossaryEntry]
         if options.applyGlossary {
-            dict = await MainActor.run { (try? glossaryStore.snapshotDictionary()) ?? [:] }
+            entries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
         } else {
-            dict = [:]
+            entries = []
         }
 
         // 2) 캐시 조회 → hit/miss 분리
@@ -1641,17 +1832,20 @@ final class DefaultTranslationRouter: TranslationRouter {
                 toTranslate.append(s)
             }
         }
+        
 
         // 3) AFM으로 번역 (필요 시 마스킹)
         var translated: [TranslationResult] = []
         if toTranslate.isEmpty == false {
+            let termMasker = TermMasker()
+            
             // (a) glossary 마스킹
-            let masking = toTranslate.map { s -> (seg: Segment, masked: String, tags: [String]) in
-                let m = DefaultTranslationRouter.mask(text: s.originalText, with: dict)
-                return (s, m.masked, m.tags)
-            }
+            let maskedPacks: [MaskedPack] =
+                toTranslate.map { s in
+                    termMasker.maskWithLocks(segment: s, glossary: entries)
+                }
 
-            let maskedSegments: [Segment] = masking.map { item in
+            let maskedSegments: [Segment] = maskedPacks.map { item in
                 Segment(
                     id: item.seg.id,
                     url: item.seg.url,
@@ -1674,45 +1868,38 @@ final class DefaultTranslationRouter: TranslationRouter {
 
             // 언마스킹 후 바로 최종 텍스트로 사용 (FM 자동 후처리 제거)
             let finals: [FinalPack] = afmResults.enumerated().map { i, r in
-                let (seg, tags) = (masking[i].seg, masking[i].tags)
-                let unmasked = DefaultTranslationRouter.unmask(text: r.text, tags: tags)
+                let pack = maskedPacks[i]
+                let raw = r.text
+                
+                // 조사 교정 (⟪Tn⟫ 주변만)
+                let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+                // 언락 (⟪Tn⟫ → 한국어 용어)
+                let unlocked = termMasker.unlockTermsSafely(corrected, locks: pack.locks)
+                // 기존 일반 언마스킹
+                let unmasked = termMasker.unmask(text: unlocked, tags: pack.tags)
+                
                 // 간단 residual: 한자/한문자 비율 (기존 계산 유지)
                 let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
                 let residual = Double(hanCount) / Double(max(unmasked.count, 1))
-                return FinalPack(base: r, finalText: unmasked, residual: residual, source: seg.originalText)
-            }
-
-            // RiskScorer가 async라면 병렬 계산
-            let threshold = Rules.riskEscalationThreshold
-            let scores: [RiskScore] = try await withThrowingTaskGroup(of: (Int, RiskScore).self) { group in
-                for (idx, f) in finals.enumerated() {
-                    group.addTask {
-                        let s = try await self.riskScorer.scoreRisk(for: f.finalText, source: f.source)
-                        return (idx, s)
-                    }
-                }
-                var tmp = Array(repeating: RiskScore(value: 0), count: finals.count)
-                for try await (i, s) in group { tmp[i] = s }
-                return tmp
+                return FinalPack(base: r, finalText: unmasked, residual: residual, source: pack.seg.originalText)
             }
 
             // 결과 합성 + 캐시 저장
             translated.reserveCapacity(finals.count)
             for (i, f) in finals.enumerated() {
-                let s = scores[i]
                 let result = TranslationResult(
                     id: f.base.id,
                     segmentID: f.base.segmentID,
                     engine: f.base.engine,
                     text: f.finalText,
-                    hasReviewTag: (s.value >= threshold),
                     residualSourceRatio: f.residual,
                     createdAt: f.base.createdAt
                 )
                 translated.append(result)
-                let key = cacheKey(for: masking[i].seg, options: options, engine: .afm)
+                let key = cacheKey(for: maskedPacks[i].seg, options: options, engine: .afm)
                 cache.save(result: result, forKey: key)
             }
+            print("4")
         }
 
         // 5) (옵션) 향후 DeepL/Google 후보군과의 비교/재랭킹 위치 (FM 자동 후처리 제거로 현재는 패스)
@@ -1725,65 +1912,6 @@ final class DefaultTranslationRouter: TranslationRouter {
 
     func cacheKey(for segment: Segment, options: TranslationOptions, engine: EngineTag) -> String {
         "\(segment.id)|\(engine.rawValue)|pf=\(options.preserveFormatting)|style=\(options.style)|g=\(options.applyGlossary)"
-    }
-
-    /// 원문에 glossary 소스(중문)가 등장하면 ⟪G0⟫, ⟪G1⟫ ... 토큰으로 치환.
-    /// tags 배열에는 각 토큰의 최종 타깃(한글) 값을 순서대로 저장.
-    static func mask(text: String, with dict: [String: String]) -> (masked: String, tags: [String]) {
-        guard !dict.isEmpty, !text.isEmpty else { return (text, []) }
-        let keys = dict.keys.sorted { $0.count > $1.count }
-        var out = text
-        var tags: [String] = []
-        var used = Set<String>()
-
-        for k in keys {
-            guard let v = dict[k], !k.isEmpty else { continue }
-            if out.range(of: k) == nil { continue }
-            let token = "⟪G\(tags.count)⟫"
-            out = out.replacingOccurrences(of: k, with: token)
-            tags.append(v)
-            used.insert(k)
-        }
-        return (out, tags)
-    }
-
-    /// 번역 결과에서 ⟪G0⟫, ⟪G1⟫ ... 토큰을 사전에 저장한 타깃 한글로 복원.
-    static func unmask(text: String, tags: [String]) -> String {
-        guard !tags.isEmpty else { return text }
-        var out = text
-        for (i, val) in tags.enumerated() {
-            let token = "⟪G\(i)⟫"
-            out = out.replacingOccurrences(of: token, with: val)
-        }
-        return out
-    }
-
-    /// (FM 제거에 따라 현재 미사용이지만, 필요 시 재활용 가능)
-    static func lockTerms(in text: String, terms: [String]) -> (locked: String, locks: [String: String]) {
-        guard !terms.isEmpty else { return (text, [:]) }
-        var out = text
-        var locks: [String: String] = [:]
-        var used = 0
-        for term in terms.sorted(by: { $0.count > $1.count }) {
-            guard !term.isEmpty else { continue }
-            let token = "⟪T\(used)⟫"
-            if out.contains(term) {
-                out = out.replacingOccurrences(of: term, with: token)
-                locks[token] = term
-                used += 1
-            }
-        }
-        return (out, locks)
-    }
-
-    static func unlockTerms(in text: String, locks: [String: String]) -> String {
-        guard locks.isEmpty == false else { return text }
-        var out = text
-        for i in 0 ..< locks.count {
-            let tk = "⟪T\(i)⟫"
-            if let val = locks[tk] { out = out.replacingOccurrences(of: tk, with: val) }
-        }
-        return out
     }
 }
 <<<<< MIRROR FILE END
@@ -1822,7 +1950,6 @@ enum Rules {
     static let residualSourceThreshold: Double = 0.02
     static let reviewTagMaxRatio: Double = 0.10
     static let lengthAnomalyRatio: Double = 0.40
-    static let riskEscalationThreshold: Int = 60
 }
 <<<<< MIRROR FILE END
 
@@ -1841,12 +1968,6 @@ protocol TranslationRouter {
 }
 <<<<< MIRROR FILE END
 
->>>>> MIRROR FILE BEGIN: Services/Ochestration/Types/RiskScore.swift
-// File: Types.swift
-
-public struct RiskScore { public let value: Int }
-<<<<< MIRROR FILE END
-
 >>>>> MIRROR FILE BEGIN: Services/Ochestration/Types/TranslationResult.swift
 //
 //  TranslationResult.swift
@@ -1862,7 +1983,6 @@ public struct TranslationResult: Identifiable {
     public let segmentID: String
     public let engine: EngineTag
     public let text: String
-    public let hasReviewTag: Bool // [재검토]
     public let residualSourceRatio: Double // 잔여 한자 비율 등
     public let createdAt: Date
 }
@@ -1907,6 +2027,11 @@ public struct AFMEngine: TranslationEngine {
             let slice = Array(segments[i..<end])
             let texts = slice.map { $0.originalText }
 
+            let sliceLens = slice.map { $0.originalText.count }
+            let batchChars = sliceLens.reduce(0,+)
+            let maxInBatch = sliceLens.max() ?? 0
+            print("[AFMEngine] batch i=\(i) count=\(slice.count) chars=\(batchChars) maxLen=\(maxInBatch)")
+            
             let outs = try await client.translateBatch(
                 texts: texts,
                 style: options.style,
@@ -1927,7 +2052,6 @@ public struct AFMEngine: TranslationEngine {
                         segmentID: seg.id,
                         engine: .afm,
                         text: out,
-                        hasReviewTag: false,          // RiskScorer는 Router에서 반영
                         residualSourceRatio: 0.0,     // 필요 시 후처리로 계산
                         createdAt: now
                     )
@@ -1983,14 +2107,16 @@ final class AFMTranslationService: AFMClient {
         
         var out: [String] = []
         out.reserveCapacity(texts.count)
-        for text in texts {
+        for (idx, text) in texts.enumerated() {
+            let len = text.count
             do {
                 let response = try await session.translate(text)
+                print("[AFM] \(text)\n=> \(response.targetText)")
                 out.append(response.targetText)
             } catch {
                 // 내부 에러/언어 인식 실패 케이스 로그 강화
                 let ns = error as NSError
-                print("AFM translate error:", ns.domain, ns.code, ns.localizedDescription)
+                print("[AFM][ERR] idx=\(idx) len=\(len) domain=\(ns.domain) code=\(ns.code) msg=\(ns.localizedDescription)")
                 throw error
             }
         }
@@ -2169,7 +2295,8 @@ public actor FMModelManager: FMModelManaging {
         guard available, let s = session else { return prompt } // 폴백: 그대로 반환
         // actor 격리: respond는 직렬 실행
         return try await gate.withPermit {
-            try await s.respond(to: prompt).content
+            print("[FM-PE] prompt.len=\(prompt.count)")
+            return try await s.respond(to: prompt).content
         }
     }
     
@@ -2346,14 +2473,12 @@ import Foundation
 
 actor FMOrchestrator {
     private let postEditor: PostEditor
-    private let riskScorer: RiskScorer
     private let comparer: ResultComparer?
     private let reranker: Reranker?
 
-    init(postEditor: PostEditor, riskScorer: RiskScorer,
+    init(postEditor: PostEditor,
          comparer: ResultComparer?, reranker: Reranker?) {
         self.postEditor = postEditor
-        self.riskScorer = riskScorer
         self.comparer = comparer
         self.reranker = reranker
     }
@@ -2376,7 +2501,6 @@ actor FMOrchestrator {
             TranslationResult(
                 id: orig.id, segmentID: orig.segmentID,
                 engine: orig.engine, text: edited,
-                hasReviewTag: orig.hasReviewTag,
                 residualSourceRatio: orig.residualSourceRatio,
                 createdAt: orig.createdAt
             )
@@ -2515,52 +2639,6 @@ public protocol ResultComparer: Sendable {
 public protocol Reranker: Sendable {
     func rerank(_ candidates: [TranslationResult], source: String) async throws -> [TranslationResult]
 }
-
-public protocol RiskScorer: Sendable {
-    func scoreRisk(for translated: String, source: String?) async throws -> RiskScore
-}
-<<<<< MIRROR FILE END
-
->>>>> MIRROR FILE BEGIN: Services/Translation/FM/Risk/FMRiskScorer.swift
-// Services/Translation/FM/Risk/FMRiskScorer.swift
-import Foundation
-import FoundationModels
-
-@Generable
-struct RiskOut {
-    @Guide(description: "Risk score of the translation", .range(0 ... 100))
-    let score: Int
-}
-
-public final class FMRiskScorer: RiskScorer {
-    private let fm: FMModelManaging
-    public init(fm: FMModelManaging) { self.fm = fm }
-
-    public func scoreRisk(for translated: String, source: String?) async throws -> RiskScore {
-        let prompt = """
-        다음 원문과 번역문의 위험도를 0..100 정수로 평가하라.
-        0=완벽, 100=매우 위험.
-
-        원문:
-        \(source ?? "")
-
-        번역문:
-        \(translated)
-        """
-        let out: RiskOut = try await fm.generate(prompt: prompt)
-        return RiskScore(value: max(0, min(100, out.score)))
-    }
-}
-<<<<< MIRROR FILE END
-
->>>>> MIRROR FILE BEGIN: Services/Translation/FM/Risk/Heuristics.swift
-//
-//  Heuristics.swift
-//  MyTranslation
-//
-//  Created by sailor.m on 10/15/25.
-//
-
 <<<<< MIRROR FILE END
 
 >>>>> MIRROR FILE BEGIN: Services/Translation/FM/Safety/FMJSON.swift
@@ -2620,6 +2698,323 @@ enum FMJSON {
 
 <<<<< MIRROR FILE END
 
+>>>>> MIRROR FILE BEGIN: Services/Translation/Masking/LockInfo.swift
+//
+//  LockInfo.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/17/25.
+//
+
+public struct LockInfo: Sendable {
+    public let placeholder: String    // "⟪T1⟫"
+    public let target: String         // 최종 한국어 용어
+    public let endsWithBatchim: Bool  // 받침 유무
+    public let endsWithRieul: Bool    // ㄹ 받침
+    public let category: TermCategory // 용어 카테고리
+    public init(placeholder: String, target: String, endsWithBatchim: Bool, endsWithRieul: Bool, category: TermCategory) {
+        self.placeholder = placeholder
+        self.target = target
+        self.endsWithBatchim = endsWithBatchim
+        self.endsWithRieul = endsWithRieul
+        self.category = category
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Masking/MaskedPack.swift
+//
+//  MaskedPack.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/17/25.
+//
+
+public struct MaskedPack: Sendable {
+    public let seg: Segment
+    public let masked: String
+    public let tags: [String]
+    public let locks: [String: LockInfo]
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Masking/Masker.swift
+//
+//  TermMasker.swift
+//  MyTranslation
+//
+
+import Foundation
+
+@inline(__always)
+public func hangulFinalJongInfo(_ s: String) -> (hasBatchim: Bool, isRieul: Bool) {
+    guard let last = s.unicodeScalars.last else { return (false, false) }
+    let v = Int(last.value)
+    guard (0xAC00...0xD7A3).contains(v) else { return (false, false) }
+    let idx = v - 0xAC00
+    let jong = idx % 28
+    if jong == 0 { return (false, false) }
+    return (true, jong == 8) // 8 == ㄹ
+}
+
+// MARK: - Term-only Masker
+
+public final class TermMasker {
+
+    private var nextIndex: Int = 1
+    public init() {}
+
+    /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 ⟪Tn⟫로 잠그고 LockInfo를 생성한다.
+    /// - 반환: masked(⟪Tn⟫ 포함), tags(기존 라우터용), locks(조사 교정/언락용)
+    public func maskWithLocks(segment: Segment, glossary entries: [GlossaryEntry]) -> MaskedPack {
+        let text = segment.originalText
+        guard !text.isEmpty, !entries.isEmpty else { return .init(seg:segment, masked: text, tags: [], locks: [:]) }
+
+        // 긴 키부터 치환(겹침 방지)
+        let sorted = entries.sorted { $0.source.count > $1.source.count }
+
+        var out = text
+        var tags: [String] = []
+        var locks: [String: LockInfo] = [:]
+
+        for e in sorted {
+            guard !e.source.isEmpty, out.contains(e.source) else { continue }
+            
+            let prefix: String
+            switch e.category {
+            case .person:       prefix = "P"
+            case .organization: prefix = "O"
+            case .term:         prefix = "K"
+            case .other:        prefix = "X"
+            }
+
+            // === 토큰 생성 ===
+            let token: String
+            if e.category == .person {
+                token = "__PERSON_\(prefix)\(nextIndex)__"   // 표준 인명 토큰(단일 규칙)
+            } else {
+                token = "⟪\(prefix)\(nextIndex)⟫"            // 기타 카테고리: 기존 각괄호 토큰 유지
+            }
+            nextIndex += 1
+
+            // 텍스트 치환
+            out = out.replacingOccurrences(of: e.source, with: token)
+            
+            // NBSP 경계 힌트
+            if e.category == .person {
+                out = surroundTokenWithNBSP(out, token: token)
+            }
+
+            // 라우터 unmask 호환을 위해 tags는 기존과 동일한 의미로 유지(필요 시 원래 규약에 맞춰 조정)
+            tags.append(e.target)
+
+            // 조사 교정용 LockInfo
+            let (b, r) = hangulFinalJongInfo(e.target)
+            locks[token] = LockInfo(placeholder: token, target: e.target, endsWithBatchim: b, endsWithRieul: r, category: e.category)
+        }
+        
+        return .init(seg: segment, masked: out, tags: tags, locks: locks)
+    }
+
+    /// ⟪Tn⟫ 주변 조사(은/는, 이/가, 을/를, 과/와, (이)라, (으)로, (아/야)) 교정
+    public func fixParticlesAroundLocks(_ text: String, locks: [String: LockInfo]) -> String {
+        var out = text
+        for (_, info) in locks {
+            out = fixAroundToken(out, token: info.placeholder, info: info)
+        }
+        return out
+    }
+    
+    /// 번역 결과에서 ⟪G0⟫, ⟪G1⟫ ... 토큰을 사전에 저장한 타깃 한글로 복원.
+    func unmask(text: String, tags: [String]) -> String {
+        guard !tags.isEmpty else { return text }
+        var out = text
+        for (i, val) in tags.enumerated() {
+            let token = "⟪G\(i)⟫"
+            out = out.replacingOccurrences(of: token, with: val)
+        }
+        return out
+    }
+
+    /// ⟪Tn⟫ 토큰들을 locks 사전에 따라 정확히 복원.
+    /// 인접 토큰(예: ⟪T18⟫⟪T19⟫)도 안전하게 처리한다.
+    func unlockTermsSafely(_ text: String, locks: [String: LockInfo]) -> String {
+        // ⟪T123⟫ 형태만 정확히 매칭
+        // 지원 토큰: 1) ⟪Xn⟫ 계열(⟪P/O/L/K/Xn⟫)  2) __PERSON_Pn__
+            let pattern = #"(__PERSON_[A-Z]\d+__)|(?:⟪[A-Z]\d+⟫)"#
+            guard let rx = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
+
+        let ns = text as NSString
+        let matches = rx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+
+        // 매치 구간을 기준으로 앞에서부터 차곡차곡 빌드
+        var out = String()
+        out.reserveCapacity(text.utf16.count)
+        var last = 0
+
+        for m in matches {
+            let range = m.range(at: 0) // 전체 토큰
+            if last < range.location {
+                out += ns.substring(with: NSRange(location: last, length: range.location - last))
+            }
+            let placeholder = ns.substring(with: range)
+            if let lock = locks[placeholder] {
+                out += lock.target           // 정상 복원
+            } else {
+                out += placeholder           // 사전에 없으면 원형 유지(보수적)
+            }
+            last = range.location + range.length
+        }
+
+        // 남은 꼬리 복사
+        if last < ns.length {
+            out += ns.substring(with: NSRange(location: last, length: ns.length - last))
+        }
+
+        return out
+    }
+
+
+    // MARK: Impl (조사 교정 세부)
+    private func fixAroundToken(_ s: String, token: String, info: LockInfo) -> String {
+        // 1) 안전한 패턴 파츠
+        let t  = NSRegularExpression.escapedPattern(for: token)
+        let ws = "(?:\\s|\\u00A0)*" // 공백 + NBSP (0개 이상)
+
+        var str = s
+
+        // 2) 을/를
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "를", token + "을")
+        } else {
+            str = rxReplace(str, t + ws + "을", token + "를")
+        }
+
+        // 3) 은/는
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "는", token + "은")
+        } else {
+            str = rxReplace(str, t + ws + "은", token + "는")
+        }
+
+        // 4) 이/가
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "가", token + "이")
+        } else {
+            str = rxReplace(str, t + ws + "이", token + "가")
+        }
+
+        // 5) 과/와
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "와", token + "과")
+        } else {
+            str = rxReplace(str, t + ws + "과", token + "와")
+        }
+
+        // 6) (이)라
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "라", token + "이라")
+        } else {
+            str = rxReplace(str, t + ws + "이라", token + "라")
+        }
+
+        // 7) (으)로 — ㄹ 특례
+        if info.endsWithBatchim {
+            if info.endsWithRieul {
+                str = rxReplace(str, t + ws + "으로", token + "로")   // ㄹ 받침이면 무조건 '로'
+            } else {
+                str = rxReplace(str, t + ws + "로", token + "으로")   // 일반 받침: '로'→'으로'
+            }
+        } else {
+            str = rxReplace(str, t + ws + "으로", token + "로")       // 받침 없음: '으로'→'로'
+        }
+
+        // 8) 아/야
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "야", token + "아")
+        } else {
+            str = rxReplace(str, t + ws + "아", token + "야")
+        }
+
+        return str
+    }
+    
+    func rxReplace(_ str: String, _ pattern: String, _ repl: String) -> String {
+        do {
+            let rx = try NSRegularExpression(pattern: pattern, options: [])
+            let range = NSRange(str.startIndex..., in: str)
+            return rx.stringByReplacingMatches(in: str, options: [], range: range, withTemplate: repl)
+        } catch {
+            print("[JOSA][ERR] invalid regex: \(pattern) error=\(error)")
+            return str
+        }
+    }
+
+    /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
+    func surroundTokenWithNBSP(_ text: String, token: String) -> String {
+        // 경계 판단
+        func isBoundary(_ c: Character?) -> Bool {
+            guard let c = c else { return true }
+            if c == "\u{00A0}" || c.isWhitespace { return true }
+            // 흔한 구두점
+            if ".,!?;:()[]{}\"'、。・·-—–" .contains(c) { return true }
+            return false
+        }
+        // 문자(단어 본체) 판단: 한글/한자/가나/라틴/숫자 등
+        func isLetterLike(_ c: Character?) -> Bool {
+            guard let c = c else { return false }
+            for u in c.unicodeScalars {
+                if CharacterSet.alphanumerics.contains(u) { return true }
+                switch u.value {
+                case 0x4E00...0x9FFF,         // CJK
+                     0xAC00...0xD7A3,         // Hangul
+                     0x3040...0x309F,         // Hiragana
+                     0x30A0...0x30FF:         // Katakana
+                    return true
+                default: break
+                }
+            }
+            return false
+        }
+
+        var out = text
+        var searchStart = out.startIndex
+
+        while let r = out.range(of: token, range: searchStart..<out.endIndex) {
+            let beforeIdx = (r.lowerBound == out.startIndex) ? nil : out.index(before: r.lowerBound)
+            let afterIdx  = (r.upperBound == out.endIndex)  ? nil : r.upperBound
+
+            let beforeCh = beforeIdx.map { out[$0] }
+            let afterCh  = afterIdx.map  { out[$0] }
+
+            // 양옆이 '단어 문자'에 붙어 있으면 주입, 이미 경계면 스킵
+            let needNBSP = (!isBoundary(beforeCh) && isLetterLike(beforeCh))
+                        || (!isBoundary(afterCh)  && isLetterLike(afterCh))
+
+            if needNBSP {
+                // 중복 주입 방지: 이미 NBSP/공백이면 주입 안 함
+                let leftOK  = isBoundary(beforeCh)
+                let rightOK = isBoundary(afterCh)
+
+                var replacement = token
+                if !leftOK  { replacement = "\u{00A0}" + replacement }
+                if !rightOK { replacement = replacement + "\u{00A0}" }
+
+                out.replaceSubrange(r, with: replacement)
+
+                // 치환 후 다음 탐색 시작점 보정
+                let advancedBy = replacement.count
+                searchStart = out.index(r.lowerBound, offsetBy: advancedBy)
+            } else {
+                searchStart = r.upperBound
+            }
+        }
+        return out
+    }
+
+}
+<<<<< MIRROR FILE END
+
 >>>>> MIRROR FILE BEGIN: Services/Translation/PostEditor/NopPostEditor.swift
 // NopPostEditor.swift
 import Foundation
@@ -2660,57 +3055,6 @@ public protocol PostEditor: Sendable {
     /// inputs.count == outputs.count, 순서 보존
     func postEditBatch(texts: [String],
                        style: TranslationStyle) async throws -> [String]
-}
-<<<<< MIRROR FILE END
-
->>>>> MIRROR FILE BEGIN: Services/Translation/RiskScorer/DefaultRiskScorer.swift
-// File: RiskScorer.swift
-import Foundation
-
-struct Heur {
-    static let cjk = try! NSRegularExpression(pattern: #"\p{Han}"#)            // 한자(중문) 남아있나
-    static let gtok = try! NSRegularExpression(pattern: #"⟪[GT]\d+⟫"#)        // 마스킹/락 토큰 잔존
-    static let badEnd = try! NSRegularExpression(
-        pattern: #"(은|는|이|가|을|를|과|와|으로|로|라|이라|야|아)$"#)          // 문장 끝 조사 끊김
-}
-
-final class DefaultRiskScorer: RiskScorer {
-    func scoreRisk(for translated: String, source: String?) async throws -> RiskScore {
-        Self.heuristic(source: source, translated: translated)
-    }
-    
-    private static func heuristic(source: String?, translated: String) -> RiskScore {
-        var score = 0
-
-        // 1) 잔여 한자(중문) 비율
-        let hanCount = Heur.cjk.numberOfMatches(in: translated, range: NSRange(location: 0, length: (translated as NSString).length))
-        let koLen = max(translated.count, 1)
-        let residualRatio = Double(hanCount) / Double(koLen)
-        if residualRatio > Rules.residualSourceThreshold {              // 0.02 기본
-            score += Int(min(40, residualRatio * 100))                  // 최대 40점
-        }
-
-        // 2) 마스킹/락 토큰 잔존(버그/미복원)
-        if Heur.gtok.firstMatch(in: translated, range: NSRange(location: 0, length: (translated as NSString).length)) != nil {
-            score += 40                                                // 치명적
-        }
-
-        // 3) 길이 이상치(너무 짧음)
-        if let src = source {
-            let s = max(src.count, 1)
-            let t = translated.count
-            if Double(t) / Double(s) < (1.0 - Rules.lengthAnomalyRatio) { // 0.60 미만
-                score += 15
-            }
-        }
-
-        // 4) 문장 끝 조사 끊김(잘림 가능성)
-        if Heur.badEnd.firstMatch(in: translated, range: NSRange(location: 0, length: (translated as NSString).length)) != nil {
-            score += 10
-        }
-
-        return RiskScore(value: min(100, score))
-    }
 }
 <<<<< MIRROR FILE END
 
@@ -2804,6 +3148,10 @@ final class WKContentExtractor: ContentExtractor {
             }
             if out.count >= 300 { break }
         }
+        let totalChars = out.reduce(0) { $0 + $1.originalText.count }
+        let maxLen = out.map { $0.originalText.count }.max() ?? 0
+        let top5 = out.map { $0.originalText.count }.sorted(by: >).prefix(5)
+        print("[EXTRACT] url=\(url.absoluteString) segs=\(out.count) totalChars=\(totalChars) maxLen=\(maxLen) top5=\(Array(top5))")
         return out
     }
 
@@ -3181,8 +3529,8 @@ private extension DefaultOverlayRenderer {
 
 >>>>> MIRROR FILE BEGIN: Services/WebRendering/Overlay/SelectionBridge.swift
 // Services/Web/SelectionBridge.swift
-import WebKit
 import CoreGraphics
+import WebKit
 
 public struct ElementRect: Sendable {
     public let x: CGFloat
@@ -3200,24 +3548,35 @@ final class SelectionBridge: NSObject {
         injectBootstrap()
     }
 
-    deinit {}
+    deinit { }
 
     func mark(segments: [(id: String, text: String)]) async {
         guard let webView else { return }
         let payload = segments.map { ["id": $0.id, "text": $0.text] }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
-        let js = "window.MT && window.MT_MARK_SEGMENTS && MT_MARK_SEGMENTS(\(json));"
-        _ = try? await webView.callAsyncJavaScript(
+        let js = """
+        (function(list){
+          if (window.MT && window.MT_MARK_SEGMENTS_ALL) {
+            return MT_MARK_SEGMENTS_ALL(list);
+          } else if (window.MT && window.MT_MARK_SEGMENTS) {
+            return MT_MARK_SEGMENTS(list);
+          } else {
+            return -999;
+          }
+        })(\(json));
+        """
+        let result = try? await webView.callAsyncJavaScript(
             js,
             arguments: [:],
             in: nil,
             contentWorld: .page
         )
+        print("[MARK] returned =", result ?? "nil")
     }
 
     private func injectBootstrap() {
-        let js = """
+        let js = #"""
         (function () {
           if (window.MT && window.MT.BOOT_OK) return;
           window.MT = window.MT || {};
@@ -3231,79 +3590,272 @@ final class SelectionBridge: NSObject {
             `;
             (document.head || document.documentElement).appendChild(style);
           } catch (e) {}
+        
+        const CH = 'mtconsole';
+          ['log','warn','error'].forEach(level => {
+            const orig = console[level].bind(console);
+            console[level] = function(...args) {
+              try { window.webkit?.messageHandlers?.[CH]?.postMessage({ level, args: args.map(a => String(a)) }); } catch(e){}
+              try { orig(...args); } catch(e){}
+            };
+          });
 
+          // ====== 인터랙션 충돌 회피 ======
+          const INTERACTIVE_SEL = [
+            'a','button','summary','label','input','textarea','select','details',
+              '[role="button"]','[role="link"]','[contenteditable]','[onclick]','[aria-haspopup="true"]'
+          ].join(',');
+
+          function isInteractive(el) {
+            return !!(el && el.closest && el.closest(INTERACTIVE_SEL));
+          }
+
+          // ====== 짧은 CJK 허용 로직 (유니코드 속성 미사용 폴백) ======
+          const ONLY_PUNCT_SPACE = /^[\s~`!@#$%^&*()\-=+\[\]{}\\|;:'",.<>\/\?]+$/;
+          const CJK_RE = /[\uAC00-\uD7A3\u3130-\u318F\u1100-\u11FF\u4E00-\u9FFF\u3400-\u4DBF\u3040-\u309F\u30A0-\u30FF]/;
+
+          function isCJKOnlyShort(s) {
+            const t = (s || '').trim();
+            if (t.length === 0 || t.length > 2) return false;
+            if (ONLY_PUNCT_SPACE.test(t)) return false; // 구두점/기호/공백만 → 제외
+            return CJK_RE.test(t) && !/^[A-Za-z0-9]+$/.test(t);
+          }
+
+          function shouldWrapText(txt) {
+            const t = (txt || '').trim();
+            return t.length >= 6 || isCJKOnlyShort(t);
+          }
+
+          // 안전한 정규식 이스케이프
+          function escReg(s) {
+            return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          }
+        // 원문을 공백으로 나눠 escape → 느슨한 서브패턴으로 연결
+        function buildLooseRegex(text) {
+          const parts = String(text || '').trim().split(/\s+/);
+          const escaped = parts.map(escReg);
+          const glue = '(?:\\s|\\u00A0)+';   // 스페이스/개행/NBSP 허용
+          return new RegExp(escaped.join(glue), 'g');
+        }
+
+          // ====== 클릭 핸들러 (페이지 본문 클릭 방해 금지) ======
           document.addEventListener('click', function (e) {
             var node = e.target && e.target.closest ? e.target.closest('[data-seg-id]') : null;
+        console.log("click event listener called");
             if (!node) return;
-            var id = node.getAttribute('data-seg-id');
+        console.log("node exist");
+
+            // 인터랙티브 조상/자신이 인터랙티브면: 우리 기능 스킵 → 원래 클릭 유지
+        //            if (isInteractive(node) || isInteractive(e.target)) return;
+        //        console.log("node is not interactive");
+
+            const id = node.getAttribute('data-seg-id');
             if (!id) return;
-            try {
-              window.webkit && window.webkit.messageHandlers &&
-              window.webkit.messageHandlers.selection &&
-              window.webkit.messageHandlers.selection.postMessage(id);
-            } catch (err) {}
+        console.log("node have id");
+
+            // 페이지 동작 우선
+            const r = node.getBoundingClientRect();
+            const payload = {
+              id,
+              text: (node.textContent || '').trim(),
+              rect: { x: r.left, y: r.top, width: r.width, height: r.height }
+            };
+        console.log("MT selection click");
+            try { window.webkit?.messageHandlers?.selection?.postMessage(id); } catch (_){}
           }, true);
+        
+        function collectRoots() {
+          const roots = [document]; // main DOM
+          const all = document.querySelectorAll('*');
+          for (let i = 0; i < all.length; i++) {
+            const sr = all[i].shadowRoot;
+            if (sr) roots.push(sr);  // shadow DOM도 순회 대상으로 추가
+          }
+          return roots;
+        }
 
-          function escReg(s) {
-            return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+          // ====== 마킹 (블록 단위 + Range 래핑: 노드 경계도 매칭) ======
+        const BLOCK_ANCHOR_SEL = 'p, li, blockquote, h1, h2, h3, h4, h5, h6';
+        
+        function fragContainsBlock(frag) {
+          // 블록/컨테이너/버튼류 태그 집합
+            const BAD = new Set([
+              'P','DIV','SECTION','ARTICLE','HEADER','FOOTER','MAIN','ASIDE','NAV',
+              'UL','OL','LI','TABLE','THEAD','TBODY','TFOOT','TR','TD','TH',
+              'FIGURE','FIGCAPTION','H1','H2','H3','H4','H5','H6','BUTTON'
+            ]);
+            function walk(node) {
+              if (!node) return false;
+              if (node.nodeType === 1) { // ELEMENT_NODE
+                const tn = node.tagName;
+                if (BAD.has(tn)) return true;
+                // 자식들 검사
+                for (let i = 0; i < node.childNodes.length; i++) {
+                  if (walk(node.childNodes[i])) return true;
+                }
+                return false;
+              } else {
+                // 텍스트/코멘트 등
+                for (let i = 0; i < node.childNodes?.length; i++) {
+                  if (walk(node.childNodes[i])) return true;
+                }
+                return false;
+              }
+            }
+            return walk(frag);
+        }
+
+          function collectBlocks() {
+            // body 내부의 텍스트 블록만 대상으로 제한 (head/title 제외)
+            const root = document.body || document.documentElement;
+            if (!root) return [];
+            const nodes = Array.from(
+              root.querySelectorAll('p,li,article,section,blockquote,main,aside,header,footer,div')
+            );
+            // 너무 짧거나 display:none/visibility:hidden 대강 거르기
+            return nodes.filter(el => {
+              // const tn = el.tagName?.toLowerCase() || '';
+              // if (!tn) return false;
+              // if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') return false;
+              const txt = (el.innerText || '').trim();
+              return txt.length >= 6;
+            });
           }
 
-          function isTexty(el) {
-            var tn = el.tagName ? el.tagName.toLowerCase() : '';
-            if (!tn) return false;
-            if (tn === 'script' || tn === 'style' || tn === 'noscript' || tn === 'svg') return false;
-            if (tn === 'input' || tn === 'textarea' || tn === 'select' || tn === 'button') return false;
-            return true;
+          function buildIndex(block) {
+            // block 하위 텍스트 노드들을 순서대로 모아 큰 문자열과 매핑 테이블 구성
+            const map = []; // [{node, start, end}]
+            let acc = '';
+            const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+              acceptNode(n) {
+                if (!n || !n.nodeValue) return NodeFilter.FILTER_REJECT;
+                // 이미 래핑된 조상 제외
+                if (n.parentElement && n.parentElement.closest('[data-seg-id]')) return NodeFilter.FILTER_REJECT;
+                const t = n.nodeValue;
+                if (!t || !t.trim()) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            });
+            let node;
+            while ((node = walker.nextNode())) {
+              const start = acc.length;
+              acc += node.nodeValue;
+              map.push({ node, start, end: acc.length });
+            }
+            return { text: acc, map };
           }
 
-          function hasSegWrap(html) {
-            return html.indexOf('data-seg-id=') >= 0;
+          function posToNode(map, pos) {
+            // 선형 탐색으로 충분 (문자 수가 커지면 이진 탐색 가능)
+            for (let i = 0; i < map.length; i++) {
+              const m = map[i];
+              if (pos >= m.start && pos <= m.end) {
+                return { node: m.node, offset: pos - m.start };
+              }
+            }
+            // 경계 보정
+            const last = map[map.length - 1];
+            return { node: last?.node || null, offset: (last ? last.end - last.start : 0) };
+          }
+
+          function markBlockWithRanges(block, patterns) {
+            const { text, map } = buildIndex(block);
+            if (!text || !map.length) return 0;
+
+            const matches = [];
+            for (let k = 0; k < patterns.length; k++) {
+              const { id, re } = patterns[k];
+              re.lastIndex = 0;
+              let m;
+              while ((m = re.exec(text))) {
+                matches.push({ id, start: m.index, end: m.index + m[0].length });
+                if (re.lastIndex === m.index) re.lastIndex++;
+              }
+            }
+            if (!matches.length) return 0;
+
+            matches.sort((a,b)=> a.start===b.start ? b.end - a.end : a.start - b.start);
+
+            let hits = 0;
+            for (let i = matches.length - 1; i >= 0; i--) {
+              const { id, start, end } = matches[i];
+              const s = posToNode(map, start);
+              const e = posToNode(map, end);
+              if (!s.node || !e.node) continue;
+
+              // ① 같은 텍스트 블록(앵커) 안에서만 래핑
+              const sAnchor = s.node.parentElement?.closest(BLOCK_ANCHOR_SEL);
+              const eAnchor = e.node.parentElement?.closest(BLOCK_ANCHOR_SEL);
+              if (!sAnchor || sAnchor !== eAnchor) continue;
+
+              try {
+                const r = (block.ownerDocument || document).createRange();
+                r.setStart(s.node, s.offset);
+                r.setEnd(e.node, e.offset);
+
+                // ② 사전 점검: 블록 요소 포함 매치라면 스킵 (레이아웃 보호)
+                const probe = r.cloneContents();
+                if (fragContainsBlock(probe)) continue;
+
+                const span = document.createElement('span');
+                span.setAttribute('data-seg-id', id);
+                // 안전 삽입: extract → append → insert
+                const frag = r.extractContents();
+                span.appendChild(frag);
+                r.insertNode(span);
+                hits++;
+              } catch (_) {
+                /* skip */
+              }
+            }
+            return hits;
+          }
+
+          function markWithRanges(list) {
+            if (!Array.isArray(list) || !list.length) return 0;
+            const filtered = list.filter(it => shouldWrapText(it.text));
+            if (!filtered.length) return 0;
+
+            // 느슨한 매칭(공백/개행/NBSP 허용)
+            const patterns = filtered.map(it => ({ id: it.id, re: buildLooseRegex(it.text) }));
+
+            const blocks = collectBlocks();
+            let hits = 0;
+            for (let b = 0; b < blocks.length; b++) {
+              const blk = blocks[b];
+              // 인터랙티브 블록은 통째 스킵 (페이지 동작 보호)
+              // if (isInteractive(blk)) continue;
+              hits += markBlockWithRanges(blk, patterns);
+            }
+            console.log('MT_MARK_SEGMENTS hits=', hits);
+            return hits;
           }
 
           window.MT_MARK_SEGMENTS = function (list) {
-            if (!Array.isArray(list) || list.length === 0) return 0;
-            var filtered = list.filter(it => (it.text || '').trim().length >= 6);
-            var MAX_MARK = 500;
-            if (filtered.length > MAX_MARK) filtered = filtered.slice(0, MAX_MARK);
-            if (filtered.length === 0) return 0;
-
-            var blocks = Array.from(
-              document.querySelectorAll('p,li,article,section,blockquote,main,aside,header,footer,div')
-            ).filter(isTexty);
-
-            var patterns = [];
-            for (var j = 0; j < filtered.length; j++) {
-              try {
-                patterns.push({
-                  id: filtered[j].id,
-                  re: new RegExp(escReg(filtered[j].text), 'g'),
-                });
-              } catch (e) {}
-            }
-            if (patterns.length === 0) return 0;
-
-            var totalHits = 0;
-            for (var b = 0; b < blocks.length; b++) {
-              var blk = blocks[b];
-              var txt = (blk.innerText || '').trim();
-              if (txt.length < 12) continue;
-
-              var html = blk.innerHTML;
-              var hit = false;
-              for (var k = 0; k < patterns.length; k++) {
-                var p = patterns[k];
-                if (hasSegWrap(html) && html.indexOf('data-seg-id="' + p.id + '"') >= 0) continue;
-                html = html.replace(p.re, function (m) {
-                  hit = true;
-                  totalHits++;
-                  return '<span data-seg-id="' + p.id + '">' + m + '</span>';
-                });
-              }
-              if (hit) blk.innerHTML = html;
-            }
-            return totalHits;
+            try { return markWithRanges(list); } catch (e) { console.log('[MT] mark error:', e?.message || e); return 0; }
           };
 
+
+          window.MT_MARK_SEGMENTS = function (list) {
+            try { return markWithRanges(list); } catch (e) { console.log('[MT] mark error:', e?.message || e); return 0; }
+          };
+        
+        window.MT_MARK_SEGMENTS_ALL = function(list){
+          function call(win){
+            let sum = 0;
+            try { if (win.MT && win.MT_MARK_SEGMENTS) sum += win.MT_MARK_SEGMENTS(list); } catch(e){}
+            try {
+              const frames = win.frames;
+              for (let i = 0; i < frames.length; i++) {
+                try { sum += call(frames[i]); } catch(e){}
+              }
+            } catch(e){}
+            return sum;
+          }
+          return call(window);
+        };
+
+          // ====== 하이라이트 / 클리어 / 영역 ======
           window.MT.HILITE = function (segId) {
             try {
               var q = document.querySelector('[data-seg-id="' + segId + '"]');
@@ -3332,11 +3884,11 @@ final class SelectionBridge: NSObject {
 
           window.MT.BOOT_OK = true;
         })();
-        """
+        """#
         let userScript = WKUserScript(
             source: js,
             injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
+            forMainFrameOnly: false
         )
         webView?.configuration.userContentController.addUserScript(userScript)
     }

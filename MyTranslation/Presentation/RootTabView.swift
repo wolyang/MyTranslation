@@ -9,7 +9,7 @@ struct RootTabView: View {
         TabView {
             BrowserTabView(container: container)
                 .tabItem { Label("브라우저", systemImage: "globe") }
-            GlossaryTabView()
+            GlossaryTabView(modelContext: modelContext)
                 .tabItem { Label("용어집", systemImage: "book") }
         }
         .task {

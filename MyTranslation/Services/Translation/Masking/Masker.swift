@@ -25,8 +25,7 @@ public final class TermMasker {
 
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 ⟪Tn⟫로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(⟪Tn⟫ 포함), tags(기존 라우터용), locks(조사 교정/언락용)
-    public func maskWithLocks(segment: Segment, glossary entries: [GlossaryEntry],
-                              surroundWithNBSP: Bool = true) -> MaskedPack {
+    public func maskWithLocks(segment: Segment, glossary entries: [GlossaryEntry]) -> MaskedPack {
         let text = segment.originalText
         guard !text.isEmpty, !entries.isEmpty else { return .init(seg:segment, masked: text, tags: [], locks: [:]) }
 
@@ -60,9 +59,9 @@ public final class TermMasker {
             // 텍스트 치환
             out = out.replacingOccurrences(of: e.source, with: token)
             
-            // NBSP 경계 힌트(선택)
-            if surroundWithNBSP {
-                out = out.replacingOccurrences(of: token, with: "\u{00A0}" + token + "\u{00A0}")
+            // NBSP 경계 힌트
+            if e.category == .person {
+                out = surroundTokenWithNBSP(out, token: token)
             }
 
             // 라우터 unmask 호환을 위해 tags는 기존과 동일한 의미로 유지(필요 시 원래 규약에 맞춰 조정)
@@ -208,6 +207,68 @@ public final class TermMasker {
             print("[JOSA][ERR] invalid regex: \(pattern) error=\(error)")
             return str
         }
+    }
+
+    /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
+    func surroundTokenWithNBSP(_ text: String, token: String) -> String {
+        // 경계 판단
+        func isBoundary(_ c: Character?) -> Bool {
+            guard let c = c else { return true }
+            if c == "\u{00A0}" || c.isWhitespace { return true }
+            // 흔한 구두점
+            if ".,!?;:()[]{}\"'、。・·-—–" .contains(c) { return true }
+            return false
+        }
+        // 문자(단어 본체) 판단: 한글/한자/가나/라틴/숫자 등
+        func isLetterLike(_ c: Character?) -> Bool {
+            guard let c = c else { return false }
+            for u in c.unicodeScalars {
+                if CharacterSet.alphanumerics.contains(u) { return true }
+                switch u.value {
+                case 0x4E00...0x9FFF,         // CJK
+                     0xAC00...0xD7A3,         // Hangul
+                     0x3040...0x309F,         // Hiragana
+                     0x30A0...0x30FF:         // Katakana
+                    return true
+                default: break
+                }
+            }
+            return false
+        }
+
+        var out = text
+        var searchStart = out.startIndex
+
+        while let r = out.range(of: token, range: searchStart..<out.endIndex) {
+            let beforeIdx = (r.lowerBound == out.startIndex) ? nil : out.index(before: r.lowerBound)
+            let afterIdx  = (r.upperBound == out.endIndex)  ? nil : r.upperBound
+
+            let beforeCh = beforeIdx.map { out[$0] }
+            let afterCh  = afterIdx.map  { out[$0] }
+
+            // 양옆이 '단어 문자'에 붙어 있으면 주입, 이미 경계면 스킵
+            let needNBSP = (!isBoundary(beforeCh) && isLetterLike(beforeCh))
+                        || (!isBoundary(afterCh)  && isLetterLike(afterCh))
+
+            if needNBSP {
+                // 중복 주입 방지: 이미 NBSP/공백이면 주입 안 함
+                let leftOK  = isBoundary(beforeCh)
+                let rightOK = isBoundary(afterCh)
+
+                var replacement = token
+                if !leftOK  { replacement = "\u{00A0}" + replacement }
+                if !rightOK { replacement = replacement + "\u{00A0}" }
+
+                out.replaceSubrange(r, with: replacement)
+
+                // 치환 후 다음 탐색 시작점 보정
+                let advancedBy = replacement.count
+                searchStart = out.index(r.lowerBound, offsetBy: advancedBy)
+            } else {
+                searchStart = r.upperBound
+            }
+        }
+        return out
     }
 
 }

@@ -1,5 +1,5 @@
 //
-//  GlossaryCategory.swift
+//  GlossaryEntry.swift
 //  MyTranslation
 //
 //  Created by sailor.m on 10/17/25.

@@ -8,8 +8,8 @@ struct MyTranslateApp: App {
     @StateObject private var container: AppContainer
     
     init() {
-        let schema = Schema([Term.self])
-        let modelContainer = try! ModelContainer(for: schema)
+        let modelContainer = try! ModelContainer(for: Person.self, Alias.self, Term.self,
+                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         
         _container = StateObject(wrappedValue: AppContainer(context: modelContainer.mainContext, useOnDeviceFM: true, fmConfig: FMConfig(enablePostEdit: true, enableComparer: false, enableRerank: false)))
         self.modelContainer = modelContainer
