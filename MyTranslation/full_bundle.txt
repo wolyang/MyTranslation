@@ -1,0 +1,3394 @@
+# mirror bundle
+# root: /Users/sailor.m/PrivateDevelop/MyTranslation/MyTranslation
+# files: 65
+# note: Each section is bounded by MARK_BEGIN/MARK_END lines.
+
+>>>>> MIRROR FILE BEGIN: Application/AppContainer.swift
+// File: AppContainer.swift
+import Foundation
+import SwiftData
+import Translation
+
+final class AppContainer: ObservableObject {
+    // Engines / Services
+    let afmService: AFMTranslationService
+    let afmEngine: TranslationEngine
+
+    // Router & infra
+    let cache: CacheStore
+    let glossaryStore: GlossaryStore
+    let router: TranslationRouter
+    
+    let postEditor: PostEditor
+    let riskScorer: RiskScorer
+    let comparer: ResultComparer?
+    let reranker: Reranker?
+    
+    var settings = UserSettings()
+    
+    let fmManager: FMModelManaging
+    let fmQuery: FMQueryService
+    let fmConfig: FMConfig
+
+    @MainActor
+    init(context: ModelContext, useOnDeviceFM: Bool = true, fmConfig: FMConfig = .init()) {
+        self.fmConfig = fmConfig
+        
+        self.afmService = AFMTranslationService()
+        self.afmEngine  = AFMEngine(client: afmService)
+        
+        if useOnDeviceFM {
+            let modelMgr = FMModelManager()
+            self.fmManager = modelMgr
+            self.fmQuery = DefaultFMQueryService(fm: modelMgr)
+            self.postEditor = fmConfig.enablePostEdit ? FMPostEditor(fm: modelMgr) : NopPostEditor()
+            self.riskScorer = FMRiskScorer(fm: modelMgr)
+            self.comparer = fmConfig.enableComparer ? CrossEngineComparer(fm: modelMgr) : nil
+            self.reranker = fmConfig.enableRerank ? RerankerImpl() : nil
+        } else {
+            self.fmManager = FMModelManager() // 더미로 유지
+            self.postEditor = NopPostEditor()
+            self.riskScorer = DefaultRiskScorer()      // 기존 구현체명에 맞춰 변경
+            self.comparer = nil
+            self.reranker = nil
+            self.fmQuery = NopQueryService()
+        }
+
+        self.cache = DefaultCacheStore()
+        self.glossaryStore = DefaultGlossaryStore(context: context)
+
+        self.router = DefaultTranslationRouter(
+            afm: afmEngine,
+            deepl: DeepLEngine(),
+            google: GoogleEngine(),
+            cache: cache,
+            glossaryStore: glossaryStore,
+            postEditor: postEditor,
+            riskScorer: riskScorer,
+            comparer: comparer,
+            reranker: reranker
+        )
+    }
+
+    // SwiftUI .translationTask에서 넘어온 세션을 서비스에 연결
+    @MainActor
+    func attachAFMSession(_ session: TranslationSession) {
+        afmService.attach(session: session)
+    }
+    
+    /// AFM 세션 붙이기 전에 모델 준비(비동기 1회)
+    func prepareFMIfNeeded() {
+        Task { await fmManager.prepareIfNeeded() }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Application/MyTranslateApp.swift
+// File: MyTranslateApp.swift
+import SwiftUI
+import SwiftData
+
+@main
+struct MyTranslateApp: App {
+    private let modelContainer: ModelContainer
+    @StateObject private var container: AppContainer
+    
+    init() {
+        let schema = Schema([Term.self])
+        let modelContainer = try! ModelContainer(for: schema)
+        
+        _container = StateObject(wrappedValue: AppContainer(context: modelContainer.mainContext, useOnDeviceFM: true, fmConfig: FMConfig(enablePostEdit: true, enableComparer: false, enableRerank: false)))
+        self.modelContainer = modelContainer
+    }
+    
+    var body: some Scene {
+        WindowGroup {
+            RootTabView()
+                .environmentObject(container)
+                .task {
+                    container.prepareFMIfNeeded()
+                }
+        }
+        .modelContainer(modelContainer)
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Application/UserSettings.swift
+//
+//  Untitled.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/16/25.
+//
+
+import SwiftUI
+
+public final class UserSettings: ObservableObject {
+    @AppStorage("useFM") public var useFM: Bool = true
+    public init() {}
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Domain/Models/Segment.swift
+//
+//  Segment.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+public struct Segment: Identifiable, Hashable {
+    public let id: String
+    public let url: URL
+    public let indexInPage: Int
+    public let originalText: String
+    public let normalizedText: String
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Domain/ValueObjects/TranslationOptions.swift
+//
+//  TranslationOptions.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+public struct TranslationOptions {
+    public let preserveFormatting: Bool
+    public let style: TranslationStyle
+    public let applyGlossary: Bool
+    public init(preserveFormatting: Bool = true, style: TranslationStyle = .colloquialKo, applyGlossary: Bool = true) {
+        self.preserveFormatting = preserveFormatting
+        self.style = style
+        self.applyGlossary = applyGlossary
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Domain/ValueObjects/TranslationStyle.swift
+//
+//  TranslationStyle.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+public enum TranslationStyle {
+    case colloquialKo
+    case neutralDictionaryTone
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Persistence/Migrations.swift
+//
+//  Migrations.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/1/25.
+//
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Persistence/SwiftDataModel.swift
+// File: SwiftDataModel.swift
+import Foundation
+import SwiftData
+
+@Model
+final class Term {
+    @Attribute(.unique) var source: String
+    var target: String
+    var strict: Bool
+    var variants: [String]
+    var notes: String?
+    var category: String?
+    init(source: String, target: String, strict: Bool = true, variants: [String] = [], notes: String? = nil, category: String? = nil) {
+        self.source = source
+        self.target = target
+        self.strict = strict
+        self.variants = variants
+        self.notes = notes
+        self.category = category
+    }
+}
+
+@Model
+final class GlossaryMeta {
+    var version: Int
+    var langPair: String // "zh->ko" 등
+    init(version: Int = 1, langPair: String = "zh->ko") {
+        self.version = version
+        self.langPair = langPair
+    }
+}
+
+@Model
+final class CacheEntry {
+    @Attribute(.unique) var key: String // segment.id + engine
+    var engine: String
+    var inputHash: String
+    var output: String
+    var createdAt: Date
+    init(key: String, engine: String, inputHash: String, output: String, createdAt: Date = .init()) {
+        self.key = key
+        self.engine = engine
+        self.inputHash = inputHash
+        self.output = output
+        self.createdAt = createdAt
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Browser/View/BrowserTabView.swift
+// MARK: - BrowserTabView.swift
+import SwiftUI
+import Translation
+import WebKit
+
+struct BrowserTabView: View {
+    @EnvironmentObject private var container: AppContainer
+    @StateObject private var vm: BrowserViewModel
+
+    // TranslationSession 트리거
+    @State private var trConfig: TranslationSession.Configuration? = nil
+    
+    @State private var selectedSegment: Segment?
+
+    init(container: AppContainer) {
+        _vm = StateObject(
+            wrappedValue: BrowserViewModel(
+                container: container,
+                extractor: WKContentExtractor(),
+                router: container.router,
+                replacer: WebViewInlineReplacer(),
+                fmQuery: container.fmQuery,
+                settings: container.settings
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            URLBarView(urlString: $vm.urlString) { url in
+                vm.load(urlString: url)
+                // 세션 트리거
+                if trConfig == nil {
+                    trConfig = TranslationSession.Configuration(
+                        // 언어 자동감지를 쓰면 nil 유지. 고정하고 싶으면 source/target 지정.
+                        source: .init(identifier: "zh-Hans"),
+                        target: .init(identifier: "ko")
+                    )
+                } else {
+                    trConfig?.invalidate() // 이미 세션이 있었다면 재생성 트리거
+                }
+            }
+            .onAppear {
+                if trConfig == nil {
+                    trConfig = TranslationSession.Configuration(
+                        source: .init(identifier: "zh-Hans"),
+                        target: .init(identifier: "ko")
+                    )
+                }
+            }
+
+            ZStack(alignment: .top) {
+                WebContainerView(
+                    request: vm.request,
+                    onAttach: { webView in vm.attachWebView(webView) },
+                    onDidFinish: { webView, url in
+                        vm.onWebViewDidFinishLoad(webView, url: url)
+                    },
+                    onSelectSegmentID: { sid in
+                        Task {
+                            await vm.onSegmentTapped(id: sid)
+                        }
+                    },
+                    onAskAI: { Task { await vm.askAIForSelected() } },
+                    onApplyAI: { vm.applyAIImproved() },
+                    onClosePanel: { /* 필요 시 상태 정리 */ },
+                    onNavigate: { vm.willNavigate() }
+                )
+                .background(OverlayButtonHost(vm: vm)) // 패널 버튼 액션 연결용 호스트
+                if vm.isTranslating {
+                    ProgressView().padding(.top, 12)
+                }
+            }
+
+            OverlayControlsView(
+                showOriginal: $vm.showOriginal,
+                engineBadgeEnabled: $vm.engineBadgeEnabled,
+                reviewOnlyFilter: $vm.reviewOnlyFilter
+            )
+            .onChange(of: vm.showOriginal) { _, newValue in
+                vm.onShowOriginalChanged(newValue)
+            }
+        }
+        // WebView 로드 이후 자동 번역
+        .task(id: vm.pendingAutoTranslateID) {
+            if vm.pendingAutoTranslateID != nil {
+                vm.onShowOriginalChanged(vm.showOriginal)
+            }
+        }
+        // TranslationSession을 컨테이너 서비스에 연결
+        .translationTask(trConfig) { session in
+            // (선택) 사전 준비: 모델 다운로드/권한 UX 향상
+            // try? await session.prepareTranslation()
+            container.attachAFMSession(session)
+        }
+    }
+}
+
+// WebContainerView의 패널 버튼 액션을 뷰모델에 연결하기 위한 호스트 뷰
+private struct OverlayButtonHost: UIViewRepresentable {
+    let vm: BrowserViewModel
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // 패널 버튼 액션은 Coordinator가 직접 처리하지 않고,
+        // VM의 메서드를 호출하도록 여기에 연결하고 싶다면
+        // 필요 시 Notification/Combine 등으로도 연결 가능.
+        // (현 스니펫에선 패널의 버튼 콜백을 Coordinator가 직접 가지지 않게
+        // 설계했으므로 별도 훅 없이 VM 메서드를 직접 호출하면 됨)
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Browser/View/OverlayControlsView.swift
+// File: OverlayControlsView.swift
+import SwiftUI
+
+struct OverlayControlsView: View {
+    @EnvironmentObject var app: AppContainer
+    @Binding var showOriginal: Bool
+    @Binding var engineBadgeEnabled: Bool
+    @Binding var reviewOnlyFilter: Bool
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Toggle("AI 사용", isOn: $app.settings.useFM)
+            Toggle("원문보기", isOn: $showOriginal)
+            Toggle("엔진뱃지", isOn: $engineBadgeEnabled)
+            Toggle("[재검토]만", isOn: $reviewOnlyFilter)
+        }
+        .toggleStyle(.switch)
+        .padding(8)
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Browser/View/OverlayPanel.swift
+//
+//  OverlayPanel.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/16/25.
+//
+
+import UIKit
+
+final class OverlayPanel: UIView {
+    private let titleLabel = UILabel()
+    private let textLabel = UILabel()
+    private let askButton = UIButton(type: .system)
+    private let applyButton = UIButton(type: .system)
+    private let closeButton = UIButton(type: .system)
+
+    var onAsk: (() -> Void)?
+    var onApply: (() -> Void)?
+    var onClose: (() -> Void)?
+    // 배치 시 사용: 패널 최대 너비
+    var maxWidth: CGFloat = 320
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        layer.cornerRadius = 12
+        layer.masksToBounds = true
+
+        // 반투명 블러 배경
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(blur)
+        NSLayoutConstraint.activate([
+            blur.topAnchor.constraint(equalTo: topAnchor),
+            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
+            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
+
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        titleLabel.font = .boldSystemFont(ofSize: 15)
+        titleLabel.text = "선택된 문장"
+        titleLabel.numberOfLines = 1
+
+        textLabel.font = .systemFont(ofSize: 14)
+        textLabel.numberOfLines = 3
+
+        let h = UIStackView()
+        h.axis = .horizontal
+        h.spacing = 8
+        h.distribution = .fillEqually
+
+        askButton.setTitle("AI에 물어보기", for: .normal)
+        applyButton.setTitle("적용", for: .normal)
+        closeButton.setTitle("닫기", for: .normal)
+
+        h.addArrangedSubview(askButton)
+        h.addArrangedSubview(applyButton)
+
+        stack.addArrangedSubview(titleLabel)
+        stack.addArrangedSubview(textLabel)
+
+        let bottom = UIStackView()
+        bottom.axis = .horizontal
+        bottom.alignment = .center
+        bottom.spacing = 8
+        bottom.addArrangedSubview(h)
+        bottom.addArrangedSubview(closeButton)
+
+        stack.addArrangedSubview(bottom)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+        ])
+
+        askButton.addTarget(self, action: #selector(onTapAsk), for: .touchUpInside)
+        applyButton.addTarget(self, action: #selector(onTapApply), for: .touchUpInside)
+        closeButton.addTarget(self, action: #selector(onTapClose), for: .touchUpInside)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(selectedText: String, improved: String?) {
+        textLabel.text = improved ?? selectedText
+        applyButton.isEnabled = (improved != nil)
+        setNeedsLayout()
+        layoutIfNeeded()
+    }
+    
+    /// 클릭된 요소 rect(뷰포트 기준)에 맞춰 화면 내 적절한 위치로 배치
+    func present(near rect: CGRect, in hostView: UIView, margin: CGFloat = 8) {
+        // 사이즈 계산
+        let targetWidth = min(maxWidth, hostView.bounds.width - 2*margin)
+        let size = systemLayoutSizeFitting(
+            CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let panelW = min(size.width, targetWidth)
+        let panelH = size.height
+
+        // 기본 위치: target 위쪽에 띄우되, 공간 없으면 아래쪽
+        var x = rect.minX
+        var y = rect.minY - panelH - margin
+
+        // 화면 경계 보정
+        if y < margin {
+            y = rect.maxY + margin
+        }
+        if x + panelW > hostView.bounds.width - margin {
+            x = hostView.bounds.width - margin - panelW
+        }
+        if x < margin { x = margin }
+
+        frame = CGRect(x: x, y: y, width: panelW, height: panelH)
+        isHidden = false
+    }
+
+    @objc private func onTapAsk() { onAsk?() }
+    @objc private func onTapApply() { onApply?() }
+    @objc private func onTapClose() { onClose?() }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Browser/View/URLBarView.swift
+// File: URLBarView.swift
+import SwiftUI
+
+struct URLBarView: View {
+    @Binding var urlString: String
+    var onGo: (String) -> Void
+    var body: some View {
+        HStack {
+            TextField("https://…", text: $urlString)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .keyboardType(.URL)
+                .onSubmit { onGo(urlString) }
+            Button("이동") { onGo(urlString) }
+        }
+        .padding(8)
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Browser/View/WebContainerView.swift
+import SwiftUI
+import WebKit
+
+@MainActor
+struct WebContainerView: UIViewRepresentable {
+    let request: URLRequest?
+    var onAttach: ((WKWebView) -> Void)? = nil
+    var onDidFinish: ((WKWebView, URL) -> Void)? = nil
+    var onSelectSegmentID: ((String) -> Void)? = nil
+    var onAskAI: (() -> Void)? = nil
+    var onApplyAI: (() -> Void)? = nil
+    var onClosePanel: (() -> Void)? = nil
+    var onNavigate: (() -> Void)? = nil
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.userContentController.add(context.coordinator, name: "selection")
+        let webView = WKWebView(frame: .zero)
+        webView.navigationDelegate = context.coordinator
+        context.coordinator.install(on: webView)
+        onAttach?(webView)
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        guard let req = request else { return }
+        // 동일 URL 반복 로드 방지 (리다이렉트가 잦다면 커스텀 비교 로직 고려)
+        if uiView.url == nil || uiView.url?.absoluteString != req.url?.absoluteString {
+            uiView.load(req)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    // MARK: - Coordinator
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        private let parent: WebContainerView
+        private var overlay: OverlayPanel?
+        private var overlayInstalled = false
+        var bridge: SelectionBridge?
+        private weak var webView: WKWebView?
+        
+        init(parent: WebContainerView) { self.parent = parent }
+        
+        
+        func install(on webView: WKWebView) {
+            self.webView = webView
+            self.bridge = SelectionBridge(webView: webView)
+            ensureOverlay(on: webView)
+
+            // 기존 bridge.onSelect 제거됨
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "selection")
+            webView.configuration.userContentController.add(self, name: "selection")
+        }
+
+        func userContentController(_ ucc: WKUserContentController, didReceive msg: WKScriptMessage) {
+            guard msg.name == "selection",
+                  let segId = msg.body as? String,
+                  let web = self.webView else { return }
+
+            // 1️⃣ parent로 segId 전달
+            self.parent.onSelectSegmentID?(segId)
+
+            // 2️⃣ rect 조회 후 오버레이 표시
+            Task { [weak self] in
+                guard let self else { return }
+                let exec = WKWebViewScriptAdapter(webView: web)
+                struct R: Decodable { let x: CGFloat; let y: CGFloat; let width: CGFloat; let height: CGFloat }
+                if let rectJSON: String = try? await exec.runJS(#"window.MT_GET_RECT(\#(String(reflecting: segId)))"#),
+                   let data = rectJSON.data(using: .utf8),
+                   let r = try? JSONDecoder().decode(R.self, from: data)
+                {
+                    await MainActor.run {
+                        self.ensureOverlay(on: web)
+                        /*let selectedText = self.parent.vm?.lastSegments.first(where: { $0.id == segId })?.originalText ?? ""*/
+
+                        self.overlay?.update(selectedText: "", improved: nil)
+                        self.overlay?.present(
+                            near: CGRect(x: r.x, y: r.y, width: r.width, height: r.height),
+                            in: web
+                        )
+                    }
+                }
+            }
+        }
+        
+        private func ensureOverlay(on webView: WKWebView) {
+            guard overlayInstalled == false else { return }
+            overlayInstalled = true
+            let panel = OverlayPanel(frame: .zero)
+            panel.translatesAutoresizingMaskIntoConstraints = false
+            panel.isHidden = true
+            webView.addSubview(panel)
+
+            // 버튼 콜백을 ViewModel로 연결
+            panel.onAsk = { [weak self] in self?.parent.onAskAI?() }
+            panel.onApply = { [weak self] in self?.parent.onApplyAI?() }
+            panel.onClose = { [weak self] in
+                self?.parent.onClosePanel?()
+                self?.overlay?.isHidden = true
+                // 선택 강조 해제
+                let js = "window.MT && window.MT.CLEAR && window.MT.CLEAR();"
+                Task { @MainActor in _ = try? await self?.webView?.callAsyncJavaScript(js,
+                                                                                       arguments: [:],
+                                                                                       in: nil,
+                                                                                       contentWorld: .page) }
+            }
+            self.overlay = panel
+        }
+
+        func showOverlay(selectedText: String, improved: String? = nil) {
+            overlay?.isHidden = false
+            overlay?.update(selectedText: selectedText, improved: improved)
+        }
+        
+        func markSegments(_ pairs: [(id: String, text: String)]) async {
+            await bridge?.mark(segments: pairs)
+        }
+
+        // 외부에서 개선안 반영 후 텍스트 갱신 표시하고 싶을 때 호출
+        func updateOverlay(improved: String, anchor: CGRect?) {
+            guard let overlay, let web = webView else { return }
+            overlay.update(selectedText: "", improved: improved)
+            if let rect = anchor {
+                overlay.present(near: rect, in: web)
+            }
+        }
+
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            parent.onNavigate?()
+
+            // ❗️요청별 once 보장: 전역 플래그를 쓰지 말고, 로컬 클로저로 가드
+            var called = false
+            let decideOnce: (WKNavigationActionPolicy) -> Void = { policy in
+                guard !called else { return }
+                called = true
+                decisionHandler(policy)
+            }
+
+            // 외부 스킴 처리 예: 호출 후 반드시 return
+            if let url = navigationAction.request.url,
+               let scheme = url.scheme?.lowercased(),
+               ["tel", "mailto", "maps", "itms-apps"].contains(scheme) {
+                UIApplication.shared.open(url)
+                decideOnce(.cancel)
+                return
+            }
+
+            // (비동기 판단이 필요하면 여기서 .cancel 후 별도 로드를 트리거하세요.
+            //  또는 판단이 끝난 즉시 decideOnce(.allow) — 어쨌든 한번만 호출)
+
+            decideOnce(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if let url = webView.url {
+                parent.onDidFinish?(webView, url)
+            }
+        }
+        
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            parent.onNavigate?()
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Browser/ViewModel/BrowserViewModel.swift
+// File: BrowserViewModel.swift
+import Foundation
+import WebKit
+
+@MainActor
+final class BrowserViewModel: ObservableObject {
+    @Published var urlString: String = "https://xinjinjumin617262919231.lofter.com/post/8c9245ae_2bf5e094e?incantation=rz0xYPla9DXn"
+    @Published var isTranslating: Bool = false
+    @Published var showOriginal: Bool = false
+    @Published var engineBadgeEnabled: Bool = true
+    @Published var reviewOnlyFilter: Bool = false
+
+    // Web loading binding
+    @Published var request: URLRequest? = nil
+
+    // For optional auto-translate trigger
+    @Published var pendingAutoTranslateID: UUID? = nil
+    private var hasAttemptedTranslationForCurrentPage = false
+
+    // Keep last attached webView (weak-like)
+    weak var attachedWebView: WKWebView?
+
+    var currentURL: URL? { URL(string: urlString) }
+    
+    private(set) var lastSegments: [Segment] = []
+    private(set) var lastResults: [TranslationResult] = []
+
+    private let container: AppContainer
+    let extractor: ContentExtractor
+    private let router: TranslationRouter
+//    let overlay: OverlayRenderer
+    let replacer: InlineReplacer
+    
+    @Published var fmPanel: FMAnswer?
+    
+    let fmQuery: FMQueryService
+    let settings: UserSettings
+    
+    private var selectedSegment: Segment?
+    private var pendingImproved: String?
+
+    init(
+        container: AppContainer,
+        extractor: ContentExtractor = WKContentExtractor(),
+        router: TranslationRouter,
+        replacer: InlineReplacer,
+        fmQuery: FMQueryService,
+        settings: UserSettings
+    ) {
+        self.container = container
+        self.extractor = extractor
+        self.router = router
+        self.replacer = replacer
+        self.fmQuery = fmQuery
+        self.settings = settings
+    }
+
+    func normalizedURL(from string: String) -> URL? {
+        guard !string.isEmpty else { return nil }
+        if let url = URL(string: string), url.scheme != nil { return url }
+        return URL(string: "https://" + string)
+    }
+
+    func load(urlString: String) {
+        self.urlString = urlString
+        guard var url = normalizedURL(from: urlString) else { return }
+
+        // 같은 URL로 재로딩을 시도할 때도 실제로 다시 로드가 일어나도록 fragment로 bust
+        if let current = attachedWebView?.url, current == url {
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let ts = String(Int(Date().timeIntervalSince1970))
+            // 기존 fragment 보존 + 'reload' 토큰 추가
+            let existingFrag = (comps?.fragment ?? "")
+            let token = existingFrag.isEmpty ? "reload=\(ts)" : existingFrag + "&reload=\(ts)"
+            comps?.fragment = token
+            url = comps?.url ?? url
+        }
+
+        // 캐시 무시로 강제 새 로드 성향을 높임
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        self.request = req
+
+        // 수동 로드가 시작되므로 이번 페이지에 대해 1회 시도 가능하도록 리셋
+        hasAttemptedTranslationForCurrentPage = false
+    }
+    
+    func attachWebView(_ web: WKWebView) {
+        self.attachedWebView = web
+    }
+    
+    // WebContainerView.onSelectSegmentID 에 연결
+    func onSegmentTapped(id: String) async {
+        guard let webView = attachedWebView, let seg = lastSegments.first(where: { $0.id == id }) else { return }
+        self.selectedSegment = seg
+        self.pendingImproved = nil
+
+        // 하이라이트 표시
+        let exec = WKWebViewScriptAdapter(webView: webView)
+        _ = try? await exec.runJS(#"window.MT && MT.HILITE && MT.HILITE(\#(String(reflecting: id)));"#)
+    }
+    
+    func askAIForSelected() async {
+        guard settings.useFM else { return }
+        guard let seg = selectedSegment else { return }
+        let current = lastResults.first(where: { $0.segmentID == seg.id })?.text
+        // 간단 문맥: ±1
+        let para = lastSegments.filter { $0.url == seg.url }.sorted { $0.indexInPage < $1.indexInPage }
+        let idx = para.firstIndex(where: { $0.id == seg.id }) ?? 0
+        let prev = idx > 0 ? [para[idx - 1].originalText] : []
+        let next = idx + 1 < para.count ? [para[idx + 1].originalText] : []
+        do {
+            let ans = try await fmQuery.ask(for: seg, currentTranslation: current, context: .init(previous: prev, next: next))
+            self.pendingImproved = ans.improvedText
+            if let web = attachedWebView,
+               let coord = web.navigationDelegate as? WebContainerView.Coordinator
+            {
+                coord.showOverlay(selectedText: seg.originalText, improved: ans.improvedText)
+            }
+        } catch {
+            print("FM ask failed: \(error)")
+        }
+    }
+
+    func applyAIImproved() {
+        guard let seg = selectedSegment, let improved = pendingImproved, let web = attachedWebView else { return }
+        let exec = WKWebViewScriptAdapter(webView: web)
+        replacer.setPairs([(original: seg.originalText, translated: improved)], using: exec)
+        replacer.apply(using: exec, observe: false)
+        if let i = lastResults.firstIndex(where: { $0.segmentID == seg.id }) {
+            lastResults[i] = TranslationResult(
+                id: lastResults[i].id, segmentID: seg.id,
+                engine: lastResults[i].engine, text: improved,
+                hasReviewTag: lastResults[i].hasReviewTag,
+                residualSourceRatio: lastResults[i].residualSourceRatio,
+                createdAt: Date()
+            )
+        }
+        if let coord = web.navigationDelegate as? WebContainerView.Coordinator {
+            coord.updateOverlay(improved: improved, anchor: nil)
+        }
+    }
+
+    func onWebViewDidFinishLoad(_ webView: WKWebView, url: URL) {
+        normalizePageScale(webView)
+
+        // Auto-translate policy: translate after each load (can refine later)
+        if hasAttemptedTranslationForCurrentPage == false {
+            pendingAutoTranslateID = UUID()
+        }
+
+        // 비동기 추출 및 문장 마킹
+        Task { [weak self, weak webView] in
+            guard let self, let webView else { return }
+            do {
+                let exec = WKWebViewScriptAdapter(webView: webView)
+                        
+                let segs = try await self.extractor.extract(using: exec, url: url)
+                self.lastSegments = segs
+
+                // Coordinator 경유로 문장 마킹 (아래 3번의 공개 메서드 사용)
+                if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
+                    let pairs = segs.map { (id: $0.id, text: $0.originalText) }
+                    await coord.markSegments(pairs)
+                }
+            } catch {
+                print("extract error: \(error)")
+            }
+        }
+    }
+
+    func startTranslate(on webView: WKWebView) async {
+        guard let url = webView.url else { return }
+        hasAttemptedTranslationForCurrentPage = true
+        
+        isTranslating = true
+        defer {
+            Task { @MainActor in
+                self.normalizePageScale(webView)
+                self.isTranslating = false
+            }
+        }
+        do {
+            let exec = WKWebViewScriptAdapter(webView: webView)
+            let segs: [Segment]
+            if !lastSegments.isEmpty, lastSegments.allSatisfy({ $0.url == url }) {
+                segs = lastSegments
+            } else {
+                segs = try await extractor.extract(using: exec, url: url)
+                self.lastSegments = segs
+            }
+            
+            let opts = TranslationOptions()
+            do {
+                let results = try await router.translate(segments: segs, options: opts)
+                let pairs: [(original: String, translated: String)] =
+                    zip(segs, results).compactMap { seg, res in
+                        guard !res.text.isEmpty else { return nil }
+                        return (seg.originalText, res.text)
+                    }
+                // 1) 페어 등록
+                replacer.setPairs(pairs, using: exec)
+                // 2) 적용 + 옵저버 켜기(더 보기 등 동적 치환)
+                replacer.apply(using: exec, observe: true)
+
+                // 캐시
+                self.lastSegments = segs
+                self.lastResults = results
+            } catch {
+                print("translate error: \(error)")
+                replacer.restore(using: exec)
+                _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
+            }
+//            toggleOverlayVisibility(showOriginal)
+        } catch {
+            // 본문 추출 자체가 실패한 케이스(희귀)
+            print("Extract error: \(error)")
+        }
+    }
+
+//    func toggleOverlayVisibility(_ showOriginal: Bool) {
+//        guard let webView = attachedWebView else { return }
+//        overlay.toggleOriginal(showOriginal, in: webView)
+//    }
+    
+    private func normalizePageScale(_ webView: WKWebView) {
+        // iOS 16+ WKWebView.pageZoom이 있으면 우선 적용
+        if webView.responds(to: #selector(getter: WKWebView.pageZoom)) {
+            webView.pageZoom = 1.0
+        }
+        // 방어적으로 ScrollView 배율도 초기화
+        webView.scrollView.setZoomScale(1.0, animated: false)
+    }
+    
+    var hasLastInline: Bool { !(lastSegments.isEmpty || lastResults.isEmpty) }
+
+    /// UI의 showOriginal 변경을 이 함수로 처리
+    @MainActor
+    func onShowOriginalChanged(_ showOriginal: Bool) {
+        guard let webView = attachedWebView else { return }
+        let exec = WKWebViewScriptAdapter(webView: webView)
+        if showOriginal {
+            // 원문보기 ON → 치환 전부 복원
+            replacer.restore(using: exec)
+        } else {
+            if hasLastInline {
+                // 기존 페어로 즉시 적용(옵저버 on)
+                let pairs = zip(lastSegments, lastResults).compactMap { ($0.originalText, $1.text) }
+                replacer.setPairs(pairs, using: exec)
+                replacer.apply(using: exec, observe: true)
+            } else {
+                Task { await startTranslate(on: webView) }
+            }
+        }
+    }
+    
+    func willNavigate() {
+        guard let webView = attachedWebView else { return }
+        let exec = WKWebViewScriptAdapter(webView: webView)
+        replacer.restore(using: exec)
+        Task { _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Glossary/GlossaryConstants.swift
+//
+//  GlossaryConstants.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/14/25.
+//
+
+enum GlossaryConstants {
+    static let categories: [String] = [
+        "울트라맨",
+        "커플링명",
+        "캐릭터명",
+        "괴수, 성인",
+        "도구, 폼, 기술명",
+        "기타"
+    ]
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Glossary/GlossaryJSON.swift
+//  GlossaryJSON.swift
+import Foundation
+import UniformTypeIdentifiers
+import SwiftUI
+
+// 내보내기/가져오기 JSON 포맷
+struct GlossaryJSON: Codable {
+    struct Item: Codable {
+        let source: String
+        let target: String
+        let strict: Bool?
+        let variants: [String]?
+        let notes: String?
+        let category: String?
+    }
+    let meta: Meta
+    let terms: [Item]
+
+    struct Meta: Codable { let version: Int; let lang: String }
+}
+
+// FileExporter 용 문서 래퍼
+struct GlossaryJSONDocument: FileDocument, Sendable {
+    static var readableContentTypes: [UTType] { [.json] }
+    
+    var payload: GlossaryJSON
+
+    init(terms: [Term]) {
+        self.payload = GlossaryJSON(
+            meta: .init(version: 2, lang: "zh->ko"),
+            terms: terms.map {
+                .init(
+                    source: $0.source,
+                    target: $0.target,
+                    strict: $0.strict,
+                    variants: $0.variants,
+                    notes: $0.notes,
+                    category: $0.category
+                )
+            }
+        )
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        // 가져오기는 GlossaryTabView에서 처리
+        self.payload = GlossaryJSON(meta: .init(version: 2, lang: "zh->ko"), terms: [])
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        let data = try JSONEncoder().encode(payload)
+        return .init(regularFileWithContents: data)
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Glossary/View/GlossaryTabView.swift
+// File: GlossaryTabView.swift
+import SwiftUI
+import SwiftData
+
+struct GlossaryTabView: View {
+    @Environment(\.modelContext) private var modelContext
+    
+    var body: some View {
+        GlossaryContentView(modelContext: modelContext)
+    }
+}
+
+private struct GlossaryContentView: View {
+    let modelContext: ModelContext
+    @StateObject private var vm: GlossaryViewModel
+
+    @State private var isExporting = false
+    @State private var isImporting = false
+
+    init(modelContext: ModelContext) {
+        self.modelContext = modelContext
+        _vm = StateObject(wrappedValue: GlossaryViewModel(modelContext: modelContext))
+    }
+
+    var body: some View {
+        VStack {
+            HStack {
+                TextField("검색(중/한)", text: Binding(
+                    get: { vm.query },
+                    set: { vm.query = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .onReceive(
+                    vm.$query
+                        .removeDuplicates()
+                        .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+                ) { _ in
+                    vm.refresh()
+                }
+
+                Picker("분류", selection: Binding(
+                    get: { vm.selectedCategory },
+                    set: { vm.selectedCategory = $0 }
+                  )) {
+                      Text("전체").tag("전체")
+                      ForEach(GlossaryConstants.categories, id: \.self) { Text($0).tag($0) }
+                  }
+                .onChange(of: vm.selectedCategory) { _, _ in vm.refresh() }
+                
+                Button("추가") { vm.addNew() }
+
+                Menu("가져오기/내보내기") {
+                    Button("JSON 가져오기…") { isImporting = true }
+                    Button("JSON 내보내기…") { isExporting = true }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 8)
+
+            List {
+                ForEach(vm.terms) { term in
+                    Button {
+                        vm.edit(term)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(term.source).font(.headline)
+                                if term.strict { Text("strict").font(.caption).foregroundStyle(.secondary) }
+                                if let cat = term.category, !cat.isEmpty {
+                                    Text(cat).font(.caption2).padding(4).background(.thinMaterial).cornerRadius(6)
+                                }
+                            }
+                            HStack(spacing: 8) {
+                                Text(term.target).foregroundStyle(.secondary)
+                                if !term.variants.isEmpty {
+                                    Text(term.variants.joined(separator: ", "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            if let notes = term.notes, !notes.isEmpty {
+                                Text(notes).font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .onDelete { vm.delete(at: $0) }
+            }
+        }
+        .onAppear { vm.refresh() }
+
+        // ✅ VM의 @Published Bool에 직접 바인딩
+        .sheet(isPresented: $vm.isPresentingEditor) {
+            TermEditorSheet(
+                term: vm.editingTerm,               // 편집이면 대상, 신규면 nil
+                onSave: { vm.upsert($0) },
+                onCancel: { vm.isPresentingEditor = false }
+            )
+            .presentationDetents([.medium, .large])
+        }
+
+        // Export / Import
+        .fileExporter(isPresented: $isExporting,
+                      document: GlossaryJSONDocument(terms: vm.terms),
+                      contentType: .json,
+                      defaultFilename: "terms.json") { _ in }
+        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
+            if case let .success(url) = result { vm.importJSON(from: url) }
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Glossary/View/TermEditorSheet.swift
+// File: TermEditorSheet.swift
+import SwiftUI
+
+struct TermEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    /// 편집 대상(nil이면 신규)
+    let original: Term?
+    /// 저장 콜백: 신규/수정 모두 Term 반환
+    let onSave: (Term) -> Void
+    let onCancel: () -> Void
+
+    @State private var draft: TermDraft
+
+    init(term: Term?, onSave: @escaping (Term) -> Void, onCancel: @escaping () -> Void) {
+        self.original = term
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _draft = State(initialValue: term.map(TermDraft.init(from:)) ?? TermDraft())
+    }
+
+    private var isNew: Bool { original == nil }
+    private var titleText: String { isNew ? "용어 추가" : "용어 편집" }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("기본") {
+                    TextField("source", text: Binding(
+                        get: { draft.source },
+                        set: { draft.source = $0 }
+                    ))
+                    TextField("target", text: Binding(
+                        get: { draft.target },
+                        set: { draft.target = $0 }
+                    ))
+                    Toggle("strict", isOn: Binding(
+                        get: { draft.strict },
+                        set: { draft.strict = $0 }
+                    ))
+                    Picker("카테고리", selection: Binding(
+                        get: { draft.category ?? "" },
+                        set: { draft.category = $0.isEmpty ? nil : $0 }
+                    )) {
+                        Text("선택 안 함").tag("")
+                        ForEach(GlossaryConstants.categories, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+                Section("옵션") {
+                    TextField("variants(쉼표로 구분)", text: Binding(
+                        get: { draft.variants.joined(separator: ",") },
+                        set: { draft.variants = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+                    ))
+                    TextField("notes", text: Binding(
+                        get: { draft.notes ?? "" },
+                        set: { draft.notes = $0.isEmpty ? nil : $0 }
+                    ))
+                }
+            }
+            .navigationTitle(titleText)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("취소") { onCancel(); dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("저장") {
+                        let out = draft.toModel(into: original)
+                        onSave(out)
+                        dismiss()
+                    }
+                    .disabled(draft.source.trimmingCharacters(in: .whitespaces).isEmpty ||
+                              draft.target.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+
+private struct TermDraft {
+    var source: String = ""
+    var target: String = ""
+    var strict: Bool = true
+    var variants: [String] = []
+    var notes: String? = nil
+    var category: String? = nil
+
+    init() {}
+    init(from term: Term) {
+        source = term.source
+        target = term.target
+        strict = term.strict
+        variants = term.variants
+        notes = term.notes
+        category = term.category
+    }
+
+    func toModel(into existing: Term? = nil) -> Term {
+        if let t = existing {
+            t.source = source
+            t.target = target
+            t.strict = strict
+            t.variants = variants
+            t.notes = notes
+            t.category = category
+            return t
+        } else {
+            return Term(source: source, target: target, strict: strict, variants: variants, notes: notes, category: category)
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/Glossary/ViewModel/GlossaryViewModel.swift
+// File: GlossaryViewModel.swift
+import Foundation
+import SwiftData
+
+@MainActor
+final class GlossaryViewModel: ObservableObject {
+    @Published var query: String = ""
+    @Published var terms: [Term] = []
+    @Published var isPresentingEditor: Bool = false
+    @Published var editingTerm: Term? = nil
+    @Published var selectedCategory: String = "전체"
+
+    private let modelContext: ModelContext
+
+    init(modelContext: ModelContext) {
+        self.modelContext = modelContext
+    }
+
+    func refresh() {
+        // 1) 우선 카테고리만 DB에서 걸러서 가져오기 (이건 SQL로 안전)
+        var desc = FetchDescriptor<Term>()
+        desc.sortBy = [SortDescriptor(\.source, order: .forward)]
+
+        if selectedCategory != "전체" {
+            let cat = selectedCategory
+            desc.predicate = #Predicate<Term> { ($0.category ?? "") == cat }
+        }
+
+        let fetched = (try? modelContext.fetch(desc)) ?? []
+
+        // 2) 검색어는 메모리에서 로케일 친화적으로 필터
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            terms = fetched
+        } else {
+            terms = fetched.filter {
+                $0.source.localizedStandardContains(q)
+                || $0.target.localizedStandardContains(q)
+                || ($0.notes?.localizedStandardContains(q) ?? false)
+            }
+        }
+    }
+
+    func addNew() { editingTerm = nil; isPresentingEditor = true }
+    func edit(_ term: Term) { editingTerm = term; isPresentingEditor = true }
+
+    func upsert(_ t: Term) {
+        if let existing = editingTerm {
+            existing.source = t.source
+            existing.target = t.target
+            existing.strict = t.strict
+            existing.variants = t.variants
+            existing.notes = t.notes
+        } else {
+            modelContext.insert(t)
+        }
+        try? modelContext.save()
+        isPresentingEditor = false
+        editingTerm = nil
+        refresh()
+    }
+
+    func delete(at offsets: IndexSet) {
+        for idx in offsets { modelContext.delete(terms[idx]) }
+        try? modelContext.save()
+        refresh()
+    }
+
+    // MARK: - Import / Export
+    func exportJSON(to url: URL) {
+        let payload = GlossaryJSON(
+            meta: .init(version: 1, lang: "zh->ko"),
+            terms: terms.map {
+                .init(source: $0.source, target: $0.target,
+                      strict: $0.strict, variants: $0.variants, notes: $0.notes, category: $0.category)
+            }
+        )
+        do {
+            let data = try JSONEncoder().encode(payload)
+            try data.write(to: url, options: .atomic)
+        } catch { print("Export error:", error) }
+    }
+
+    func importJSON(from url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            let decoded = try JSONDecoder().decode(GlossaryJSON.self, from: data)
+            let all: [Term] = (try? modelContext.fetch(FetchDescriptor<Term>())) ?? []
+            let existingBySource = Dictionary(uniqueKeysWithValues: all.map { ($0.source, $0) })
+            for item in decoded.terms {
+                if let exist = existingBySource[item.source] {
+                    exist.target = item.target
+                    exist.strict = item.strict ?? true
+                    exist.variants = item.variants ?? []
+                    exist.notes = item.notes
+                    exist.category = item.category ?? exist.category
+                } else {
+                    modelContext.insert(
+                        Term(source: item.source,
+                             target: item.target,
+                             strict: item.strict ?? true,
+                             variants: item.variants ?? [],
+                             notes: item.notes,
+                             category: item.category)
+                    )
+                }
+            }
+            try modelContext.save()
+            refresh()
+        } catch { print("Import error:", error) }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Presentation/RootTabView.swift
+// File: RootTabView.swift
+import SwiftUI
+
+struct RootTabView: View {
+    @EnvironmentObject private var container: AppContainer
+    @Environment(\.modelContext) private var modelContext
+    
+    var body: some View {
+        TabView {
+            BrowserTabView(container: container)
+                .tabItem { Label("브라우저", systemImage: "globe") }
+            GlossaryTabView()
+                .tabItem { Label("용어집", systemImage: "book") }
+        }
+        .task {
+            // 앱 시작 후 한 번 시드 시도
+            GlossarySeeder.seedIfNeeded(modelContext)
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Adapters/Web/WKWebViewScriptAdapter.swift
+//
+//  WKWebViewScriptAdapter.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import WebKit
+import Foundation
+
+@MainActor
+public final class WKWebViewScriptAdapter: WebViewScriptExecutor {
+    private weak var webView: WKWebView?
+
+    public init(webView: WKWebView) {
+        self.webView = webView
+    }
+
+    public func runJS(_ script: String) async throws -> String {
+        guard let webView else { throw NSError(domain: "WebViewDeallocated", code: -1) }
+        return try await withCheckedThrowingContinuation { cont in
+            webView.evaluateJavaScript(script) { any, error in
+                if let error { cont.resume(throwing: error); return }
+                cont.resume(returning: any.map { "\($0)" } ?? "")
+            }
+        }
+    }
+
+    public func currentURL() async -> URL? {
+        await MainActor.run { [weak webView] in webView?.url }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Data/Cache/CacheStore.swift
+// File: CacheStore.swift
+import Foundation
+
+protocol CacheStore {
+    func lookup(key: String) -> TranslationResult?
+    func save(result: TranslationResult, forKey key: String)
+    func purge(before date: Date)
+}
+
+final class DefaultCacheStore: CacheStore {
+    private var store: [String: TranslationResult] = [:]
+    func lookup(key: String) -> TranslationResult? { store[key] }
+    func save(result: TranslationResult, forKey key: String) { store[key] = result }
+    func purge(before date: Date) { /* no-op for MVP */ }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Data/Glossary/GlossarySeeder.swift
+// Services/GlossarySeeder.swift
+import Foundation
+import SwiftData
+
+/// 앱 번들에 포함된 terms.json을 처음 실행 시(or 버전 갱신 시) SwiftData로 시드.
+enum GlossarySeeder {
+    private static let seededVersionKey = "seededTermsVersion" // UserDefaults key
+
+    static func seedIfNeeded(_ modelContext: ModelContext) {
+        // 1) 번들에서 terms.json 찾기
+        guard let url = Bundle.main.url(forResource: "terms", withExtension: "json") else {
+            print("GlossarySeeder: terms.json not found in bundle.")
+            return
+        }
+
+        // 2) 디코드
+        do {
+            let data = try Data(contentsOf: url)
+            let decoded = try JSONDecoder().decode(GlossaryJSON.self, from: data)
+
+            // 3) 이미 같은/더 높은 버전을 시드했다면 스킵
+            let currentSeededVer = UserDefaults.standard.integer(forKey: seededVersionKey)
+            if decoded.meta.version <= currentSeededVer {
+                print("GlossarySeeder: already seeded version \(currentSeededVer). skip.")
+                return
+            }
+
+            // 4) 기존 용어들 로드 (중복/업데이트 처리 대비)
+            var fetch = FetchDescriptor<Term>()
+            fetch.fetchLimit = 0
+            let existing = (try? modelContext.fetch(fetch)) ?? []
+            var existingBySource: [String: Term] = [:]
+            existing.forEach { existingBySource[$0.source] = $0 }
+
+            // 5) upsert
+            for item in decoded.terms {
+                if let exist = existingBySource[item.source] {
+                    // 업데이트
+                    exist.target = item.target
+                    exist.strict = item.strict ?? exist.strict
+                    exist.variants = item.variants ?? exist.variants
+                    exist.notes = item.notes
+                    exist.category = item.category ?? exist.category
+                } else {
+                    // 신규
+                    let t = Term(
+                        source: item.source,
+                        target: item.target,
+                        strict: item.strict ?? true,
+                        variants: item.variants ?? [],
+                        notes: item.notes,
+                        category: item.category
+                    )
+                    modelContext.insert(t)
+                }
+            }
+
+            try modelContext.save()
+
+            // 6) 성공적으로 저장했다면 버전 기록
+            UserDefaults.standard.set(decoded.meta.version, forKey: seededVersionKey)
+            print("GlossarySeeder: seeded terms v\(decoded.meta.version) (\(decoded.terms.count) items).")
+        } catch {
+            print("GlossarySeeder error:", error)
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Data/Glossary/GlossaryStore.swift
+// File: GlossaryStore.swift
+import Foundation
+import SwiftData
+
+@MainActor
+protocol GlossaryStore {
+    func fetchTerms(query: String?) throws -> [Term]
+    func upsert(term: Term) throws
+    func delete(term: Term) throws
+    func snapshotDictionary() throws -> [String: String] // source→target
+}
+
+final class NopGlossaryStore: GlossaryStore {
+    func fetchTerms(query: String?) throws -> [Term] { [] }
+    func upsert(term: Term) throws { }
+    func delete(term: Term) throws { }
+    func snapshotDictionary() throws -> [String: String] { [:] }
+}
+
+final class DefaultGlossaryStore: GlossaryStore {
+    private let context: ModelContext
+    init(context: ModelContext) { self.context = context }
+    
+    func fetchTerms(query: String?) throws -> [Term] {
+        let descriptor = FetchDescriptor<Term>()
+        // (필요시 query로 predicate 구성)
+        return try context.fetch(descriptor)
+    }
+    func upsert(term: Term) throws { try context.save() }
+    func delete(term: Term) throws { context.delete(term); try context.save() }
+    func snapshotDictionary() throws -> [String: String] {
+        let terms = try fetchTerms(query: nil)
+        var dict: [String:String] = [:]
+        for t in terms {
+            dict[t.source] = t.target
+            // variants → 동일 타겟으로 맵핑
+            for v in t.variants { dict[v] = t.target }
+        }
+        print("snapshotDictionary count: \(dict.count)")
+        return dict
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/DefaultTranslationRouter.swift
+// File: DefaultTranslationRouter.swift
+import Foundation
+
+final class DefaultTranslationRouter: TranslationRouter {
+    private let afm: TranslationEngine
+    private let deepl: TranslationEngine
+    private let google: TranslationEngine
+    private let cache: CacheStore
+    private let glossaryStore: GlossaryStore
+    private let postEditor: PostEditor        // 유지(호출 제거)
+    private let riskScorer: RiskScorer
+    private let comparer: ResultComparer?     // 유지(호출 제거)
+    private let reranker: Reranker?           // 유지(호출 제거)
+
+    // private lazy var fm: FMOrchestrator = .init(...)
+
+    init(
+        afm: TranslationEngine,
+        deepl: TranslationEngine,
+        google: TranslationEngine,
+        cache: CacheStore,
+        glossaryStore: GlossaryStore,
+        postEditor: PostEditor,
+        riskScorer: RiskScorer,
+        comparer: ResultComparer?,
+        reranker: Reranker?
+    ) {
+        self.afm = afm
+        self.deepl = deepl
+        self.google = google
+        self.cache = cache
+        self.glossaryStore = glossaryStore
+        self.postEditor = postEditor
+        self.riskScorer = riskScorer
+        self.comparer = comparer
+        self.reranker = reranker
+    }
+
+    public func translate(
+        segments: [Segment],
+        options: TranslationOptions
+    ) async throws -> [TranslationResult] {
+        // 1) Glossary 스냅샷 (옵션이 켜진 경우에만)
+        let dict: [String: String]
+        if options.applyGlossary {
+            dict = await MainActor.run { (try? glossaryStore.snapshotDictionary()) ?? [:] }
+        } else {
+            dict = [:]
+        }
+
+        // 2) 캐시 조회 → hit/miss 분리
+        var cached: [TranslationResult] = []
+        var toTranslate: [Segment] = []
+        for s in segments {
+            let key = cacheKey(for: s, options: options, engine: .afm)
+            if let hit = cache.lookup(key: key) {
+                cached.append(hit)
+            } else {
+                toTranslate.append(s)
+            }
+        }
+
+        // 3) AFM으로 번역 (필요 시 마스킹)
+        var translated: [TranslationResult] = []
+        if toTranslate.isEmpty == false {
+            // (a) glossary 마스킹
+            let masking = toTranslate.map { s -> (seg: Segment, masked: String, tags: [String]) in
+                let m = DefaultTranslationRouter.mask(text: s.originalText, with: dict)
+                return (s, m.masked, m.tags)
+            }
+
+            let maskedSegments: [Segment] = masking.map { item in
+                Segment(
+                    id: item.seg.id,
+                    url: item.seg.url,
+                    indexInPage: item.seg.indexInPage,
+                    originalText: item.masked,
+                    normalizedText: item.seg.normalizedText
+                )
+            }
+
+            // (b) AFM 번역 호출
+            let afmResults = try await afm.translate(maskedSegments, options: options)
+
+            // 4) 언마스킹 → 리스크/리절듀얼 계산 → 캐시 저장
+            struct FinalPack {
+                let base: TranslationResult
+                let finalText: String
+                let residual: Double
+                let source: String
+            }
+
+            // 언마스킹 후 바로 최종 텍스트로 사용 (FM 자동 후처리 제거)
+            let finals: [FinalPack] = afmResults.enumerated().map { i, r in
+                let (seg, tags) = (masking[i].seg, masking[i].tags)
+                let unmasked = DefaultTranslationRouter.unmask(text: r.text, tags: tags)
+                // 간단 residual: 한자/한문자 비율 (기존 계산 유지)
+                let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                let residual = Double(hanCount) / Double(max(unmasked.count, 1))
+                return FinalPack(base: r, finalText: unmasked, residual: residual, source: seg.originalText)
+            }
+
+            // RiskScorer가 async라면 병렬 계산
+            let threshold = Rules.riskEscalationThreshold
+            let scores: [RiskScore] = try await withThrowingTaskGroup(of: (Int, RiskScore).self) { group in
+                for (idx, f) in finals.enumerated() {
+                    group.addTask {
+                        let s = try await self.riskScorer.scoreRisk(for: f.finalText, source: f.source)
+                        return (idx, s)
+                    }
+                }
+                var tmp = Array(repeating: RiskScore(value: 0), count: finals.count)
+                for try await (i, s) in group { tmp[i] = s }
+                return tmp
+            }
+
+            // 결과 합성 + 캐시 저장
+            translated.reserveCapacity(finals.count)
+            for (i, f) in finals.enumerated() {
+                let s = scores[i]
+                let result = TranslationResult(
+                    id: f.base.id,
+                    segmentID: f.base.segmentID,
+                    engine: f.base.engine,
+                    text: f.finalText,
+                    hasReviewTag: (s.value >= threshold),
+                    residualSourceRatio: f.residual,
+                    createdAt: f.base.createdAt
+                )
+                translated.append(result)
+                let key = cacheKey(for: masking[i].seg, options: options, engine: .afm)
+                cache.save(result: result, forKey: key)
+            }
+        }
+
+        // 5) (옵션) 향후 DeepL/Google 후보군과의 비교/재랭킹 위치 (FM 자동 후처리 제거로 현재는 패스)
+
+        // 6) 원래 순서로 머지 & 반환
+        let merged = (cached + translated)
+        let bySegment: [String: TranslationResult] = merged.reduce(into: [:]) { $0[$1.segmentID] = $1 }
+        return segments.compactMap { bySegment[$0.id] }
+    }
+
+    func cacheKey(for segment: Segment, options: TranslationOptions, engine: EngineTag) -> String {
+        "\(segment.id)|\(engine.rawValue)|pf=\(options.preserveFormatting)|style=\(options.style)|g=\(options.applyGlossary)"
+    }
+
+    /// 원문에 glossary 소스(중문)가 등장하면 ⟪G0⟫, ⟪G1⟫ ... 토큰으로 치환.
+    /// tags 배열에는 각 토큰의 최종 타깃(한글) 값을 순서대로 저장.
+    static func mask(text: String, with dict: [String: String]) -> (masked: String, tags: [String]) {
+        guard !dict.isEmpty, !text.isEmpty else { return (text, []) }
+        let keys = dict.keys.sorted { $0.count > $1.count }
+        var out = text
+        var tags: [String] = []
+        var used = Set<String>()
+
+        for k in keys {
+            guard let v = dict[k], !k.isEmpty else { continue }
+            if out.range(of: k) == nil { continue }
+            let token = "⟪G\(tags.count)⟫"
+            out = out.replacingOccurrences(of: k, with: token)
+            tags.append(v)
+            used.insert(k)
+        }
+        return (out, tags)
+    }
+
+    /// 번역 결과에서 ⟪G0⟫, ⟪G1⟫ ... 토큰을 사전에 저장한 타깃 한글로 복원.
+    static func unmask(text: String, tags: [String]) -> String {
+        guard !tags.isEmpty else { return text }
+        var out = text
+        for (i, val) in tags.enumerated() {
+            let token = "⟪G\(i)⟫"
+            out = out.replacingOccurrences(of: token, with: val)
+        }
+        return out
+    }
+
+    /// (FM 제거에 따라 현재 미사용이지만, 필요 시 재활용 가능)
+    static func lockTerms(in text: String, terms: [String]) -> (locked: String, locks: [String: String]) {
+        guard !terms.isEmpty else { return (text, [:]) }
+        var out = text
+        var locks: [String: String] = [:]
+        var used = 0
+        for term in terms.sorted(by: { $0.count > $1.count }) {
+            guard !term.isEmpty else { continue }
+            let token = "⟪T\(used)⟫"
+            if out.contains(term) {
+                out = out.replacingOccurrences(of: term, with: token)
+                locks[token] = term
+                used += 1
+            }
+        }
+        return (out, locks)
+    }
+
+    static func unlockTerms(in text: String, locks: [String: String]) -> String {
+        guard locks.isEmpty == false else { return text }
+        var out = text
+        for i in 0 ..< locks.count {
+            let tk = "⟪T\(i)⟫"
+            if let val = locks[tk] { out = out.replacingOccurrences(of: tk, with: val) }
+        }
+        return out
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/Polices/EngineTag.swift
+//
+//  EngineTag.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+public enum EngineTag: String, Codable { case afm, deepl, google, afmMask, unknown }
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/Polices/RouterDecision.swift
+//
+//  RouterDecision.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+public enum RouterDecision { case useAFM, retryAFMRelaxed, afmWithMasking, escalateDeepL, escalateGoogle }
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/Polices/Rules.swift
+//
+//  Rules.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+enum Rules {
+    static let residualSourceThreshold: Double = 0.02
+    static let reviewTagMaxRatio: Double = 0.10
+    static let lengthAnomalyRatio: Double = 0.40
+    static let riskEscalationThreshold: Int = 60
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/TranslationRouter.swift
+//
+//  TranslationRouter.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+protocol TranslationRouter {
+    func translate(segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult]
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/Types/RiskScore.swift
+// File: Types.swift
+
+public struct RiskScore { public let value: Int }
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Ochestration/Types/TranslationResult.swift
+//
+//  TranslationResult.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+public struct TranslationResult: Identifiable {
+    public let id: String
+    public let segmentID: String
+    public let engine: EngineTag
+    public let text: String
+    public let hasReviewTag: Bool // [재검토]
+    public let residualSourceRatio: Double // 잔여 한자 비율 등
+    public let createdAt: Date
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Engines/AFM/AFMEngine.swift
+// File: AFMEngine.swift
+import Foundation
+
+// 1) 앱 내 AFM 클라이언트 어댑터용 프로토콜
+// - 실제 구현체는 사용 중인 Foundation Models 호출 래퍼에 맞춰 Adapter를 만드세요.
+// - 기대 동작: inputs.count == outputs.count, 순서 보존
+public protocol AFMClient {
+    /// Returns translated strings in the same order as inputs
+    func translateBatch(texts: [String],
+                        style: TranslationStyle,
+                        preserveFormatting: Bool) async throws -> [String]
+}
+
+// 2) TranslationEngine 구현
+public struct AFMEngine: TranslationEngine {
+    public let tag: EngineTag = .afm
+    private let client: AFMClient
+
+    public init(client: AFMClient) {
+        self.client = client
+    }
+
+    public func translate(_ segments: [Segment],
+                          options: TranslationOptions) async throws -> [TranslationResult] {
+        guard !segments.isEmpty else { return [] }
+
+        // 안전한 배치 크기(필요시 조정)
+        let batchSize = 50
+        var results: [TranslationResult] = []
+        results.reserveCapacity(segments.count)
+        let now = Date()
+
+        var i = 0
+        while i < segments.count {
+            let end = min(i + batchSize, segments.count)
+            let slice = Array(segments[i..<end])
+            let texts = slice.map { $0.originalText }
+
+            let outs = try await client.translateBatch(
+                texts: texts,
+                style: options.style,
+                preserveFormatting: options.preserveFormatting
+            )
+
+            // 길이 불일치 방어
+            if outs.count != slice.count {
+                throw NSError(domain: "AFMEngine",
+                              code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "AFMClient returned \(outs.count) results for \(slice.count) inputs"])
+            }
+
+            for (seg, out) in zip(slice, outs) {
+                results.append(
+                    TranslationResult(
+                        id: seg.id + ":afm",
+                        segmentID: seg.id,
+                        engine: .afm,
+                        text: out,
+                        hasReviewTag: false,          // RiskScorer는 Router에서 반영
+                        residualSourceRatio: 0.0,     // 필요 시 후처리로 계산
+                        createdAt: now
+                    )
+                )
+            }
+            i = end
+        }
+        return results
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Engines/AFM/AFMTranslationService.swift
+// File: AFMTranslationService.swift
+import Foundation
+import Translation
+
+final class AFMTranslationService: AFMClient {
+    private weak var session: TranslationSession?
+    private var prepared = false
+
+    init() { }
+
+    @MainActor
+    func attach(session: TranslationSession) {
+        self.session = session
+        self.prepared = false
+    }
+
+    @MainActor
+    func translateBatch(
+        texts: [String],
+        style: TranslationStyle,
+        preserveFormatting: Bool
+    ) async throws -> [String] {
+        guard let session else {
+            throw NSError(
+                domain: "AFMTranslationService",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "TranslationSession not attached"]
+            )
+        }
+        if prepared == false {
+            do {
+                try await session.prepareTranslation()
+                prepared = true
+            } catch {
+                // 원인 파악 위한 로깅 강화
+                print("AFM prepareTranslation failed:", (error as NSError).domain, (error as NSError).code, (error as NSError).localizedDescription)
+                throw error
+            }
+        }
+        
+        var out: [String] = []
+        out.reserveCapacity(texts.count)
+        for text in texts {
+            do {
+                let response = try await session.translate(text)
+                out.append(response.targetText)
+            } catch {
+                // 내부 에러/언어 인식 실패 케이스 로그 강화
+                let ns = error as NSError
+                print("AFM translate error:", ns.domain, ns.code, ns.localizedDescription)
+                throw error
+            }
+        }
+        return out
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Engines/DeepL/DeepLEngine.swift
+// File: DeepLEngine.swift
+import Foundation
+
+final class DeepLEngine: TranslationEngine {
+    let tag: EngineTag = .deepl
+    struct Config { var apiKey: String? = nil }
+    init(config: Config = .init()) { }
+    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult] { [] }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Engines/Google/GoogleEngine.swift
+// File: GoogleEngine.swift
+import Foundation
+
+final class GoogleEngine: TranslationEngine {
+    let tag: EngineTag = .google
+    struct Config { var credentialPath: String? = nil }
+    init(config: Config = .init()) { }
+    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult] { [] }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/Engines/TranslationEngine.swift
+//
+//  TranslationEngine.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+protocol TranslationEngine {
+    var tag: EngineTag { get }
+    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult]
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Cache/FMCacheKeys.swift
+//
+//  FMCacheKeys.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+enum FMCacheKeys {
+    static func translationKey(inputHash: String, engine: EngineTag, fmModelID: String?) -> String {
+        if let mid = fmModelID, !mid.isEmpty {
+            return "tx:\(engine.rawValue):\(inputHash):fm@\(mid)"
+        } else {
+            return "tx:\(engine.rawValue):\(inputHash)"
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Consistency/CrossEngineComparer.swift
+// Services/Translation/FM/Consistency/CrossEngineComparer.swift
+// Services/Translation/FM/Consistency/CrossEngineComparer.swift
+import Foundation
+import FoundationModels
+
+@Generable
+struct Pick {
+    @Guide(description: "선택된 후보의 인덱스", .minimum(0))
+    var index: Int
+}
+
+public final class CrossEngineComparer: ResultComparer {
+    private let fm: FMModelManaging
+    public init(fm: FMModelManaging) { self.fm = fm }
+
+    public func compare(_ candidates: [TranslationResult], source: String) async throws -> TranslationResult? {
+        guard candidates.count >= 2 else { return candidates.first }
+        let list = candidates.enumerated()
+            .map { "\($0.offset): " + $0.element.text.replacingOccurrences(of: "\n", with: " ") }
+            .joined(separator: "\n")
+
+        let prompt = """
+        원문과 가장 의미가 정확히 일치하는 번역 후보의 인덱스를 고르라.
+        동률이면 더 자연스러운 한국어를 선택하라.
+
+        원문:
+        \(source)
+
+        후보들:
+        \(list)
+        """
+        let pick: Pick = try await fm.generate(prompt: prompt)
+        return candidates.indices.contains(pick.index) ? candidates[pick.index] : candidates.first
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Consistency/Reranker.swift
+//
+//  Reranker.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+final class RerankerImpl: Reranker {
+    func rerank(_ candidates: [TranslationResult], source: String) async throws -> [TranslationResult] {
+        return candidates
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Core/FMModelManager.swift
+import Foundation
+import FoundationModels
+
+public protocol FMTextGenerator: Sendable {
+    func complete(prompt: String) async throws -> String
+    func generate<T: Generable>(prompt: String) async throws -> T
+}
+
+public protocol FMModelManaging: FMTextGenerator, Sendable {
+    var isAvailable: Bool { get async }
+    func prepareIfNeeded() async
+}
+
+/// 세션 1개 + 임계영역(게이트)로 동시 1요청 보장
+public actor FMModelManager: FMModelManaging {
+    private var session: LanguageModelSession?
+    private var prepared = false
+    private var available = false
+    // 재진입 방지 (동시 respond 금지)
+    private let gate = AsyncSemaphore(value: 1)
+
+    public init() {}
+
+    public var isAvailable: Bool {
+        get async { available }
+    }
+
+    public func prepareIfNeeded() async {
+        guard !prepared else { return }
+        prepared = true
+        do {
+            let s = LanguageModelSession(
+                model: .default,
+                instructions: """
+                - Korean post-editor & structured generator.
+                - Keep meaning; improve fluency.
+                - Output exactly in the requested format when asked.
+                """
+            )
+            _ = try await s.respond(to: "ping")
+            self.session = s
+            self.available = true
+        } catch {
+            self.session = nil
+            self.available = false
+            // 로그만 남기고, 호출부에서 폴백 처리
+            print("FM warmup failed: \(error)")
+        }
+    }
+
+    public func complete(prompt: String) async throws -> String {
+        await prepareIfNeeded()
+        guard available, let s = session else { return prompt } // 폴백: 그대로 반환
+        // actor 격리: respond는 직렬 실행
+        return try await gate.withPermit {
+            try await s.respond(to: prompt).content
+        }
+    }
+    
+    
+    public func generate<T: Generable>(prompt: String) async throws -> T {
+        await prepareIfNeeded()
+        guard available, let s = session else {
+            throw NSError(domain: "FM", code: -100,
+                                      userInfo: [NSLocalizedDescriptionKey: "Foundation Models unavailable"])
+        }
+        
+        return try await gate.withPermit {
+            try await s.respond(to: prompt, generating: T.self).content
+        }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Interactive/DefaultFMQueryService.swift
+//
+//  DefaultFMQueryService.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/16/25.
+//
+
+import Foundation
+
+public actor DefaultFMQueryService: FMQueryService {
+    private let fm: FMModelManaging
+    public init(fm: FMModelManaging) { self.fm = fm }
+
+    public func ask(for segment: Segment,
+                    currentTranslation: String?,
+                    context: FMContext) async throws -> FMAnswer {
+
+        // FM 사용가능 아니면 폴백: 개선안 없이 종료
+        guard await fm.isAvailable else {
+            return FMAnswer(improvedText: nil, explanation: "On-device AI unavailable.")
+        }
+
+        // 문맥을 간단히 패킹
+        let prev = context.previous.joined(separator: " ")
+        let next = context.next.joined(separator: " ")
+        let current = currentTranslation ?? "(없음)"
+
+        let prompt = """
+        다음은 한 문단의 일부 문장들입니다.
+
+        [이전 문맥]
+        \(prev)
+
+        [타겟 문장 원문]
+        \(segment.originalText)
+
+        [다음 문맥]
+        \(next)
+
+        [현재 타겟 번역]
+        \(current)
+
+        요청:
+        1) 위 문맥을 반영하여 '타겟 문장'의 한국어 번역 1줄만 제시
+        2) (선택) 간단한 이유 1줄
+        출력 양식(정확히 지키시오):
+        - 번역: <텍스트>
+        - 이유: <텍스트 또는 빈칸>
+        """
+
+        let raw: String = try await fm.complete(prompt: prompt)
+        // 매우 보수적인 파서
+        let lines = raw.split(separator: "\n", omittingEmptySubsequences: false)
+        func extract(_ key: String) -> String? {
+            guard let line = lines.first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(key) }) else { return nil }
+            let s = line.replacingOccurrences(of: key, with: "")
+            return s.trimmingCharacters(in: .whitespaces)
+        }
+        let improved = extract("- 번역:")?.nilIfEmpty
+        let reason = extract("- 이유:")?.nilIfEmpty
+
+        return FMAnswer(improvedText: improved, explanation: reason)
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Interactive/FMQueryService.swift
+//
+//  FMQueryService.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/16/25.
+//
+
+import Foundation
+
+public struct FMAnswer: Sendable {
+    public let improvedText: String?
+    public let explanation: String?
+
+    public init(improvedText: String?, explanation: String?) {
+        self.improvedText = improvedText
+        self.explanation = explanation
+    }
+}
+
+public protocol FMQueryService: Sendable {
+    /// 사용자가 선택한 문장에 대해서만 FM 질의
+    func ask(for segment: Segment, currentTranslation: String?, context: FMContext) async throws -> FMAnswer
+}
+
+public struct NopQueryService: FMQueryService {
+    public func ask(for segment: Segment, currentTranslation: String?, context: FMContext) async throws -> FMAnswer {
+        return .init(improvedText: nil, explanation: nil)
+    }
+}
+
+public struct FMContext: Sendable {
+    /// 타겟 문장 앞뒤 문맥 (원문 기준)
+    public let previous: [String]
+    public let next: [String]
+    public init(previous: [String] = [], next: [String] = []) {
+        self.previous = previous
+        self.next = next
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Models/Embeddings.swift
+//
+//  Embeddings.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Orchestrator/FMConfig.swift
+//
+//  FMConfig.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+public struct FMConfig {
+    public var enablePostEdit: Bool
+    public var enableComparer: Bool
+    public var enableRerank: Bool
+
+    public init(
+        enablePostEdit: Bool = true,
+        enableComparer: Bool = false,
+        enableRerank: Bool = false
+    ) {
+        self.enablePostEdit = enablePostEdit
+        self.enableComparer = enableComparer
+        self.enableRerank = enableRerank
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Orchestrator/FMOrchestrator.swift
+//
+//  FMOrchestrator.swift
+
+import Foundation
+
+actor FMOrchestrator {
+    private let postEditor: PostEditor
+    private let riskScorer: RiskScorer
+    private let comparer: ResultComparer?
+    private let reranker: Reranker?
+
+    init(postEditor: PostEditor, riskScorer: RiskScorer,
+         comparer: ResultComparer?, reranker: Reranker?) {
+        self.postEditor = postEditor
+        self.riskScorer = riskScorer
+        self.comparer = comparer
+        self.reranker = reranker
+    }
+
+    func process(_ results: [TranslationResult], source: String, options: TranslationOptions) async -> [TranslationResult] {
+        // 1) Post-Edit (옵션: postEditor가 Nop이면 실질 no-op)
+        let postEditedTexts: [String]
+        do {
+            postEditedTexts = try await postEditor.postEditBatch(
+                texts: results.map(\.text),
+                style: options.style
+            )
+        } catch {
+            print("post edit error: \(error)")
+            postEditedTexts = results.map(\.text)
+        }
+
+        // 결과 치환
+        var updated: [TranslationResult] = zip(results, postEditedTexts).map { (orig, edited) in
+            TranslationResult(
+                id: orig.id, segmentID: orig.segmentID,
+                engine: orig.engine, text: edited,
+                hasReviewTag: orig.hasReviewTag,
+                residualSourceRatio: orig.residualSourceRatio,
+                createdAt: orig.createdAt
+            )
+        }
+
+        if let comparer {
+            do {
+                if let picked = try await comparer.compare(updated, source: source) {
+                    updated = updated.map { $0.segmentID == picked.segmentID ? picked : $0 }
+                }
+            } catch {
+                print("compare error: \(error)")
+            }
+        }
+        if let reranker{
+            do {
+                updated = try await reranker.rerank(updated, source: source)
+            } catch {
+                print("rerank error: \(error)")
+            }
+        }
+
+        return updated
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/PostEdit/FMPostEditor.swift
+// Services/Translation/FM/PostEdit/FMPostEditor.swift
+// Services/Translation/FM/PostEdit/FMPostEditor.swift
+import Foundation
+
+public final class FMPostEditor: PostEditor {
+    private let fm: FMModelManaging
+    public init(fm: FMModelManaging) { self.fm = fm }
+
+    public func postEditBatch(texts: [String], style: TranslationStyle) async throws -> [String] {
+        guard !texts.isEmpty else { return [] }
+
+        let styleDirective: String = {
+            switch style {
+            case .colloquialKo: return "자연스러운 구어체 한국어"
+            case .neutralDictionaryTone: return "사전식의 중립적이고 간결한 한국어"
+            }
+        }()
+
+        let limiter = ConcurrencyLimiter(limit: 4)
+        return try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for (i, line) in texts.enumerated() {
+                group.addTask { [styleDirective] in
+                    try await limiter.run {
+                        // 프롬프트: 락 토큰 보존을 강하게 지시
+                        let prompt = """
+                        아래 한국어 문장을 \(styleDirective)로 자연스럽게 다듬어라.
+                        의미는 유지하고, 락 토큰(⟪T1⟫, ⟪T2⟫, ...)은 문자 그대로 보존하라.
+                        추가 설명이나 접두/접미 문구 없이 문장만 출력하라.
+                        
+                        문장:
+                        \(line)
+                        """
+                        let out: String = try await self.fm.complete(prompt: prompt)
+                        return (i, out.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                }
+            }
+
+            var box = Array(repeating: "", count: texts.count)
+            for try await (i, s) in group { box[i] = s }
+            return box
+        }
+    }
+}
+
+struct ConcurrencyLimiter {
+    private let semaphore: AsyncSemaphore
+    init(limit: Int) { semaphore = AsyncSemaphore(value: limit) }
+
+    func run<T>(_ op: @Sendable () async throws -> T) async throws -> T {
+        try await semaphore.withPermit {
+            try await op()
+        }
+    }
+}
+
+public actor AsyncSemaphore {
+    private var value: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    public init(value: Int) { self.value = value }
+
+    public func acquire() async {
+        if value > 0 { value -= 1; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    public func release() {
+        if !waiters.isEmpty { waiters.removeFirst().resume() }
+        else { value += 1 }
+    }
+
+    // ✅ acquire/release를 actor 내부에서 처리 (defer 안전)
+    public func withPermit<T>(
+        _ op: @Sendable () async throws -> T
+    ) async rethrows -> T {
+        await acquire()
+        defer { release() }   // actor 격리 내부라 OK
+        return try await op()
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/PostEdit/FMStylePresets.swift
+//
+//  FMStylePresets.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Protocols/FMProtocols.swift
+//
+//  FMProtocols.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+/// 교차엔진 결과 대조용 (존재하면 사용, 없으면 스킵)
+public protocol ResultComparer: Sendable {
+    func compare(_ candidates: [TranslationResult], source: String) async throws -> TranslationResult?
+}
+
+/// 의미/유창성 재랭킹 (Minimum Bayes Risk 유사)
+public protocol Reranker: Sendable {
+    func rerank(_ candidates: [TranslationResult], source: String) async throws -> [TranslationResult]
+}
+
+public protocol RiskScorer: Sendable {
+    func scoreRisk(for translated: String, source: String?) async throws -> RiskScore
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Risk/FMRiskScorer.swift
+// Services/Translation/FM/Risk/FMRiskScorer.swift
+import Foundation
+import FoundationModels
+
+@Generable
+struct RiskOut {
+    @Guide(description: "Risk score of the translation", .range(0 ... 100))
+    let score: Int
+}
+
+public final class FMRiskScorer: RiskScorer {
+    private let fm: FMModelManaging
+    public init(fm: FMModelManaging) { self.fm = fm }
+
+    public func scoreRisk(for translated: String, source: String?) async throws -> RiskScore {
+        let prompt = """
+        다음 원문과 번역문의 위험도를 0..100 정수로 평가하라.
+        0=완벽, 100=매우 위험.
+
+        원문:
+        \(source ?? "")
+
+        번역문:
+        \(translated)
+        """
+        let out: RiskOut = try await fm.generate(prompt: prompt)
+        return RiskScore(value: max(0, min(100, out.score)))
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Risk/Heuristics.swift
+//
+//  Heuristics.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Safety/FMJSON.swift
+// Services/Translation/FM/Safety/FMJSON.swift
+import Foundation
+
+enum FMJSON {
+    static func extractJSONStringArray(from s: String) -> [String]? {
+        guard let start = s.lastIndex(of: "["), let end = s.lastIndex(of: "]"), start < end else { return nil }
+        let json = String(s[start...end])
+        guard let data = json.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([String].self, from: data) else { return nil }
+        return arr
+    }
+    static func extractFirstJSON(from s: String) -> String? {
+        if let (a, b) = findBalanced(in: s, open: "{", close: "}") { return String(s[a...b]) }
+        if let (a, b) = findBalanced(in: s, open: "[", close: "]") { return String(s[a...b]) }
+        return nil
+    }
+    private static func findBalanced(in s: String, open: Character, close: Character) -> (String.Index, String.Index)? {
+        var depth = 0; var start: String.Index?
+        var i = s.startIndex
+        while i < s.endIndex {
+            let c = s[i]
+            if c == open { if depth == 0 { start = i }; depth += 1 }
+            else if c == close {
+                depth -= 1
+                if depth == 0, let st = start { return (st, i) }
+            }
+            i = s.index(after: i)
+        }
+        return nil
+    }
+    static func encodeJSONStringArray(_ arr: [String]) throws -> String {
+        let data = try JSONEncoder().encode(arr)
+        return String(decoding: data, as: UTF8.self)
+    }
+    static func simpleKoreanPolish(_ s: String) -> String {
+        var t = s.replacingOccurrences(of: "\n", with: " ")
+        while t.contains("  ") { t = t.replacingOccurrences(of: "  ", with: " ") }
+        if !t.isEmpty, "!.?！？。".contains(t.last!) == false { t.append(".") }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    static func tailLine(from prompt: String) -> String {
+        String(prompt.split(whereSeparator: \.isNewline).last ?? "")
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/FM/Safety/Sanitizers.swift
+//
+//  Sanitizers.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/PostEditor/NopPostEditor.swift
+// NopPostEditor.swift
+import Foundation
+
+
+/// 더미/샘플 구현: 실제 FM 호출로 교체하세요.
+public struct NopPostEditor: PostEditor {
+    public init() {}
+    public func postEditBatch(texts: [String], style: TranslationStyle) async throws -> [String] { texts }
+}
+
+// 예시: 프롬프트 템플릿(서버/SDK 쪽에서 사용)
+// - 의미/사실/숫자/기호/URL/⟪Gk⟫ 토큰 변경 금지
+// - 띄어쓰기, 조사, 어순만 자연스럽게
+public enum PostEditPrompt {
+    public static func system(style: TranslationStyle) -> String {
+        """
+        역할: 한국어 문장 후편집기.
+        지침: 의미/사실/수치/날짜/명사구/고유명사/URL/기호/⟪Gk⟫ 토큰은 절대 변경하지 말 것.
+        목표: 띄어쓰기/조사/어순/부드러움만 개선. 문장 수는 유지.
+        출력: 입력과 동일한 언어(한국어)로만, 장식 없이.
+        """
+    }
+    public static let userPrefix = "다음 문장을 자연스럽게 다듬어줘:\n"
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/PostEditor/PostEditor.swift
+//
+//  PostEditor.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+/// ko→ko 후편집을 배치로 수행하는 클라이언트
+public protocol PostEditor: Sendable {
+    /// inputs.count == outputs.count, 순서 보존
+    func postEditBatch(texts: [String],
+                       style: TranslationStyle) async throws -> [String]
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/Translation/RiskScorer/DefaultRiskScorer.swift
+// File: RiskScorer.swift
+import Foundation
+
+struct Heur {
+    static let cjk = try! NSRegularExpression(pattern: #"\p{Han}"#)            // 한자(중문) 남아있나
+    static let gtok = try! NSRegularExpression(pattern: #"⟪[GT]\d+⟫"#)        // 마스킹/락 토큰 잔존
+    static let badEnd = try! NSRegularExpression(
+        pattern: #"(은|는|이|가|을|를|과|와|으로|로|라|이라|야|아)$"#)          // 문장 끝 조사 끊김
+}
+
+final class DefaultRiskScorer: RiskScorer {
+    func scoreRisk(for translated: String, source: String?) async throws -> RiskScore {
+        Self.heuristic(source: source, translated: translated)
+    }
+    
+    private static func heuristic(source: String?, translated: String) -> RiskScore {
+        var score = 0
+
+        // 1) 잔여 한자(중문) 비율
+        let hanCount = Heur.cjk.numberOfMatches(in: translated, range: NSRange(location: 0, length: (translated as NSString).length))
+        let koLen = max(translated.count, 1)
+        let residualRatio = Double(hanCount) / Double(koLen)
+        if residualRatio > Rules.residualSourceThreshold {              // 0.02 기본
+            score += Int(min(40, residualRatio * 100))                  // 최대 40점
+        }
+
+        // 2) 마스킹/락 토큰 잔존(버그/미복원)
+        if Heur.gtok.firstMatch(in: translated, range: NSRange(location: 0, length: (translated as NSString).length)) != nil {
+            score += 40                                                // 치명적
+        }
+
+        // 3) 길이 이상치(너무 짧음)
+        if let src = source {
+            let s = max(src.count, 1)
+            let t = translated.count
+            if Double(t) / Double(s) < (1.0 - Rules.lengthAnomalyRatio) { // 0.60 미만
+                score += 15
+            }
+        }
+
+        // 4) 문장 끝 조사 끊김(잘림 가능성)
+        if Heur.badEnd.firstMatch(in: translated, range: NSRange(location: 0, length: (translated as NSString).length)) != nil {
+            score += 10
+        }
+
+        return RiskScore(value: min(100, score))
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Extraction/ContentExtractor.swift
+// MARK: - ContentExtractor.swift
+import CryptoKit
+import Foundation
+import WebKit
+
+protocol ContentExtractor {
+    func extract(using exec: WebViewScriptExecutor, url: URL) async throws -> [Segment]
+}
+
+
+
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Extraction/WKContentExtractor.swift
+//
+//  WKContentExtractor.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import CryptoKit
+import Foundation
+
+enum ExtractorError: Error { case noHTML, noBodyText }
+
+final class WKContentExtractor: ContentExtractor {
+    public func extract(using exec: WebViewScriptExecutor, url: URL) async throws -> [Segment] {
+        let js = "(function(){var t=document.body?document.body.innerText:document.documentElement.innerText;return t||'';})()"
+        let value = try await exec.runJS(js)
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw ExtractorError.noBodyText }
+
+        let paras = text.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 2 }
+
+        var out: [Segment] = []
+        var idx = 0
+        for p in paras {
+            let chunks = p.split(usingRegex: #"(?<=[\.!?。！？])\s+"#)
+            for ch in chunks {
+                let original = ch.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !original.isEmpty else { continue }
+                let clipped = String(original.prefix(800))
+                // 너무 긴 문장이 들어오면 추가 분할
+                if clipped.count > 600 {
+                    // 1차: 쉼표류/중국어 쉼표로 분할 시도
+                    let subparts = clipped.split(usingRegex: #"[，,、;：:]\s*"#)
+                    if subparts.count > 1 {
+                        for sp in subparts {
+                            let s = String(sp.prefix(400)).trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !s.isEmpty else { continue }
+                            let normalized = normalizeForID(s)
+                            let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
+                            out.append(.init(id: sid, url: url, indexInPage: idx, originalText: s, normalizedText: normalized))
+                            idx += 1
+                        }
+                        continue
+                    }
+                    // 2차: 길이 기준 하드 컷 분할(400자 단위)
+                    var start = clipped.startIndex
+                    while start < clipped.endIndex {
+                        let end = clipped.index(start, offsetBy: 400, limitedBy: clipped.endIndex) ?? clipped.endIndex
+                        let s = String(clipped[start ..< end]).trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !s.isEmpty {
+                            let normalized = normalizeForID(s)
+                            let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
+                            out.append(.init(id: sid, url: url, indexInPage: idx, originalText: s, normalizedText: normalized))
+                            idx += 1
+                        }
+                        start = end
+                    }
+                    continue
+                }
+                let normalized = normalizeForID(clipped)
+                let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
+                out.append(.init(
+                    id: sid,
+                    url: url,
+                    indexInPage: idx,
+                    originalText: clipped,
+                    normalizedText: normalized
+                ))
+                idx += 1
+                if out.count >= 300 { break }
+            }
+            if out.count >= 300 { break }
+        }
+        return out
+    }
+
+    private func normalizeForID(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sha1Hex(_ s: String) -> String {
+        let digest = Insecure.SHA1.hash(data: Data(s.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private extension String {
+    func split(usingRegex pattern: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [self] }
+        let ns = self as NSString
+        let matches = regex.matches(in: self, range: NSRange(location: 0, length: ns.length))
+        var prev = 0
+        var parts: [String] = []
+        for m in matches {
+            let r = NSRange(location: prev, length: m.range.location - prev)
+            if r.length > 0 { parts.append(ns.substring(with: r)) }
+            prev = m.range.location + m.range.length
+        }
+        let tail = NSRange(location: prev, length: ns.length - prev)
+        if tail.length > 0 { parts.append(ns.substring(with: tail)) }
+        return parts
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Inline/InlineReplacer.swift
+// File: InlineReplacer.swift
+
+import Foundation
+
+public protocol InlineReplacer {
+    func setPairs(_ pairs: [(original: String, translated: String)], using exec: WebViewScriptExecutor)
+    func apply(using exec: WebViewScriptExecutor, observe: Bool)
+    func restore(using exec: WebViewScriptExecutor)
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Inline/WebViewInlineReplacer.swift
+//
+//  WebViewInlineReplacer.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+final class WebViewInlineReplacer: InlineReplacer {
+    public func setPairs(_ pairs: [(original: String, translated: String)], using exec: WebViewScriptExecutor) {
+        let payload = pairs.map { ["o": $0.original, "t": $0.translated] }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let js = """
+        (function(){
+          const P = \(json);
+          const norm = s => (s||'').replace(/\\s+/g,' ').trim();
+          const map = new Map(); for (const p of P) map.set(norm(p.o), p.t);
+
+          if (!window.__afmInline) window.__afmInline = {};
+          const S = window.__afmInline;
+          S.norm = norm;
+          S.map = map;
+
+          // 스킵: script/style/textarea/contenteditable 내부는 제외
+          S.shouldSkipNode = (node) => {
+            if (!node || node.nodeType !== Node.TEXT_NODE) return true;
+            const txt = node.nodeValue;
+            if (!txt || !txt.trim()) return true;
+            const el = node.parentElement;
+            if (!el) return true;
+            if (el.closest('script,style,textarea,[contenteditable]')) return true;
+            return false;
+          };
+
+          S.tryReplaceTextNode = (node) => {
+            if (S.shouldSkipNode(node)) return false;
+            if (node.__afmApplied) return false;
+            const raw = S.norm(node.nodeValue);
+            const t = S.map.get(raw);
+            if (t) {
+              node.__afmOriginal = node.nodeValue;
+              node.nodeValue = t;   // 텍스트만 교체 → 이벤트/구조 보존
+              node.__afmApplied = true;
+              return true;
+            }
+            return false;
+          };
+
+          S.applyAll = (root) => {
+            const r = root || document.body || document.documentElement;
+            const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+            let n, count = 0;
+            while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
+            return count;
+          };
+
+          S.restoreAll = (root) => {
+            const r = root || document.body || document.documentElement;
+            const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+            let n, count = 0;
+            while ((n = walker.nextNode())) {
+              if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
+                n.nodeValue = n.__afmOriginal;
+                n.__afmOriginal = undefined;
+                n.__afmApplied = undefined;
+                count++;
+              }
+            }
+            return count;
+          };
+
+          // micro-throttle (attributes 변동 다발 시 병합)
+          S._pending = false;
+          S._scheduleApply = (root) => {
+            if (S._pending) return;
+            S._pending = true;
+            (window.requestAnimationFrame || setTimeout)(() => {
+              S._pending = false;
+              S.applyAll(root);
+            }, 16);
+          };
+
+          S.enableObserver = () => {
+            if (S.observer) return 'exists';
+            S.observer = new MutationObserver(muts => {
+              for (const m of muts) {
+                if (m.type === 'childList') {
+                  m.addedNodes && m.addedNodes.forEach(node => {
+                    if (node.nodeType === Node.TEXT_NODE) { S.tryReplaceTextNode(node); }
+                    else if (node.nodeType === Node.ELEMENT_NODE) { S.applyAll(node); }
+                  });
+                } else if (m.type === 'characterData') {
+                  if (m.target && m.target.nodeType === Node.TEXT_NODE) S.tryReplaceTextNode(m.target);
+                } else if (m.type === 'attributes') {
+                  // class/open/hidden/style/aria-expanded 변동 시 해당 서브트리에 재적용
+                  const el = m.target;
+                  if (el && el.nodeType === Node.ELEMENT_NODE) S._scheduleApply(el);
+                }
+              }
+            });
+            const root = document.body || document.documentElement;
+            S.observer.observe(root, {
+              subtree: true,
+              childList: true,
+              characterData: true,
+              attributes: true,
+              attributeFilter: ['class','open','hidden','style','aria-expanded']
+            });
+            return 'enabled';
+          };
+
+          S.disableObserver = () => {
+            if (S.observer) { S.observer.disconnect(); S.observer = null; return 'disabled'; }
+            return 'noop';
+          };
+
+          return 'pairs_set:' + S.map.size;
+        })();
+        """
+        Task {
+            _ = try? await exec.runJS(js)
+        }
+    }
+
+    func apply(using exec: WebViewScriptExecutor, observe: Bool) {
+        let js = """
+        (function(){
+          const S = window.__afmInline;
+          if (!S || !S.map) return 'no_state';
+          const c = S.applyAll(document.body || document.documentElement);
+          if (\(observe ? "true" : "false")) S.enableObserver();
+          return 'applied:' + c;
+        })();
+        """
+        Task { _ = try? await exec.runJS(js) }
+    }
+
+    func restore(using exec: WebViewScriptExecutor) {
+        let js = """
+        (function(){
+          const S = window.__afmInline;
+          if (!S) return 'no_state';
+          S.disableObserver && S.disableObserver();
+          const c = S.restoreAll(document.body || document.documentElement);
+          return 'restored:' + c;
+        })();
+        """
+        Task { _ = try? await exec.runJS(js) }
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Overlay/OverlayRenderer.swift
+// File: OverlayRenderer.swift
+import Foundation
+import WebKit
+
+protocol OverlayRenderer {
+    func attachOverlay(to webView: WKWebView)
+    func render(results: [TranslationResult], in webView: WKWebView)
+    func toggleOriginal(_ showOriginal: Bool, in webView: WKWebView)
+    func replaceInPage(pairs: [(original: String, translated: String)], in webView: WKWebView)
+    func restoreOriginalPage(in webView: WKWebView)
+}
+
+final class DefaultOverlayRenderer: OverlayRenderer {
+    func attachOverlay(to webView: WKWebView) {
+//        panel.style.background='rgba(255,255,255,0.86)';
+//        panel.style.backdropFilter='blur(6px)';
+        // 임시 제거
+        let js = """
+        (function(){
+          if (document.getElementById('afm-overlay-root')) return 'exists';
+          var root = document.createElement('div');
+          root.id='afm-overlay-root';
+          root.style.position='fixed';
+          root.style.inset='0';
+          root.style.pointerEvents='none';
+          root.style.zIndex='2147483647';
+          root.style.display='flex';
+          root.style.justifyContent='center';
+          root.style.alignItems='flex-start';
+          var panel = document.createElement('div');
+          panel.id='afm-overlay-panel';
+          panel.style.maxWidth='min(960px, 92vw)';
+          panel.style.margin='16px auto';
+          panel.style.background='rgba(255,255,255,0.96)';
+          panel.style.borderRadius='12px';
+          panel.style.boxShadow='0 10px 30px rgba(0,0,0,0.25)';
+          panel.style.padding='16px';
+          panel.style.font='-apple-system-body';
+          panel.style.lineHeight='1.5';
+          panel.style.color='#111';
+          panel.style.pointerEvents='auto';     // 패널은 클릭/스크롤 허용(복사 등 UX 개선)
+          root.appendChild(panel);
+          (document.body || document.documentElement).appendChild(root); // body 우선
+          return 'attached';
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func render(results: [TranslationResult], in webView: WKWebView) {
+        let paras = results.map { r in
+            let badge = r.engine.rawValue.uppercased()
+            return "<p style=\\\"margin:0 0 8px\\\"><span style=\\\"opacity:.6\\\">\(badge)</span> \(r.text.htmlEscaped)</p>"
+        }.joined()
+
+        // ✅ JS literal로 안전하게 인젝션 (JSON 문자열 인코딩 이용)
+        let htmlLiteral = DefaultOverlayRenderer.jsQuoted(paras)
+
+        let js = """
+        (function(){
+          var panel = document.getElementById('afm-overlay-panel');
+          if(!panel){return 'no_panel'}
+          var html = \(htmlLiteral);
+          panel.innerHTML = html;
+          return 'ok';
+        })();
+        """
+
+        webView.evaluateJavaScript(js) { result, error in
+            if let error = error {
+                print("Overlay JS error:", error.localizedDescription)
+            } else {
+                print("Overlay render status:", result ?? "nil")
+            }
+        }
+    }
+
+    func toggleOriginal(_ showOriginal: Bool, in webView: WKWebView) {
+        // showOriginal == true → 패널 완전 비활성(클릭 통과)
+        let js = """
+        (function(){
+          var root = document.getElementById('afm-overlay-root');
+          var panel = document.getElementById('afm-overlay-panel');
+          if(!root || !panel){return 'no_root_or_panel'}
+          
+            panel.style.display = 'none';
+            panel.style.pointerEvents = 'none';
+            root.style.opacity = '0';
+          
+          return 'ok';
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+    
+    func replaceInPage(pairs: [(original: String, translated: String)], in webView: WKWebView) {
+        let payload: [[String:String]] = pairs.map { ["o": $0.original, "t": $0.translated] }
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+
+        let js = """
+        (function(){
+          const pairs = \(json);
+          if (!Array.isArray(pairs)) return 'bad_pairs';
+
+          const candidates = Array.from(document.querySelectorAll('p,li,h1,h2,h3,h4,h5,h6,span,div'));
+          let replacedCount = 0;
+
+          for (const el of candidates) {
+            if (el.dataset.afmReplaced === '1') continue;
+            const raw = (el.innerText || '').trim();
+            if (!raw) continue;
+
+            const hit = pairs.find(x => (x.o || '').trim() === raw);
+            if (hit) {
+              el.dataset.afmReplaced = '1';
+              el.dataset.afmOriginal = raw;
+              el.textContent = hit.t;
+              replacedCount++;
+            }
+          }
+          return 'replaced:' + replacedCount;
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func restoreOriginalPage(in webView: WKWebView) {
+        let js = """
+        (function(){
+          const changed = document.querySelectorAll('[data-afm-replaced="1"][data-afm-original]');
+          let n=0;
+          changed.forEach(el => {
+            el.textContent = el.dataset.afmOriginal;
+            el.removeAttribute('data-afm-original');
+            el.removeAttribute('data-afm-replaced');
+            n++;
+          });
+          return 'restored:' + n;
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+}
+
+private extension String { var htmlEscaped: String { self
+    .replacingOccurrences(of: "&", with: "&amp;")
+    .replacingOccurrences(of: "\"", with: "&quot;")
+    .replacingOccurrences(of: "'", with: "&#39;")
+    .replacingOccurrences(of: "<", with: "&lt;")
+    .replacingOccurrences(of: ">", with: "&gt;")
+}}
+
+private extension DefaultOverlayRenderer {
+    /// Swift String을 JS의 안전한 문자열 리터럴로 변환 (JSON을 이용)
+    static func jsQuoted(_ s: String) -> String {
+        // ["..."] 형태로 직렬화된 문자열 배열을 만들어 첫/끝 대괄호를 제거
+        if let data = try? JSONSerialization.data(withJSONObject: [s], options: []),
+           var quotedArray = String(data: data, encoding: .utf8) {
+            // quotedArray는 예: ["<p>..</p>..."]
+            // 앞의 '['와 뒤의 ']' 제거
+            quotedArray.removeFirst()
+            quotedArray.removeLast()
+            return quotedArray
+        }
+        // 실패 시 가장 보수적으로 빈 문자열 리터럴
+        return "\"\""
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Overlay/SelectionBridge.swift
+// Services/Web/SelectionBridge.swift
+import WebKit
+import CoreGraphics
+
+public struct ElementRect: Sendable {
+    public let x: CGFloat
+    public let y: CGFloat
+    public let width: CGFloat
+    public let height: CGFloat
+}
+
+final class SelectionBridge: NSObject {
+    weak var webView: WKWebView?
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init()
+        injectBootstrap()
+    }
+
+    deinit {}
+
+    func mark(segments: [(id: String, text: String)]) async {
+        guard let webView else { return }
+        let payload = segments.map { ["id": $0.id, "text": $0.text] }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let js = "window.MT && window.MT_MARK_SEGMENTS && MT_MARK_SEGMENTS(\(json));"
+        _ = try? await webView.callAsyncJavaScript(
+            js,
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        )
+    }
+
+    private func injectBootstrap() {
+        let js = """
+        (function () {
+          if (window.MT && window.MT.BOOT_OK) return;
+          window.MT = window.MT || {};
+
+          try {
+            var style = document.createElement('style');
+            style.type = 'text/css';
+            style.textContent = `
+              [data-seg-id] { cursor: pointer; }
+              [data-seg-id].mt-selected { background-color: rgba(0,145,255,0.22); outline: 2px solid rgba(0,145,255,0.5); }
+            `;
+            (document.head || document.documentElement).appendChild(style);
+          } catch (e) {}
+
+          document.addEventListener('click', function (e) {
+            var node = e.target && e.target.closest ? e.target.closest('[data-seg-id]') : null;
+            if (!node) return;
+            var id = node.getAttribute('data-seg-id');
+            if (!id) return;
+            try {
+              window.webkit && window.webkit.messageHandlers &&
+              window.webkit.messageHandlers.selection &&
+              window.webkit.messageHandlers.selection.postMessage(id);
+            } catch (err) {}
+          }, true);
+
+          function escReg(s) {
+            return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+          }
+
+          function isTexty(el) {
+            var tn = el.tagName ? el.tagName.toLowerCase() : '';
+            if (!tn) return false;
+            if (tn === 'script' || tn === 'style' || tn === 'noscript' || tn === 'svg') return false;
+            if (tn === 'input' || tn === 'textarea' || tn === 'select' || tn === 'button') return false;
+            return true;
+          }
+
+          function hasSegWrap(html) {
+            return html.indexOf('data-seg-id=') >= 0;
+          }
+
+          window.MT_MARK_SEGMENTS = function (list) {
+            if (!Array.isArray(list) || list.length === 0) return 0;
+            var filtered = list.filter(it => (it.text || '').trim().length >= 6);
+            var MAX_MARK = 500;
+            if (filtered.length > MAX_MARK) filtered = filtered.slice(0, MAX_MARK);
+            if (filtered.length === 0) return 0;
+
+            var blocks = Array.from(
+              document.querySelectorAll('p,li,article,section,blockquote,main,aside,header,footer,div')
+            ).filter(isTexty);
+
+            var patterns = [];
+            for (var j = 0; j < filtered.length; j++) {
+              try {
+                patterns.push({
+                  id: filtered[j].id,
+                  re: new RegExp(escReg(filtered[j].text), 'g'),
+                });
+              } catch (e) {}
+            }
+            if (patterns.length === 0) return 0;
+
+            var totalHits = 0;
+            for (var b = 0; b < blocks.length; b++) {
+              var blk = blocks[b];
+              var txt = (blk.innerText || '').trim();
+              if (txt.length < 12) continue;
+
+              var html = blk.innerHTML;
+              var hit = false;
+              for (var k = 0; k < patterns.length; k++) {
+                var p = patterns[k];
+                if (hasSegWrap(html) && html.indexOf('data-seg-id="' + p.id + '"') >= 0) continue;
+                html = html.replace(p.re, function (m) {
+                  hit = true;
+                  totalHits++;
+                  return '<span data-seg-id="' + p.id + '">' + m + '</span>';
+                });
+              }
+              if (hit) blk.innerHTML = html;
+            }
+            return totalHits;
+          };
+
+          window.MT.HILITE = function (segId) {
+            try {
+              var q = document.querySelector('[data-seg-id="' + segId + '"]');
+              if (!q) return false;
+              var prev = document.querySelectorAll('[data-seg-id].mt-selected');
+              for (var i = 0; i < prev.length; i++) prev[i].classList.remove('mt-selected');
+              q.classList.add('mt-selected');
+              if (q.scrollIntoView) q.scrollIntoView({ block: 'center' });
+              return true;
+            } catch (e) { return false; }
+          };
+
+          window.MT.CLEAR = function () {
+            try {
+              var prev = document.querySelectorAll('[data-seg-id].mt-selected');
+              for (var i = 0; i < prev.length; i++) prev[i].classList.remove('mt-selected');
+            } catch (e) {}
+          };
+
+          window.MT_GET_RECT = function (segId) {
+            var n = document.querySelector('[data-seg-id="' + segId + '"]');
+            if (!n) return null;
+            var r = n.getBoundingClientRect();
+            return JSON.stringify({ x: r.left, y: r.top, width: r.width, height: r.height });
+          };
+
+          window.MT.BOOT_OK = true;
+        })();
+        """
+        let userScript = WKUserScript(
+            source: js,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+        webView?.configuration.userContentController.addUserScript(userScript)
+    }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Services/WebRendering/Ports/WebViewScriptExecutor.swift
+//
+//  WebViewScriptExecutor.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/15/25.
+//
+
+import Foundation
+
+@MainActor
+public protocol WebViewScriptExecutor {
+    /// 주어진 JS 스니펫을 실행하고 결과를 문자열로 반환
+    func runJS(_ script: String) async throws -> String
+
+    /// 필요시, 페이지 URL 같은 메타를 얻고 싶다면 선택적으로 확장
+    func currentURL() async -> URL?
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Utils/Logging.swift
+// File: Logging.swift
+import Foundation
+
+enum Log {
+    static func info(_ msg: String) { }
+    static func warn(_ msg: String) { }
+    static func error(_ msg: String) { }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Utils/TextNormalize.swift
+// File: TextNormalize.swift
+import Foundation
+
+enum TextNormalize {
+    static func normalize(_ s: String) -> String { s }
+}
+<<<<< MIRROR FILE END
+
+>>>>> MIRROR FILE BEGIN: Utils/URLTools.swift
+// File: URLTools.swift
+import Foundation
+
+enum URLTools {
+    static func canonical(_ url: URL) -> URL { url }
+}
+<<<<< MIRROR FILE END
+

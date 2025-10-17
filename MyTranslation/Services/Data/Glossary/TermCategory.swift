@@ -1,0 +1,41 @@
+//
+//  GlossaryCategory.swift
+//  MyTranslation
+//
+//  Created by sailor.m on 10/17/25.
+//
+
+import Foundation
+
+// MARK: - Glossary Types
+
+public enum TermCategory: String, Codable, Sendable {
+    case person
+    case organization
+    case term       // 기술/전문 용어, 기술명 등
+    case other
+    
+    init(with category: String?) {
+        switch category {
+        case "울트라맨", "캐릭터명", "괴수, 성인":
+            self = .person
+        case "도구, 폼, 기술명":
+            self = .term
+        case "조직":
+            self = .organization
+        default:
+            self = .other
+        }
+    }
+}
+
+public struct GlossaryEntry: Sendable {
+    public let source: String
+    public let target: String
+    public let category: TermCategory
+    public init(source: String, target: String, category: TermCategory) {
+        self.source = source
+        self.target = target
+        self.category = category
+    }
+}

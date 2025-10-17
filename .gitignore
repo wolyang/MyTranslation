@@ -1,0 +1,65 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+*.xcscmblueprint
+*.xcodeproj/xcuserdata/
+project.xcworkspace/xcuserdata/
+*.xcuserdatad
+*.swp
+*.xcuserstate
+*.xcworkspace
+*.xcsettings
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# SwiftData / Core Data generated stores
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Logs
+*.log
+
+# User-specific
+*.idea/
+*.vscode/
+*.sublime-workspace
+*.sublime-project
+
+# Credentials / API keys
+.env
+*.pem
+*.key
+
+# Temporary / cache
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Generated artifacts
+*.dSYM/
+*.ipa
+*.xcarchive
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
