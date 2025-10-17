@@ -46,8 +46,8 @@ public final class TermMasker {
         self.contextWindow = contextWindow
     }
 
-    /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 ⟪Tn⟫로 잠그고 LockInfo를 생성한다.
-    /// - 반환: masked(⟪Tn⟫ 포함), tags(기존 라우터용), locks(조사 교정/언락용)
+    /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
+    /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
     public func maskWithLocks(segment: Segment, glossary entries: [GlossaryEntry]) -> (pack: MaskedPack, personQueues: [String: [String]]) {
         let text = segment.originalText
         guard !text.isEmpty, !entries.isEmpty else { return (pack: .init(seg: segment, masked: text, tags: [], locks: [:]), personQueues: [:]) }
@@ -96,7 +96,7 @@ public final class TermMasker {
                     token = "__PERSON_\(prefix)\(localNextIndex)__" // fallback: 각 항목 고유
                 }
             } else {
-                token = "⟪\(prefix)\(localNextIndex)⟫" // 기타 카테고리: 기존 각괄호 토큰 유지
+                token = "__MASK_\(prefix)\(localNextIndex)__" // 기타 카테고리: 기존 각괄호 토큰 유지
             }
             print("pid: \(String(describing: e.personId)), source: \(e.source) -> token: \(token)")
             localNextIndex += 1
@@ -183,7 +183,7 @@ public final class TermMasker {
         return (.init(seg: segment, masked: out, tags: tags, locks: locks), personQueues: personQueues)
     }
 
-    /// ⟪Tn⟫ 주변 조사(은/는, 이/가, 을/를, 과/와, (이)라, (으)로, (아/야)) 교정
+    /// 토큰 주변 조사(은/는, 이/가, 을/를, 과/와, (이)라, (으)로, (아/야)) 교정
     public func fixParticlesAroundLocks(_ text: String, locks: [String: LockInfo]) -> String {
         var out = text
         for (_, info) in locks {
@@ -191,27 +191,14 @@ public final class TermMasker {
         }
         return out
     }
-    
-    /// 번역 결과에서 ⟪G0⟫, ⟪G1⟫ ... 토큰을 사전에 저장한 타깃 한글로 복원.
-    func unmask(text: String, tags: [String]) -> String {
-        guard !tags.isEmpty else { return text }
-        var out = text
-        for (i, val) in tags.enumerated() {
-            let token = "⟪G\(i)⟫"
-            out = out.replacingOccurrences(of: token, with: val)
-        }
-        return out
-    }
 
-    /// ⟪Tn⟫ 토큰들을 locks 사전에 따라 정확히 복원.
-    /// 인접 토큰(예: ⟪T18⟫⟪T19⟫)도 안전하게 처리한다.
+    /// 토큰들을 locks 사전에 따라 정확히 복원.
     func unlockTermsSafely(
         _ text: String,
         locks: [String: LockInfo],
         personQueues: PersonQueues
     ) -> String {
-        // 지원 토큰: 1) ⟪Xn⟫ 계열(⟪P/O/L/K/Xn⟫)  2) __PERSON_Pn__
-        let pattern = #"(__PERSON_P([A-Za-z0-9_-]+)__)|(?:__PERSON_U\d+__)|(?:⟪[A-Z]\d+⟫)"#
+        let pattern = #"(__PERSON_P([A-Za-z0-9_-]+)__)|(?:__PERSON_U\d+__)|(?:__MASK_[A-Z]\d+__)"#
         guard let rx = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
         
         var queues = personQueues
@@ -238,7 +225,7 @@ public final class TermMasker {
                     out += whole
                 }
             } else {
-                // __PERSON_U{n}__ · ⟪Xn⟫ → locks로 복원
+                // __PERSON_U{n}__ · __MASK_{n}__ → locks로 복원
                 out += locks[whole]?.target ?? whole
             }
             last = full.location + full.length

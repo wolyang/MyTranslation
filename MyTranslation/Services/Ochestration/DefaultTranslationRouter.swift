@@ -81,7 +81,8 @@ final class DefaultTranslationRouter: TranslationRouter {
             }
 
             // (b) AFM 번역 호출
-            let afmResults = try await afm.translate(maskedSegments, options: options)
+//            let afmResults = try await afm.translate(maskedSegments, options: options)
+            let afmResults = try await google.translate(maskedSegments, options: options)
 
             // 4) 언마스킹 → 리스크/리절듀얼 계산 → 캐시 저장
             struct FinalPack {
@@ -97,12 +98,10 @@ final class DefaultTranslationRouter: TranslationRouter {
                 let personQueues = maskedResults[i].personQueues
                 let raw = r.text
                 
-                // 조사 교정 (⟪Tn⟫ 주변만)
+                // 조사 교정 (토큰 주변만)
                 let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
-                // 언락 (⟪Tn⟫ → 한국어 용어)
-                let unlocked = termMasker.unlockTermsSafely(corrected, locks: pack.locks, personQueues: personQueues)
-                // 기존 일반 언마스킹
-                let unmasked = termMasker.unmask(text: unlocked, tags: pack.tags)
+                // 언락 (토큰 → 한국어 용어)
+                let unmasked = termMasker.unlockTermsSafely(corrected, locks: pack.locks, personQueues: personQueues)
                 
                 // 간단 residual: 한자/한문자 비율 (기존 계산 유지)
                 let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count

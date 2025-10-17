@@ -7,6 +7,8 @@ final class AppContainer: ObservableObject {
     // Engines / Services
     let afmService: AFMTranslationService
     let afmEngine: TranslationEngine
+    let googleClient: GoogleTranslateV2Client
+    let googleEngine: TranslationEngine
 
     // Router & infra
     let cache: CacheStore
@@ -29,6 +31,8 @@ final class AppContainer: ObservableObject {
         
         self.afmService = AFMTranslationService()
         self.afmEngine  = AFMEngine(client: afmService)
+        self.googleClient = GoogleTranslateV2Client(config: .init(apiKey: APIKeys.googleTranslate))
+        self.googleEngine = GoogleEngine(client: googleClient)
         
         if useOnDeviceFM {
             let modelMgr = FMModelManager()
@@ -51,7 +55,7 @@ final class AppContainer: ObservableObject {
         self.router = DefaultTranslationRouter(
             afm: afmEngine,
             deepl: DeepLEngine(),
-            google: GoogleEngine(),
+            google: googleEngine,
             cache: cache,
             glossaryStore: glossaryStore,
             postEditor: postEditor,

@@ -199,41 +199,13 @@ final class BrowserViewModel: ObservableObject {
             } catch {
                 print("translate error: \(error)")
                 replacer.restore(using: exec)
-                // 해시/토큰 누수 조사(간단)
-                let jsSnapshot = #"""
-                (function(){
-                  try{
-                    var t = (document.body||document.documentElement).innerText || "";
-                    var hasG = /⟪G\d+⟫/.test(t);
-                    var hasHex = /[0-9a-f]{32,40}/i.test(t);
-                    var segSpans = document.querySelectorAll('[data-seg-id]').length;
-                    return JSON.stringify({
-                      len: t.length,
-                      hasG: hasG,
-                      hasHex: hasHex,
-                      segSpans: segSpans
-                    });
-                  }catch(e){
-                    return JSON.stringify({error:String(e)});
-                  }
-                })()
-                """#
-                    let leak = (try? await exec.runJS(jsSnapshot)) ?? ""
-                    print("[VM] after-restore snapshot: \(leak)")
-        
                 _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
             }
-//            toggleOverlayVisibility(showOriginal)
         } catch {
             // 본문 추출 자체가 실패한 케이스(희귀)
             print("Extract error: \(error)")
         }
     }
-
-//    func toggleOverlayVisibility(_ showOriginal: Bool) {
-//        guard let webView = attachedWebView else { return }
-//        overlay.toggleOriginal(showOriginal, in: webView)
-//    }
     
     private func normalizePageScale(_ webView: WKWebView) {
         // iOS 16+ WKWebView.pageZoom이 있으면 우선 적용

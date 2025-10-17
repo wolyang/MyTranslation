@@ -6,7 +6,7 @@
 //
 
 public struct LockInfo: Sendable {
-    public let placeholder: String    // "⟪T1⟫"
+    public let placeholder: String    // 토큰
     public let target: String         // 최종 한국어 용어
     public let endsWithBatchim: Bool  // 받침 유무
     public let endsWithRieul: Bool    // ㄹ 받침
