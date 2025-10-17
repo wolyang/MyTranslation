@@ -19,15 +19,17 @@ public func hangulFinalJongInfo(_ s: String) -> (hasBatchim: Bool, isRieul: Bool
 // MARK: - Term-only Masker
 
 public final class TermMasker {
+    // PERSON 큐 언락을 위한 타입
+    public typealias PersonQueues = [String: [String]]
 
     private var nextIndex: Int = 1
     public init() {}
 
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 ⟪Tn⟫로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(⟪Tn⟫ 포함), tags(기존 라우터용), locks(조사 교정/언락용)
-    public func maskWithLocks(segment: Segment, glossary entries: [GlossaryEntry]) -> MaskedPack {
+    public func maskWithLocks(segment: Segment, glossary entries: [GlossaryEntry]) -> (pack: MaskedPack, personQueues: [String: [String]]) {
         let text = segment.originalText
-        guard !text.isEmpty, !entries.isEmpty else { return .init(seg:segment, masked: text, tags: [], locks: [:]) }
+        guard !text.isEmpty, !entries.isEmpty else { return (pack: .init(seg:segment, masked: text, tags: [], locks: [:]), personQueues: [:]) }
 
         // 긴 키부터 치환(겹침 방지)
         let sorted = entries.sorted { $0.source.count > $1.source.count }
@@ -35,13 +37,20 @@ public final class TermMasker {
         var out = text
         var tags: [String] = []
         var locks: [String: LockInfo] = [:]
+        var personQueues: PersonQueues = [:]
+        var localNextIndex = self.nextIndex
 
         for e in sorted {
             guard !e.source.isEmpty, out.contains(e.source) else { continue }
             
             let prefix: String
             switch e.category {
-            case .person:       prefix = "P"
+            case .person:
+                if e.personId != nil {
+                                prefix = "P"
+                } else {
+                                prefix = "U"
+                }
             case .organization: prefix = "O"
             case .term:         prefix = "K"
             case .other:        prefix = "X"
@@ -50,21 +59,48 @@ public final class TermMasker {
             // === 토큰 생성 ===
             let token: String
             if e.category == .person {
-                token = "__PERSON_\(prefix)\(nextIndex)__"   // 표준 인명 토큰(단일 규칙)
+                if let pid = e.personId, !pid.isEmpty {
+                    token = "__PERSON_\(prefix)\(pid)__"        // per-person 고정 토큰
+                } else {
+                    token = "__PERSON_\(prefix)\(localNextIndex)__"    // fallback: 각 항목 고유
+                }
             } else {
-                token = "⟪\(prefix)\(nextIndex)⟫"            // 기타 카테고리: 기존 각괄호 토큰 유지
+                token = "⟪\(prefix)\(localNextIndex)⟫"            // 기타 카테고리: 기존 각괄호 토큰 유지
             }
-            nextIndex += 1
+            print("pid: \(String(describing: e.personId)), source: \(e.source) -> token: \(token)")
+            localNextIndex += 1
 
-            // 텍스트 치환
-            out = out.replacingOccurrences(of: e.source, with: token)
+            // 좌→우 모든 발생을 안전 치환 + 인물 큐 push
+                    let pattern = NSRegularExpression.escapedPattern(for: e.source)
+                    guard let rx = try? NSRegularExpression(pattern: pattern) else { continue }
+                    let ns = out as NSString
+                    let matches = rx.matches(in: out, range: NSRange(location: 0, length: ns.length))
+                    if matches.isEmpty { continue }
+
+                    var newOut = String(); newOut.reserveCapacity(out.utf16.count)
+                    var last = 0
+                    for m in matches {
+                        if last < m.range.location {
+                            newOut += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+                        }
+                        newOut += token
+                        last = m.range.location + m.range.length
+
+                        if e.category == .person, let pid = e.personId {
+                            var arr = personQueues[pid] ?? []
+                            arr.append(e.target)
+                            personQueues[pid] = arr
+                        }
+                    }
+                    if last < ns.length { newOut += ns.substring(with: NSRange(location: last, length: ns.length - last)) }
+                    out = newOut
             
             // NBSP 경계 힌트
             if e.category == .person {
                 out = surroundTokenWithNBSP(out, token: token)
             }
 
-            // 라우터 unmask 호환을 위해 tags는 기존과 동일한 의미로 유지(필요 시 원래 규약에 맞춰 조정)
+            // 라우터 호환 태그 유지
             tags.append(e.target)
 
             // 조사 교정용 LockInfo
@@ -72,7 +108,10 @@ public final class TermMasker {
             locks[token] = LockInfo(placeholder: token, target: e.target, endsWithBatchim: b, endsWithRieul: r, category: e.category)
         }
         
-        return .init(seg: segment, masked: out, tags: tags, locks: locks)
+        // nextIndex 업데이트(기존 의미 유지)
+        self.nextIndex = localNextIndex
+        
+        return (.init(seg: segment, masked: out, tags: tags, locks: locks), personQueues: personQueues)
     }
 
     /// ⟪Tn⟫ 주변 조사(은/는, 이/가, 을/를, 과/와, (이)라, (으)로, (아/야)) 교정
@@ -97,32 +136,40 @@ public final class TermMasker {
 
     /// ⟪Tn⟫ 토큰들을 locks 사전에 따라 정확히 복원.
     /// 인접 토큰(예: ⟪T18⟫⟪T19⟫)도 안전하게 처리한다.
-    func unlockTermsSafely(_ text: String, locks: [String: LockInfo]) -> String {
-        // ⟪T123⟫ 형태만 정확히 매칭
+    func unlockTermsSafely(_ text: String, locks: [String: LockInfo],
+                           personQueues: PersonQueues) -> String {
         // 지원 토큰: 1) ⟪Xn⟫ 계열(⟪P/O/L/K/Xn⟫)  2) __PERSON_Pn__
-            let pattern = #"(__PERSON_[A-Z]\d+__)|(?:⟪[A-Z]\d+⟫)"#
+        let pattern = #"(__PERSON_P([A-Za-z0-9_-]+)__)|(?:__PERSON_U\d+__)|(?:⟪[A-Z]\d+⟫)"#
             guard let rx = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-
+        
+        var queues = personQueues
         let ns = text as NSString
         let matches = rx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
 
-        // 매치 구간을 기준으로 앞에서부터 차곡차곡 빌드
         var out = String()
         out.reserveCapacity(text.utf16.count)
         var last = 0
 
         for m in matches {
-            let range = m.range(at: 0) // 전체 토큰
-            if last < range.location {
-                out += ns.substring(with: NSRange(location: last, length: range.location - last))
-            }
-            let placeholder = ns.substring(with: range)
-            if let lock = locks[placeholder] {
-                out += lock.target           // 정상 복원
+            let full = m.range(at: 0)
+            if last < full.location { out += ns.substring(with: NSRange(location: last, length: full.location - last)) }
+            let whole = ns.substring(with: full)
+            
+            if m.numberOfRanges >= 3, m.range(at: 2).location != NSNotFound {
+                // __PERSON_P{pid}__ → 큐 pop
+                let pid = ns.substring(with: m.range(at: 2))
+                if var arr = queues[pid], !arr.isEmpty {
+                    out += arr.removeFirst(); queues[pid] = arr
+                } else if let lk = locks[whole] {
+                    out += lk.target  // 큐 고갈 대비
+                } else {
+                    out += whole
+                }
             } else {
-                out += placeholder           // 사전에 없으면 원형 유지(보수적)
+                // __PERSON_U{n}__ · ⟪Xn⟫ → locks로 복원
+                out += locks[whole]?.target ?? whole
             }
-            last = range.location + range.length
+            last = full.location + full.length
         }
 
         // 남은 꼬리 복사

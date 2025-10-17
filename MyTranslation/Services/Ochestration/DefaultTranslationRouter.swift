@@ -64,10 +64,11 @@ final class DefaultTranslationRouter: TranslationRouter {
             let termMasker = TermMasker()
             
             // (a) glossary 마스킹
-            let maskedPacks: [MaskedPack] =
+            let maskedResults =
                 toTranslate.map { s in
                     termMasker.maskWithLocks(segment: s, glossary: entries)
                 }
+            let maskedPacks = maskedResults.map { $0.pack }
 
             let maskedSegments: [Segment] = maskedPacks.map { item in
                 Segment(
@@ -93,12 +94,13 @@ final class DefaultTranslationRouter: TranslationRouter {
             // 언마스킹 후 바로 최종 텍스트로 사용 (FM 자동 후처리 제거)
             let finals: [FinalPack] = afmResults.enumerated().map { i, r in
                 let pack = maskedPacks[i]
+                let personQueues = maskedResults[i].personQueues
                 let raw = r.text
                 
                 // 조사 교정 (⟪Tn⟫ 주변만)
                 let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
                 // 언락 (⟪Tn⟫ → 한국어 용어)
-                let unlocked = termMasker.unlockTermsSafely(corrected, locks: pack.locks)
+                let unlocked = termMasker.unlockTermsSafely(corrected, locks: pack.locks, personQueues: personQueues)
                 // 기존 일반 언마스킹
                 let unmasked = termMasker.unmask(text: unlocked, tags: pack.tags)
                 

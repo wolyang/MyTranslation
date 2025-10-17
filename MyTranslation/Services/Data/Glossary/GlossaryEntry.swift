@@ -33,9 +33,11 @@ public struct GlossaryEntry: Sendable {
     public let source: String
     public let target: String
     public let category: TermCategory
-    public init(source: String, target: String, category: TermCategory) {
+    public let personId: String?
+    public init(source: String, target: String, category: TermCategory, personId: String? = nil) {
         self.source = source
         self.target = target
         self.category = category
+        self.personId = personId
     }
 }
