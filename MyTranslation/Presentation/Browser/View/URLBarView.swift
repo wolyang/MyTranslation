@@ -6,7 +6,9 @@ struct URLBarView: View {
     @Binding var selectedEngine: EngineTag
     @Binding var showOriginal: Bool
     @Binding var isEditing: Bool
+    var currentPageURLString: String
     var onGo: (String) -> Void
+    var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
     @FocusState private var isFocused: Bool
     @AppStorage("recentURLs") private var recentURLsData: Data = Data()
     @State private var fieldHeight: CGFloat = 0
@@ -54,7 +56,7 @@ struct URLBarView: View {
 
             if isFocused {
                 Button(action: commitGo) {
-                    Image(systemName: "arrow.right.circle.fill")
+                    Image(systemName: goButtonSymbolName)
                         .font(.title3)
                         .foregroundStyle(Color.accentColor)
                 }
@@ -126,8 +128,14 @@ struct URLBarView: View {
 
     private var controlGroup: some View {
         HStack(spacing: 4) {
-            EnginePickerButton(selectedEngine: $selectedEngine, onInteract: endEditing)
-            OverlayControlsView(showOriginal: $showOriginal, onInteract: endEditing)
+            EnginePickerButton(
+                selectedEngine: $selectedEngine,
+                showOriginal: $showOriginal,
+                onInteract: endEditing,
+                onSelectEngine: { engine, wasShowingOriginal in
+                    onSelectEngine(engine, wasShowingOriginal)
+                }
+            )
         }
     }
 
@@ -193,18 +201,52 @@ struct URLBarView: View {
     private func endEditing() {
         isFocused = false
     }
+
+    private var goButtonSymbolName: String {
+        let trimmedCurrent = currentPageURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedOriginal = originalURLBeforeEditing.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedInput = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInput.isEmpty else { return "arrow.right.circle.fill" }
+        let isUnchanged = trimmedInput == trimmedOriginal
+        let matchesCurrent = trimmedInput == trimmedCurrent && !trimmedCurrent.isEmpty
+        return isUnchanged && matchesCurrent ? "arrow.clockwise.circle.fill" : "arrow.right.circle.fill"
+    }
 }
 
 private struct EnginePickerButton: View {
     @Binding var selectedEngine: EngineTag
+    @Binding var showOriginal: Bool
     var onInteract: () -> Void = {}
+    var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
 
     var body: some View {
         Menu {
+            Button {
+                onInteract()
+                if showOriginal == false {
+                    showOriginal = true
+                }
+            } label: {
+                HStack {
+                    Text("원문 보기")
+                    Spacer()
+                    if showOriginal {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
             ForEach(EngineTag.allCases, id: \.self) { engine in
                 Button {
                     onInteract()
+                    let wasShowingOriginal = showOriginal
                     selectedEngine = engine
+                    onSelectEngine(engine, wasShowingOriginal)
+                    if wasShowingOriginal {
+                        showOriginal = false
+                    }
                 } label: {
                     HStack {
                         Text(engine.displayName)

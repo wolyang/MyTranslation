@@ -30,7 +30,11 @@ struct BrowserTabView: View {
                 urlString: $vm.urlString,
                 selectedEngine: preferredEngineBinding,
                 showOriginal: $vm.showOriginal,
-                isEditing: $vm.isEditingURL
+                isEditing: $vm.isEditingURL,
+                currentPageURLString: vm.currentPageURLString,
+                onSelectEngine: { engine, wasShowingOriginal in
+                    vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
+                }
             ) { url in
                 vm.load(urlString: url)
                 triggerTranslationSession()
@@ -69,6 +73,10 @@ struct BrowserTabView: View {
         }
         .onChange(of: vm.showOriginal) { _, newValue in
             vm.onShowOriginalChanged(newValue)
+        }
+        .onChange(of: preferredEngineRawValue) { _, newValue in
+            let engine = EngineTag(rawValue: newValue) ?? .afm
+            vm.settings.preferredEngine = engine
         }
         // WebView 로드 이후 자동 번역
         .task(id: vm.pendingAutoTranslateID) {
