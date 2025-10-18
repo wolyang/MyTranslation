@@ -4,7 +4,8 @@ import WebKit
 
 @MainActor
 final class BrowserViewModel: ObservableObject {
-    @Published var urlString: String = "https://nakazaki.lofter.com/post/1ea19791_2bfbab779?incantation=rzRAnYWzp157"/*"https://xinjinjumin617262919231.lofter.com/post/8c9245ae_2bf5e094e?incantation=rz0xYPla9DXn"*/
+    @Published var urlString: String = /*"https://nakazaki.lofter.com/post/1ea19791_2bfbab779?incantation=rzRAnYWzp157"*/"https://archiveofourown.org/works/63817711/chapters/165869152?view_adult=true"
+    
     @Published var isTranslating: Bool = false
     @Published var showOriginal: Bool = false
     @Published var engineBadgeEnabled: Bool = true
