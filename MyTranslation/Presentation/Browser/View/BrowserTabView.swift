@@ -6,12 +6,11 @@ import WebKit
 struct BrowserTabView: View {
     @EnvironmentObject private var container: AppContainer
     @StateObject private var vm: BrowserViewModel
+    @AppStorage("preferredEngine") private var preferredEngineRawValue: String = EngineTag.afm.rawValue
 
     // TranslationSession 트리거
     @State private var trConfig: TranslationSession.Configuration? = nil
     
-    @State private var selectedSegment: Segment?
-
     init(container: AppContainer) {
         _vm = StateObject(
             wrappedValue: BrowserViewModel(
@@ -26,27 +25,14 @@ struct BrowserTabView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            URLBarView(urlString: $vm.urlString) { url in
+        VStack(spacing: 12) {
+            URLBarView(
+                urlString: $vm.urlString,
+                selectedEngine: preferredEngineBinding,
+                showOriginal: $vm.showOriginal
+            ) { url in
                 vm.load(urlString: url)
-                // 세션 트리거
-                if trConfig == nil {
-                    trConfig = TranslationSession.Configuration(
-                        // 언어 자동감지를 쓰면 nil 유지. 고정하고 싶으면 source/target 지정.
-                        source: .init(identifier: "zh-Hans"),
-                        target: .init(identifier: "ko")
-                    )
-                } else {
-                    trConfig?.invalidate() // 이미 세션이 있었다면 재생성 트리거
-                }
-            }
-            .onAppear {
-                if trConfig == nil {
-                    trConfig = TranslationSession.Configuration(
-                        source: .init(identifier: "zh-Hans"),
-                        target: .init(identifier: "ko")
-                    )
-                }
+                triggerTranslationSession()
             }
 
             ZStack(alignment: .top) {
@@ -71,15 +57,12 @@ struct BrowserTabView: View {
                     ProgressView().padding(.top, 12)
                 }
             }
-
-            OverlayControlsView(
-                showOriginal: $vm.showOriginal,
-                engineBadgeEnabled: $vm.engineBadgeEnabled,
-                reviewOnlyFilter: $vm.reviewOnlyFilter
-            )
-            .onChange(of: vm.showOriginal) { _, newValue in
-                vm.onShowOriginalChanged(newValue)
-            }
+        }
+        .padding(.top, 12)
+        .padding(.horizontal, 16)
+        .onAppear { ensureTranslationSession() }
+        .onChange(of: vm.showOriginal) { _, newValue in
+            vm.onShowOriginalChanged(newValue)
         }
         // WebView 로드 이후 자동 번역
         .task(id: vm.pendingAutoTranslateID) {
@@ -92,6 +75,30 @@ struct BrowserTabView: View {
             // (선택) 사전 준비: 모델 다운로드/권한 UX 향상
             // try? await session.prepareTranslation()
             container.attachAFMSession(session)
+        }
+    }
+
+    private var preferredEngineBinding: Binding<EngineTag> {
+        Binding(
+            get: { EngineTag(rawValue: preferredEngineRawValue) ?? .afm },
+            set: { preferredEngineRawValue = $0.rawValue }
+        )
+    }
+
+    private func ensureTranslationSession() {
+        if trConfig == nil {
+            trConfig = TranslationSession.Configuration(
+                source: .init(identifier: "zh-Hans"),
+                target: .init(identifier: "ko")
+            )
+        }
+    }
+
+    private func triggerTranslationSession() {
+        if trConfig == nil {
+            ensureTranslationSession()
+        } else {
+            trConfig?.invalidate()
         }
     }
 }

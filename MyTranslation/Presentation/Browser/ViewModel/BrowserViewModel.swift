@@ -7,8 +7,6 @@ final class BrowserViewModel: ObservableObject {
     @Published var urlString: String = "https://nakazaki.lofter.com/post/1ea19791_2bfbab779?incantation=rzRAnYWzp157"/*"https://xinjinjumin617262919231.lofter.com/post/8c9245ae_2bf5e094e?incantation=rz0xYPla9DXn"*/
     @Published var isTranslating: Bool = false
     @Published var showOriginal: Bool = false
-    @Published var engineBadgeEnabled: Bool = true
-    @Published var reviewOnlyFilter: Bool = false
 
     // Web loading binding
     @Published var request: URLRequest? = nil
@@ -182,7 +180,11 @@ final class BrowserViewModel: ObservableObject {
             
             let opts = TranslationOptions()
             do {
-                let results = try await router.translate(segments: segs, options: opts)
+                let results = try await router.translate(
+                    segments: segs,
+                    options: opts,
+                    preferredEngine: settings.preferredEngine
+                )
                 let pairs: [(original: String, translated: String)] =
                     zip(segs, results).compactMap { seg, res in
                         guard !res.text.isEmpty else { return nil }

@@ -2,19 +2,25 @@
 import SwiftUI
 
 struct OverlayControlsView: View {
-    @EnvironmentObject var app: AppContainer
     @Binding var showOriginal: Bool
-    @Binding var engineBadgeEnabled: Bool
-    @Binding var reviewOnlyFilter: Bool
-    
+
     var body: some View {
-        HStack(spacing: 16) {
-            Toggle("AI 사용", isOn: $app.settings.useFM)
-            Toggle("원문보기", isOn: $showOriginal)
-            Toggle("엔진뱃지", isOn: $engineBadgeEnabled)
-            Toggle("[재검토]만", isOn: $reviewOnlyFilter)
+        Button {
+            showOriginal.toggle()
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: showOriginal ? "eye.slash" : "eye")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(showOriginal ? Color.accentColor : Color.primary)
+                Text(showOriginal ? "숨김" : "원문")
+                    .font(.caption2)
+                    .foregroundStyle(Color.secondary)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
-        .toggleStyle(.switch)
-        .padding(8)
+        .buttonStyle(.plain)
+        .accessibilityLabel(showOriginal ? "번역 숨기기" : "원문 보기")
     }
 }

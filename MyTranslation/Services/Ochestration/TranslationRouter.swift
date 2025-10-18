@@ -8,5 +8,9 @@
 import Foundation
 
 protocol TranslationRouter {
-    func translate(segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult]
+    func translate(
+        segments: [Segment],
+        options: TranslationOptions,
+        preferredEngine: EngineTag
+    ) async throws -> [TranslationResult]
 }
