@@ -14,6 +14,7 @@ struct WebContainerView: UIViewRepresentable {
         config.userContentController.add(context.coordinator, name: "selection")
         let webView = WKWebView(frame: .zero)
         webView.navigationDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = true
         context.coordinator.install(on: webView)
         onAttach?(webView)
         return webView
