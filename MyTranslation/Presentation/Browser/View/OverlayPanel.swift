@@ -160,29 +160,13 @@ private struct OverlayPanelView: View {
                 contentWidth = width
             }
         }
-        .onChange(of: contentWidth) { width in
-            guard width > 0 else {
-                textSize = .zero
-                return
-            }
-
-            let measuredSize = measureTextSize(for: width, text: displayText)
-            if textSize != measuredSize {
-                textSize = measuredSize
-            }
+        .onChange(of: contentWidth) { _, newWidth in
+            updateMeasuredSize(width: newWidth, text: displayText)
         }
-        .onChange(of: displayText) { _ in
-            guard contentWidth > 0 else {
-                textSize = .zero
-                return
-            }
-
-            let measuredSize = measureTextSize(for: contentWidth, text: displayText)
-            if textSize != measuredSize {
-                textSize = measuredSize
-            }
+        .onChange(of: displayText) { _, newText in
+            updateMeasuredSize(width: contentWidth, text: newText)
         }
-}
+    }
 
     @ViewBuilder
     private var textSection: some View {
@@ -223,6 +207,18 @@ private struct OverlayPanelWidthPreferenceKey: PreferenceKey {
 }
 
 private extension OverlayPanelView {
+    func updateMeasuredSize(width: CGFloat, text: String) {
+        guard width > 0 else {
+            textSize = .zero
+            return
+        }
+
+        let measuredSize = measureTextSize(for: width, text: text)
+        if textSize != measuredSize {
+            textSize = measuredSize
+        }
+    }
+
     func measureTextSize(for width: CGFloat, text: String) -> CGSize {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
