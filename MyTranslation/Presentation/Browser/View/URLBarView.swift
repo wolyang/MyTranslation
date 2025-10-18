@@ -104,7 +104,7 @@ struct URLBarView: View {
     }
 
     private var controlGroup: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             EnginePickerButton(selectedEngine: $selectedEngine)
             OverlayControlsView(showOriginal: $showOriginal)
         }
@@ -188,19 +188,18 @@ private struct EnginePickerButton: View {
                 }
             }
         } label: {
-            Label(selectedEngine.shortLabel, systemImage: "globe")
-                .labelStyle(.titleAndIcon)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(.systemGray6))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color(.systemGray4), lineWidth: 1)
-                )
+            VStack(spacing: 2) {
+                Image(systemName: "globe")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text(selectedEngine.shortLabel)
+                    .font(.caption2)
+                    .foregroundStyle(Color.primary)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
     }
 }
