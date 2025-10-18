@@ -3,9 +3,11 @@ import SwiftUI
 
 struct OverlayControlsView: View {
     @Binding var showOriginal: Bool
+    var onInteract: () -> Void = {}
 
     var body: some View {
         Button {
+            onInteract()
             showOriginal.toggle()
         } label: {
             VStack(spacing: 2) {
