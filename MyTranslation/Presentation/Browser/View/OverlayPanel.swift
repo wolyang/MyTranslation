@@ -180,14 +180,10 @@ private struct OverlayPanelView: View {
     @ViewBuilder
     private var textSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("선택된 문장")
-                .font(.subheadline)
-                .fontWeight(.semibold)
+            OverlayPanelLabel(text: "선택된 문장", style: .title)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(displayText)
-                .font(.callout)
-                .multilineTextAlignment(.leading)
+            OverlayPanelLabel(text: displayText, style: .body)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 4)
@@ -242,6 +238,45 @@ private struct OverlayPanelTextMeasurer: UIViewRepresentable {
         let size = uiView.sizeThatFits(fittingSize)
         DispatchQueue.main.async {
             onUpdate(size)
+        }
+    }
+}
+
+private struct OverlayPanelLabel: UIViewRepresentable {
+    enum Style {
+        case title
+        case body
+    }
+
+    let text: String
+    let style: Style
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.textAlignment = .left
+        label.adjustsFontForContentSizeCategory = true
+        updateFont(for: label)
+        label.text = text
+        return label
+    }
+
+    func updateUIView(_ uiView: UILabel, context: Context) {
+        uiView.text = text
+        updateFont(for: uiView)
+    }
+
+    private func updateFont(for label: UILabel) {
+        switch style {
+        case .title:
+            let baseFont = UIFont.preferredFont(forTextStyle: .subheadline)
+            if let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.traitBold) {
+                label.font = UIFont(descriptor: descriptor, size: baseFont.pointSize)
+            } else {
+                label.font = UIFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold)
+            }
+        case .body:
+            label.font = UIFont.preferredFont(forTextStyle: .callout)
         }
     }
 }
