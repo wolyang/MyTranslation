@@ -44,7 +44,7 @@ struct URLBarView: View {
             Button(action: commitGo) {
                 Image(systemName: "arrow.right.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(.accentColor)
+                    .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
             .disabled(urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -113,7 +113,7 @@ struct URLBarView: View {
         get {
             (try? JSONDecoder().decode([String].self, from: recentURLsData)) ?? []
         }
-        set {
+        nonmutating set {
             recentURLsData = (try? JSONEncoder().encode(newValue)) ?? Data()
         }
     }
