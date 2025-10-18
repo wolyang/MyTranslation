@@ -5,126 +5,133 @@
 //  Created by sailor.m on 10/16/25.
 //
 
-import UIKit
+import SwiftUI
 
-final class OverlayPanel: UIView {
-    private let titleLabel = UILabel()
-    private let textLabel = UILabel()
-    private let askButton = UIButton(type: .system)
-    private let applyButton = UIButton(type: .system)
-    private let closeButton = UIButton(type: .system)
+struct OverlayPanelContainer: View {
+    let state: BrowserViewModel.OverlayState
+    let onAsk: () -> Void
+    let onApply: () -> Void
+    let onClose: () -> Void
 
-    var onAsk: (() -> Void)?
-    var onApply: (() -> Void)?
-    var onClose: (() -> Void)?
-    // 배치 시 사용: 패널 최대 너비
-    var maxWidth: CGFloat = 320
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = true
-        layer.cornerRadius = 12
-        layer.masksToBounds = true
-
-        // 반투명 블러 배경
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
-        blur.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(blur)
-        NSLayoutConstraint.activate([
-            blur.topAnchor.constraint(equalTo: topAnchor),
-            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
-            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
-            blur.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
-
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-
-        titleLabel.font = .boldSystemFont(ofSize: 15)
-        titleLabel.text = "선택된 문장"
-        titleLabel.numberOfLines = 1
-
-        textLabel.font = .systemFont(ofSize: 14)
-        textLabel.numberOfLines = 3
-
-        let h = UIStackView()
-        h.axis = .horizontal
-        h.spacing = 8
-        h.distribution = .fillEqually
-
-        askButton.setTitle("AI에 물어보기", for: .normal)
-        applyButton.setTitle("적용", for: .normal)
-        closeButton.setTitle("닫기", for: .normal)
-
-        h.addArrangedSubview(askButton)
-        h.addArrangedSubview(applyButton)
-
-        stack.addArrangedSubview(titleLabel)
-        stack.addArrangedSubview(textLabel)
-
-        let bottom = UIStackView()
-        bottom.axis = .horizontal
-        bottom.alignment = .center
-        bottom.spacing = 8
-        bottom.addArrangedSubview(h)
-        bottom.addArrangedSubview(closeButton)
-
-        stack.addArrangedSubview(bottom)
-
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-        ])
-
-        askButton.addTarget(self, action: #selector(onTapAsk), for: .touchUpInside)
-        applyButton.addTarget(self, action: #selector(onTapApply), for: .touchUpInside)
-        closeButton.addTarget(self, action: #selector(onTapClose), for: .touchUpInside)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func update(selectedText: String, improved: String?) {
-        textLabel.text = improved ?? selectedText
-        applyButton.isEnabled = (improved != nil)
-        setNeedsLayout()
-        layoutIfNeeded()
-    }
-    
-    /// 클릭된 요소 rect(뷰포트 기준)에 맞춰 화면 내 적절한 위치로 배치
-    func present(near rect: CGRect, in hostView: UIView, margin: CGFloat = 8) {
-        // 사이즈 계산
-        let targetWidth = min(maxWidth, hostView.bounds.width - 2*margin)
-        let size = systemLayoutSizeFitting(
-            CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
+    var body: some View {
+        OverlayPanelPositioner(
+            state: state,
+            onAsk: onAsk,
+            onApply: onApply,
+            onClose: onClose
         )
-        let panelW = min(size.width, targetWidth)
-        let panelH = size.height
+    }
+}
 
-        // 기본 위치: target 위쪽에 띄우되, 공간 없으면 아래쪽
-        var x = rect.minX
-        var y = rect.minY - panelH - margin
+private struct OverlayPanelPositioner: View {
+    let state: BrowserViewModel.OverlayState
+    let onAsk: () -> Void
+    let onApply: () -> Void
+    let onClose: () -> Void
 
-        // 화면 경계 보정
-        if y < margin {
-            y = rect.maxY + margin
+    @State private var panelSize: CGSize = .zero
+
+    private let margin: CGFloat = 8
+    private let maxWidth: CGFloat = 320
+
+    var body: some View {
+        GeometryReader { geo in
+            let containerSize = geo.size
+            let widthLimit = max(80, min(maxWidth, containerSize.width - margin * 2))
+            OverlayPanelView(
+                selectedText: state.selectedText,
+                improvedText: state.improvedText,
+                onAsk: onAsk,
+                onApply: onApply,
+                onClose: onClose
+            )
+            .frame(maxWidth: widthLimit, alignment: .leading)
+            .background(
+                GeometryReader { panelGeo in
+                    Color.clear
+                        .preference(key: OverlayPanelSizePreferenceKey.self, value: panelGeo.size)
+                }
+            )
+            .onPreferenceChange(OverlayPanelSizePreferenceKey.self) { size in
+                self.panelSize = size
+            }
+            .position(position(in: containerSize, fallbackWidth: widthLimit))
         }
-        if x + panelW > hostView.bounds.width - margin {
-            x = hostView.bounds.width - margin - panelW
-        }
-        if x < margin { x = margin }
-
-        frame = CGRect(x: x, y: y, width: panelW, height: panelH)
-        isHidden = false
     }
 
-    @objc private func onTapAsk() { onAsk?() }
-    @objc private func onTapApply() { onApply?() }
-    @objc private func onTapClose() { onClose?() }
+    private func position(in containerSize: CGSize, fallbackWidth: CGFloat) -> CGPoint {
+        let size = panelSize == .zero ? CGSize(width: fallbackWidth, height: 120) : panelSize
+        var x = state.anchor.minX
+        var y = state.anchor.minY - size.height - margin
+
+        if y < margin {
+            y = state.anchor.maxY + margin
+        }
+        if x + size.width > containerSize.width - margin {
+            x = containerSize.width - margin - size.width
+        }
+        if x < margin {
+            x = margin
+        }
+
+        return CGPoint(x: x + size.width / 2, y: y + size.height / 2)
+    }
+}
+
+private struct OverlayPanelView: View {
+    let selectedText: String
+    let improvedText: String?
+    let onAsk: () -> Void
+    let onApply: () -> Void
+    let onClose: () -> Void
+
+    private var displayText: String {
+        improvedText ?? selectedText
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("선택된 문장")
+                .font(.headline)
+            Text(displayText)
+                .font(.body)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+
+            HStack(alignment: .center, spacing: 8) {
+                Button(action: onAsk) {
+                    Text("AI에 물어보기")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(action: onApply) {
+                    Text("적용")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(improvedText == nil)
+
+                Button(action: onClose) {
+                    Text("닫기")
+                        .padding(.horizontal, 4)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(radius: 4, x: 0, y: 2)
+    }
+}
+
+private struct OverlayPanelSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
+    }
 }

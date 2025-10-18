@@ -1,7 +1,6 @@
 // MARK: - BrowserTabView.swift
 import SwiftUI
 import Translation
-import WebKit
 
 struct BrowserTabView: View {
     @EnvironmentObject private var container: AppContainer
@@ -41,24 +40,28 @@ struct BrowserTabView: View {
                 }
             )
 
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topLeading) {
                 WebContainerView(
                     request: vm.request,
                     onAttach: { webView in vm.attachWebView(webView) },
                     onDidFinish: { webView, url in
                         vm.onWebViewDidFinishLoad(webView, url: url)
                     },
-                    onSelectSegmentID: { sid in
+                    onSelectSegment: { sid, anchor in
                         Task {
-                            await vm.onSegmentTapped(id: sid)
+                            await vm.onSegmentSelected(id: sid, anchor: anchor)
                         }
                     },
-                    onAskAI: { Task { await vm.askAIForSelected() } },
-                    onApplyAI: { vm.applyAIImproved() },
-                    onClosePanel: { /* 필요 시 상태 정리 */ },
                     onNavigate: { vm.willNavigate() }
                 )
-                .background(OverlayButtonHost(vm: vm)) // 패널 버튼 액션 연결용 호스트
+                if let overlayState = vm.overlayState {
+                    OverlayPanelContainer(
+                        state: overlayState,
+                        onAsk: { Task { await vm.askAIForSelected() } },
+                        onApply: { vm.applyAIImproved() },
+                        onClose: { vm.closeOverlay() }
+                    )
+                }
                 if vm.isTranslating {
                     ProgressView().padding(.top, 12)
                 }
@@ -118,15 +121,3 @@ struct BrowserTabView: View {
     }
 }
 
-// WebContainerView의 패널 버튼 액션을 뷰모델에 연결하기 위한 호스트 뷰
-private struct OverlayButtonHost: UIViewRepresentable {
-    let vm: BrowserViewModel
-    func makeUIView(context: Context) -> UIView { UIView() }
-    func updateUIView(_ uiView: UIView, context: Context) {
-        // 패널 버튼 액션은 Coordinator가 직접 처리하지 않고,
-        // VM의 메서드를 호출하도록 여기에 연결하고 싶다면
-        // 필요 시 Notification/Combine 등으로도 연결 가능.
-        // (현 스니펫에선 패널의 버튼 콜백을 Coordinator가 직접 가지지 않게
-        // 설계했으므로 별도 훅 없이 VM 메서드를 직접 호출하면 됨)
-    }
-}
