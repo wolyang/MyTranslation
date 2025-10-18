@@ -26,17 +26,13 @@ struct BrowserTabView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                URLBarView(urlString: $vm.urlString) { url in
-                    vm.load(urlString: url)
-                    triggerTranslationSession()
-                }
-                .frame(maxWidth: .infinity)
-
-                VStack(alignment: .trailing, spacing: 12) {
-                    EnginePickerButton(selectedEngine: preferredEngineBinding)
-                    OverlayControlsView(showOriginal: $vm.showOriginal)
-                }
+            URLBarView(
+                urlString: $vm.urlString,
+                selectedEngine: preferredEngineBinding,
+                showOriginal: $vm.showOriginal
+            ) { url in
+                vm.load(urlString: url)
+                triggerTranslationSession()
             }
 
             ZStack(alignment: .top) {
@@ -117,40 +113,5 @@ private struct OverlayButtonHost: UIViewRepresentable {
         // 필요 시 Notification/Combine 등으로도 연결 가능.
         // (현 스니펫에선 패널의 버튼 콜백을 Coordinator가 직접 가지지 않게
         // 설계했으므로 별도 훅 없이 VM 메서드를 직접 호출하면 됨)
-    }
-}
-
-private struct EnginePickerButton: View {
-    @Binding var selectedEngine: EngineTag
-
-    var body: some View {
-        Menu {
-            ForEach(EngineTag.allCases, id: \.self) { engine in
-                Button {
-                    selectedEngine = engine
-                } label: {
-                    HStack {
-                        Text(engine.displayName)
-                        Spacer()
-                        if engine == selectedEngine {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(selectedEngine.displayName, systemImage: "globe")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color(.systemGray6))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color(.systemGray4), lineWidth: 1)
-                )
-        }
     }
 }

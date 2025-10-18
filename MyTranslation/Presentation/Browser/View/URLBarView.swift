@@ -3,6 +3,8 @@ import SwiftUI
 
 struct URLBarView: View {
     @Binding var urlString: String
+    @Binding var selectedEngine: EngineTag
+    @Binding var showOriginal: Bool
     var onGo: (String) -> Void
     @FocusState private var isFocused: Bool
     @AppStorage("recentURLs") private var recentURLsData: Data = Data()
@@ -11,14 +13,19 @@ struct URLBarView: View {
     private let maxRecentCount = 8
 
     var body: some View {
-        field
-            .background(fieldHeightReader)
-            .overlay(alignment: .topLeading) {
-                if shouldShowSuggestions {
-                    suggestions
-                        .offset(y: fieldHeight + 6)
+        HStack(spacing: 10) {
+            field
+                .background(fieldHeightReader)
+                .overlay(alignment: .topLeading) {
+                    if shouldShowSuggestions {
+                        suggestions
+                            .offset(y: fieldHeight + 6)
+                    }
                 }
-            }
+                .frame(maxWidth: .infinity)
+
+            controlGroup
+        }
     }
 
     private var field: some View {
@@ -30,6 +37,7 @@ struct URLBarView: View {
                 .focused($isFocused)
                 .submitLabel(.go)
                 .onSubmit { commitGo() }
+                .layoutPriority(1)
 
             if !urlString.isEmpty {
                 Button {
@@ -95,6 +103,13 @@ struct URLBarView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var controlGroup: some View {
+        HStack(spacing: 8) {
+            EnginePickerButton(selectedEngine: $selectedEngine)
+            OverlayControlsView(showOriginal: $showOriginal)
+        }
+    }
+
     private var filteredRecents: [String] {
         let query = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let urls = storedRecentURLs
@@ -151,5 +166,41 @@ struct URLBarView: View {
             urls = Array(urls.prefix(maxRecentCount))
         }
         storedRecentURLs = urls
+    }
+}
+
+private struct EnginePickerButton: View {
+    @Binding var selectedEngine: EngineTag
+
+    var body: some View {
+        Menu {
+            ForEach(EngineTag.allCases, id: \.self) { engine in
+                Button {
+                    selectedEngine = engine
+                } label: {
+                    HStack {
+                        Text(engine.displayName)
+                        Spacer()
+                        if engine == selectedEngine {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(selectedEngine.shortLabel, systemImage: "globe")
+                .labelStyle(.titleAndIcon)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(.systemGray6))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color(.systemGray4), lineWidth: 1)
+                )
+        }
     }
 }

@@ -8,11 +8,11 @@ struct OverlayControlsView: View {
         Button {
             showOriginal.toggle()
         } label: {
-            Label("원문 보기", systemImage: showOriginal ? "eye.slash" : "eye")
-                .font(.subheadline.weight(.semibold))
+            Label(showOriginal ? "번역 숨기기" : "원문 보기", systemImage: showOriginal ? "eye.slash" : "eye")
+                .labelStyle(.iconOnly)
+                .font(.title3)
                 .foregroundStyle(showOriginal ? Color.accentColor : Color.primary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(showOriginal ? Color.accentColor.opacity(0.18) : Color(.systemGray6))
@@ -23,6 +23,6 @@ struct OverlayControlsView: View {
                 )
         }
         .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityLabel(showOriginal ? "번역 숨기기" : "원문 보기")
     }
 }
