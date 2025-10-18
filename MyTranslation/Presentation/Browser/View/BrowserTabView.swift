@@ -17,7 +17,7 @@ struct BrowserTabView: View {
                 extractor: WKContentExtractor(),
                 router: container.router,
                 replacer: WebViewInlineReplacer(),
-                fmQuery: container.fmQuery,
+//                fmQuery: container.fmQuery,
                 settings: container.settings
             )
         )
@@ -39,6 +39,7 @@ struct BrowserTabView: View {
                     vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
                 }
             )
+            .padding(.horizontal, 16)
 
             ZStack(alignment: .topLeading) {
                 WebContainerView(
@@ -67,8 +68,6 @@ struct BrowserTabView: View {
                 }
             }
         }
-        .padding(.top, 12)
-        .padding(.horizontal, 16)
         .onAppear {
             ensureTranslationSession()
             // 아래 두 줄은 개발 중 편의를 위한 임시 코드

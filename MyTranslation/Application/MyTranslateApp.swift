@@ -19,9 +19,9 @@ struct MyTranslateApp: App {
         WindowGroup {
             RootTabView()
                 .environmentObject(container)
-                .task {
-                    container.prepareFMIfNeeded()
-                }
+//                .task {
+//                    container.prepareFMIfNeeded()
+//                }
         }
         .modelContainer(modelContainer)
     }

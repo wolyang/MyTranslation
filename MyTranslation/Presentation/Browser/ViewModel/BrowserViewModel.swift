@@ -44,7 +44,7 @@ final class BrowserViewModel: ObservableObject {
     
     @Published var fmPanel: FMAnswer?
 
-    let fmQuery: FMQueryService
+//    let fmQuery: FMQueryService
     let settings: UserSettings
 
     private var selectedSegment: Segment?
@@ -59,14 +59,14 @@ final class BrowserViewModel: ObservableObject {
         extractor: ContentExtractor = WKContentExtractor(),
         router: TranslationRouter,
         replacer: InlineReplacer,
-        fmQuery: FMQueryService,
+//        fmQuery: FMQueryService,
         settings: UserSettings
     ) {
         self.container = container
         self.extractor = extractor
         self.router = router
         self.replacer = replacer
-        self.fmQuery = fmQuery
+//        self.fmQuery = fmQuery
         self.settings = settings
     }
 
@@ -124,24 +124,24 @@ final class BrowserViewModel: ObservableObject {
     }
     
     func askAIForSelected() async {
-        guard settings.useFM else { return }
-        guard let seg = selectedSegment else { return }
-        let current = lastResults.first(where: { $0.segmentID == seg.id })?.text
-        // 간단 문맥: ±1
-        let para = lastSegments.filter { $0.url == seg.url }.sorted { $0.indexInPage < $1.indexInPage }
-        let idx = para.firstIndex(where: { $0.id == seg.id }) ?? 0
-        let prev = idx > 0 ? [para[idx - 1].originalText] : []
-        let next = idx + 1 < para.count ? [para[idx + 1].originalText] : []
-        do {
-            let ans = try await fmQuery.ask(for: seg, currentTranslation: current, context: .init(previous: prev, next: next))
-            self.pendingImproved = ans.improvedText
-            if var state = overlayState, state.segmentID == seg.id {
-                state.improvedText = ans.improvedText
-                overlayState = state
-            }
-        } catch {
-            print("FM ask failed: \(error)")
-        }
+//        guard settings.useFM else { return }
+//        guard let seg = selectedSegment else { return }
+//        let current = lastResults.first(where: { $0.segmentID == seg.id })?.text
+//        // 간단 문맥: ±1
+//        let para = lastSegments.filter { $0.url == seg.url }.sorted { $0.indexInPage < $1.indexInPage }
+//        let idx = para.firstIndex(where: { $0.id == seg.id }) ?? 0
+//        let prev = idx > 0 ? [para[idx - 1].originalText] : []
+//        let next = idx + 1 < para.count ? [para[idx + 1].originalText] : []
+//        do {
+//            let ans = try await fmQuery.ask(for: seg, currentTranslation: current, context: .init(previous: prev, next: next))
+//            self.pendingImproved = ans.improvedText
+//            if var state = overlayState, state.segmentID == seg.id {
+//                state.improvedText = ans.improvedText
+//                overlayState = state
+//            }
+//        } catch {
+//            print("FM ask failed: \(error)")
+//        }
     }
 
     func applyAIImproved() {

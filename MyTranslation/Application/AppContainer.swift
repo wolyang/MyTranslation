@@ -21,13 +21,13 @@ final class AppContainer: ObservableObject {
     
     var settings = UserSettings()
     
-    let fmManager: FMModelManaging
-    let fmQuery: FMQueryService
-    let fmConfig: FMConfig
+//    let fmManager: FMModelManaging
+//    let fmQuery: FMQueryService
+//    let fmConfig: FMConfig
 
     @MainActor
     init(context: ModelContext, useOnDeviceFM: Bool = true, fmConfig: FMConfig = .init()) {
-        self.fmConfig = fmConfig
+//        self.fmConfig = fmConfig
         
         self.afmService = AFMTranslationService()
         self.afmEngine  = AFMEngine(client: afmService)
@@ -36,17 +36,17 @@ final class AppContainer: ObservableObject {
         
         if useOnDeviceFM {
             let modelMgr = FMModelManager()
-            self.fmManager = modelMgr
-            self.fmQuery = DefaultFMQueryService(fm: modelMgr)
+//            self.fmManager = modelMgr
+//            self.fmQuery = DefaultFMQueryService(fm: modelMgr)
             self.postEditor = fmConfig.enablePostEdit ? FMPostEditor(fm: modelMgr) : NopPostEditor()
             self.comparer = fmConfig.enableComparer ? CrossEngineComparer(fm: modelMgr) : nil
             self.reranker = fmConfig.enableRerank ? RerankerImpl() : nil
         } else {
-            self.fmManager = FMModelManager() // 더미로 유지
+//            self.fmManager = FMModelManager() // 더미로 유지
             self.postEditor = NopPostEditor()
             self.comparer = nil
             self.reranker = nil
-            self.fmQuery = NopQueryService()
+//            self.fmQuery = NopQueryService()
         }
 
         self.cache = DefaultCacheStore()
@@ -71,7 +71,7 @@ final class AppContainer: ObservableObject {
     }
     
     /// AFM 세션 붙이기 전에 모델 준비(비동기 1회)
-    func prepareFMIfNeeded() {
-        Task { await fmManager.prepareIfNeeded() }
-    }
+//    func prepareFMIfNeeded() {
+//        Task { await fmManager.prepareIfNeeded() }
+//    }
 }
