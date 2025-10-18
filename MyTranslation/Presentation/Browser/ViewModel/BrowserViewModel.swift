@@ -5,9 +5,17 @@ import WebKit
 @MainActor
 final class BrowserViewModel: ObservableObject {
     @Published var urlString: String = /*"https://nakazaki.lofter.com/post/1ea19791_2bfbab779?incantation=rzRAnYWzp157"*/"https://archiveofourown.org/tags/Jugglus%20Juggler%20%7C%20Hebikura%20Shota*s*Kurenai%20Gai/works" // 개발 중 편의를 위한 임시 url 입력
-    
+
     @Published var isTranslating: Bool = false
     @Published var showOriginal: Bool = false
+    @Published var isEditingURL: Bool = false {
+        didSet {
+            if isEditingURL == false, let pendingURLAfterEditing {
+                urlString = pendingURLAfterEditing
+                self.pendingURLAfterEditing = nil
+            }
+        }
+    }
 
     // Web loading binding
     @Published var request: URLRequest? = nil
@@ -20,9 +28,10 @@ final class BrowserViewModel: ObservableObject {
     weak var attachedWebView: WKWebView?
 
     var currentURL: URL? { URL(string: urlString) }
-    
+
     private(set) var lastSegments: [Segment] = []
     private(set) var lastResults: [TranslationResult] = []
+    private var pendingURLAfterEditing: String?
 
     private let container: AppContainer
     let extractor: ContentExtractor
@@ -84,6 +93,7 @@ final class BrowserViewModel: ObservableObject {
 
         // 수동 로드가 시작되므로 이번 페이지에 대해 1회 시도 가능하도록 리셋
         hasAttemptedTranslationForCurrentPage = false
+        pendingURLAfterEditing = nil
     }
     
     func attachWebView(_ web: WKWebView) {
@@ -144,6 +154,13 @@ final class BrowserViewModel: ObservableObject {
 
     func onWebViewDidFinishLoad(_ webView: WKWebView, url: URL) {
         normalizePageScale(webView)
+
+        request = nil
+        pendingURLAfterEditing = url.absoluteString
+        if isEditingURL == false {
+            self.urlString = url.absoluteString
+            pendingURLAfterEditing = nil
+        }
 
         // Auto-translate policy: translate after each load (can refine later)
         if hasAttemptedTranslationForCurrentPage == false {
@@ -219,8 +236,6 @@ final class BrowserViewModel: ObservableObject {
         webView.scrollView.setZoomScale(1.0, animated: false)
     }
     
-    var hasLastInline: Bool { !(lastSegments.isEmpty || lastResults.isEmpty) }
-
     /// UI의 showOriginal 변경을 이 함수로 처리
     @MainActor
     func onShowOriginalChanged(_ showOriginal: Bool) {
@@ -230,7 +245,7 @@ final class BrowserViewModel: ObservableObject {
             // 원문보기 ON → 치환 전부 복원
             replacer.restore(using: exec)
         } else {
-            if hasLastInline {
+            if hasInlineForCurrentPage(webView.url) {
                 // 기존 페어로 즉시 적용(옵저버 on)
                 let pairs = zip(lastSegments, lastResults).compactMap { ($0.originalText, $1.text) }
                 replacer.setPairs(pairs, using: exec)
@@ -240,11 +255,21 @@ final class BrowserViewModel: ObservableObject {
             }
         }
     }
-    
+
     func willNavigate() {
         guard let webView = attachedWebView else { return }
         let exec = WKWebViewScriptAdapter(webView: webView)
         replacer.restore(using: exec)
         Task { _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") }
+        request = nil
+        hasAttemptedTranslationForCurrentPage = false
+        pendingURLAfterEditing = nil
+    }
+
+    private func hasInlineForCurrentPage(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return !lastSegments.isEmpty &&
+            !lastResults.isEmpty &&
+            lastSegments.allSatisfy { $0.url == url }
     }
 }
