@@ -39,7 +39,7 @@ struct URLBarView: View {
                 .onSubmit { commitGo() }
                 .layoutPriority(1)
 
-            if !urlString.isEmpty {
+            if isFocused && !urlString.isEmpty {
                 Button {
                     urlString = ""
                 } label: {
@@ -190,7 +190,9 @@ private struct EnginePickerButton: View {
         } label: {
             VStack(spacing: 2) {
                 Image(systemName: "globe")
-                    .font(.body.weight(.semibold))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
                     .foregroundStyle(Color.accentColor)
                 Text(selectedEngine.shortLabel)
                     .font(.caption2)

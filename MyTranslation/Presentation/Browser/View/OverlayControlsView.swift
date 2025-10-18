@@ -10,7 +10,9 @@ struct OverlayControlsView: View {
         } label: {
             VStack(spacing: 2) {
                 Image(systemName: showOriginal ? "eye.slash" : "eye")
-                    .font(.body.weight(.semibold))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
                     .foregroundStyle(showOriginal ? Color.accentColor : Color.primary)
                 Text(showOriginal ? "숨김" : "원문")
                     .font(.caption2)
