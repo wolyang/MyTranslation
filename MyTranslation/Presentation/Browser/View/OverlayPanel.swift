@@ -160,24 +160,33 @@ private struct OverlayPanelView: View {
                 contentWidth = width
             }
         }
-        .overlay(
-            OverlayPanelTextMeasurer(
-                text: displayText,
-                width: contentWidth,
-                onUpdate: { size in
-                    if size != .zero {
-                        textSize = size
-                    }
-                }
-            )
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
-        )
-    }
+        .onChange(of: contentWidth) { width in
+            guard width > 0 else {
+                textSize = .zero
+                return
+            }
+
+            let measuredSize = measureTextSize(for: width, text: displayText)
+            if textSize != measuredSize {
+                textSize = measuredSize
+            }
+        }
+        .onChange(of: displayText) { _ in
+            guard contentWidth > 0 else {
+                textSize = .zero
+                return
+            }
+
+            let measuredSize = measureTextSize(for: contentWidth, text: displayText)
+            if textSize != measuredSize {
+                textSize = measuredSize
+            }
+        }
+}
 
     @ViewBuilder
     private var textSection: some View {
-        // UILabel 기반 높이 측정기를 사용하지만, 실제 표시는 SwiftUI Text로 유지한다.
+        // 텍스트는 SwiftUI Text로 표시하고, 높이 계산은 NSString.boundingRect를 통해 수행한다.
         VStack(alignment: .leading, spacing: 6) {
             Text("선택된 문장")
                 .font(.subheadline.weight(.semibold))
@@ -213,61 +222,26 @@ private struct OverlayPanelWidthPreferenceKey: PreferenceKey {
     }
 }
 
-private struct OverlayPanelTextMeasurer: UIViewRepresentable {
-    let text: String
-    let width: CGFloat
-    let onUpdate: (CGSize) -> Void
+private extension OverlayPanelView {
+    func measureTextSize(for width: CGFloat, text: String) -> CGSize {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
 
-    func makeUIView(context: Context) -> OverlayPanelTextMeasurementView {
-        OverlayPanelTextMeasurementView()
-    }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.preferredFont(forTextStyle: .callout),
+            .paragraphStyle: paragraphStyle
+        ]
 
-    func updateUIView(_ uiView: OverlayPanelTextMeasurementView, context: Context) {
-        guard width > 0 else {
-            DispatchQueue.main.async {
-                onUpdate(.zero)
-            }
-            return
-        }
+        let boundingRect = (text as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes,
+            context: nil
+        )
 
-        uiView.configure(text: text, width: width)
-
-        let fittingSize = CGSize(width: width, height: .greatestFiniteMagnitude)
-        let size = uiView.measuringLabel.sizeThatFits(fittingSize)
-
-        DispatchQueue.main.async {
-            onUpdate(size)
-        }
-    }
-}
-
-private final class OverlayPanelTextMeasurementView: UIView {
-    // UIKit UILabel을 이용해 실제 렌더링 높이를 계산하기 위한 보조 뷰로,
-    // OverlayPanelView에는 표시되지 않고 측정에만 사용된다.
-    let measuringLabel: UILabel = {
-        let label = UILabel()
-        label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.font = UIFont.preferredFont(forTextStyle: .callout)
-        label.isHidden = true
-        return label
-    }()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        backgroundColor = .clear
-        addSubview(measuringLabel)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(text: String, width: CGFloat) {
-        measuringLabel.font = UIFont.preferredFont(forTextStyle: .callout)
-        measuringLabel.text = text
-        measuringLabel.preferredMaxLayoutWidth = width
-        measuringLabel.frame = CGRect(origin: .zero, size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(
+            width: ceil(boundingRect.width),
+            height: ceil(boundingRect.height)
+        )
     }
 }
