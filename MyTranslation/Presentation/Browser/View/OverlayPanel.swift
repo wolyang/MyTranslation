@@ -242,6 +242,8 @@ private struct OverlayPanelTextMeasurer: UIViewRepresentable {
 }
 
 private final class OverlayPanelTextMeasurementView: UIView {
+    // UIKit UILabel을 이용해 실제 렌더링 높이를 계산하기 위한 보조 뷰로,
+    // OverlayPanelView에는 표시되지 않고 측정에만 사용된다.
     let measuringLabel: UILabel = {
         let label = UILabel()
         label.numberOfLines = 0
