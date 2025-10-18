@@ -60,7 +60,12 @@ struct BrowserTabView: View {
         }
         .padding(.top, 12)
         .padding(.horizontal, 16)
-        .onAppear { ensureTranslationSession() }
+        .onAppear {
+            ensureTranslationSession()
+            // 아래 두 줄은 개발 중 편의를 위한 임시 코드
+            vm.load(urlString: vm.urlString)
+            triggerTranslationSession()
+        }
         .onChange(of: vm.showOriginal) { _, newValue in
             vm.onShowOriginalChanged(newValue)
         }
