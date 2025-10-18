@@ -85,49 +85,101 @@ private struct OverlayPanelView: View {
     let onApply: () -> Void
     let onClose: () -> Void
 
+    @State private var textSize: CGSize = .zero
+
     private var displayText: String {
         improvedText ?? selectedText
     }
 
+    private var scrollHeight: CGFloat {
+        let measuredHeight = textSize.height
+        let minHeight: CGFloat = 60
+        let maxHeight: CGFloat = 180
+        if measuredHeight <= 0 {
+            return minHeight
+        }
+        return min(max(measuredHeight, minHeight), maxHeight)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("선택된 문장")
-                .font(.headline)
-            Text(displayText)
-                .font(.body)
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("선택된 문장")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(displayText)
+                        .font(.callout)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: OverlayPanelTextSizePreferenceKey.self,
+                                    value: proxy.size
+                                )
+                            }
+                        )
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: scrollHeight)
+            .onPreferenceChange(OverlayPanelTextSizePreferenceKey.self) { size in
+                if size != .zero {
+                    textSize = size
+                }
+            }
 
             HStack(alignment: .center, spacing: 8) {
                 Button(action: onAsk) {
-                    Text("AI에 물어보기")
+                    Text("AI번역")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
 
                 Button(action: onApply) {
                     Text("적용")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 .disabled(improvedText == nil)
 
                 Button(action: onClose) {
                     Text("닫기")
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 6)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
             }
+            .font(.callout)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
         .shadow(radius: 4, x: 0, y: 2)
     }
 }
 
 private struct OverlayPanelSizePreferenceKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
+    }
+}
+
+private struct OverlayPanelTextSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
         let next = nextValue()
         if next != .zero {
