@@ -236,8 +236,6 @@ private struct EnginePickerButton: View {
                 }
             }
 
-            Divider()
-
             ForEach(EngineTag.allCases, id: \.self) { engine in
                 Button {
                     onInteract()
@@ -251,7 +249,7 @@ private struct EnginePickerButton: View {
                     HStack {
                         Text(engine.displayName)
                         Spacer()
-                        if engine == selectedEngine {
+                        if !showOriginal, engine == selectedEngine {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -263,11 +261,12 @@ private struct EnginePickerButton: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: 20, height: 20)
-                    .foregroundStyle(Color.accentColor)
-                Text(selectedEngine.shortLabel)
+                    .foregroundStyle(showOriginal ? Color.gray : Color.accentColor)
+                Text(showOriginal ? "원문" : selectedEngine.shortLabel)
                     .font(.caption2)
-                    .foregroundStyle(Color.primary)
+                    .foregroundStyle(showOriginal ? Color.gray : Color.accentColor)
             }
+            .frame(width: 30)
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
             .contentShape(Rectangle())
