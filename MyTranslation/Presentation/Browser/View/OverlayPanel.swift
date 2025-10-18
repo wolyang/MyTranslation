@@ -177,12 +177,16 @@ private struct OverlayPanelView: View {
 
     @ViewBuilder
     private var textSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            OverlayPanelLabel(text: "선택된 문장", style: .title)
+        // UILabel 기반 높이 측정기를 사용하지만, 실제 표시는 SwiftUI Text로 유지한다.
+        VStack(alignment: .leading, spacing: 6) {
+            Text("선택된 문장")
+                .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            OverlayPanelLabel(text: displayText, style: .body)
+            Text(displayText)
+                .font(.callout)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
         }
         .padding(.vertical, 2)
     }
@@ -237,60 +241,5 @@ private struct OverlayPanelTextMeasurer: UIViewRepresentable {
         DispatchQueue.main.async {
             onUpdate(size)
         }
-    }
-}
-
-private struct OverlayPanelLabel: UIViewRepresentable {
-    enum Style {
-        case title
-        case body
-    }
-
-    let text: String
-    let style: Style
-
-    func makeUIView(context: Context) -> OverlayPanelUILabel {
-        let label = OverlayPanelUILabel()
-        label.numberOfLines = 0
-        label.textAlignment = .left
-        label.adjustsFontForContentSizeCategory = true
-        label.lineBreakMode = .byWordWrapping
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        label.setContentCompressionResistancePriority(.required, for: .horizontal)
-        updateFont(for: label)
-        label.text = text
-        return label
-    }
-
-    func updateUIView(_ uiView: OverlayPanelUILabel, context: Context) {
-        uiView.text = text
-        updateFont(for: uiView)
-    }
-
-    private func updateFont(for label: UILabel) {
-        switch style {
-        case .title:
-            let baseFont = UIFont.preferredFont(forTextStyle: .subheadline)
-            if let descriptor = baseFont.fontDescriptor.withSymbolicTraits(.traitBold) {
-                label.font = UIFont(descriptor: descriptor, size: baseFont.pointSize)
-            } else {
-                label.font = UIFont.systemFont(ofSize: baseFont.pointSize, weight: .semibold)
-            }
-        case .body:
-            label.font = UIFont.preferredFont(forTextStyle: .callout)
-        }
-    }
-}
-
-private final class OverlayPanelUILabel: UILabel {
-    override var intrinsicContentSize: CGSize {
-        guard numberOfLines == 0 else { return super.intrinsicContentSize }
-        let size = super.intrinsicContentSize
-        return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        preferredMaxLayoutWidth = bounds.width
     }
 }
