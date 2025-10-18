@@ -218,28 +218,54 @@ private struct OverlayPanelTextMeasurer: UIViewRepresentable {
     let width: CGFloat
     let onUpdate: (CGSize) -> Void
 
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
-        label.numberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.font = UIFont.preferredFont(forTextStyle: .callout)
-        return label
+    func makeUIView(context: Context) -> OverlayPanelTextMeasurementView {
+        OverlayPanelTextMeasurementView()
     }
 
-    func updateUIView(_ uiView: UILabel, context: Context) {
+    func updateUIView(_ uiView: OverlayPanelTextMeasurementView, context: Context) {
         guard width > 0 else {
             DispatchQueue.main.async {
                 onUpdate(.zero)
             }
             return
         }
-        uiView.font = UIFont.preferredFont(forTextStyle: .callout)
-        uiView.text = text
-        uiView.preferredMaxLayoutWidth = width
+
+        uiView.configure(text: text, width: width)
+
         let fittingSize = CGSize(width: width, height: .greatestFiniteMagnitude)
-        let size = uiView.sizeThatFits(fittingSize)
+        let size = uiView.measuringLabel.sizeThatFits(fittingSize)
+
         DispatchQueue.main.async {
             onUpdate(size)
         }
+    }
+}
+
+private final class OverlayPanelTextMeasurementView: UIView {
+    let measuringLabel: UILabel = {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.font = UIFont.preferredFont(forTextStyle: .callout)
+        label.isHidden = true
+        return label
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        addSubview(measuringLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(text: String, width: CGFloat) {
+        measuringLabel.font = UIFont.preferredFont(forTextStyle: .callout)
+        measuringLabel.text = text
+        measuringLabel.preferredMaxLayoutWidth = width
+        measuringLabel.frame = CGRect(origin: .zero, size: CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 }
