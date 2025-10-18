@@ -93,9 +93,7 @@ private struct OverlayPanelView: View {
         improvedText ?? selectedText
     }
 
-    private var maxScrollHeight: CGFloat {
-        180
-    }
+    private var maxScrollHeight: CGFloat { 160 }
 
     private var requiresScroll: Bool {
         guard textSize != .zero else { return false }
@@ -103,7 +101,7 @@ private struct OverlayPanelView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Group {
                 if requiresScroll {
                     ScrollView {
@@ -117,7 +115,7 @@ private struct OverlayPanelView: View {
             .scrollIndicators(.never)
             .scrollDisabled(!requiresScroll)
 
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
                 Button(action: onAsk) {
                     Text("AI번역")
                         .frame(maxWidth: .infinity)
@@ -142,8 +140,8 @@ private struct OverlayPanelView: View {
             }
             .font(.callout)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
         .background(
             .ultraThinMaterial,
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -153,7 +151,7 @@ private struct OverlayPanelView: View {
             GeometryReader { proxy in
                 Color.clear.preference(
                     key: OverlayPanelWidthPreferenceKey.self,
-                    value: max(proxy.size.width - 24, 0) // horizontal padding
+                    value: max(proxy.size.width - 20, 0) // horizontal padding
                 )
             }
         )
@@ -179,14 +177,14 @@ private struct OverlayPanelView: View {
 
     @ViewBuilder
     private var textSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             OverlayPanelLabel(text: "선택된 문장", style: .title)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             OverlayPanelLabel(text: displayText, style: .body)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 }
 
@@ -251,17 +249,20 @@ private struct OverlayPanelLabel: UIViewRepresentable {
     let text: String
     let style: Style
 
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
+    func makeUIView(context: Context) -> OverlayPanelUILabel {
+        let label = OverlayPanelUILabel()
         label.numberOfLines = 0
         label.textAlignment = .left
         label.adjustsFontForContentSizeCategory = true
+        label.lineBreakMode = .byWordWrapping
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
         updateFont(for: label)
         label.text = text
         return label
     }
 
-    func updateUIView(_ uiView: UILabel, context: Context) {
+    func updateUIView(_ uiView: OverlayPanelUILabel, context: Context) {
         uiView.text = text
         updateFont(for: uiView)
     }
@@ -278,5 +279,18 @@ private struct OverlayPanelLabel: UIViewRepresentable {
         case .body:
             label.font = UIFont.preferredFont(forTextStyle: .callout)
         }
+    }
+}
+
+private final class OverlayPanelUILabel: UILabel {
+    override var intrinsicContentSize: CGSize {
+        guard numberOfLines == 0 else { return super.intrinsicContentSize }
+        let size = super.intrinsicContentSize
+        return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        preferredMaxLayoutWidth = bounds.width
     }
 }
