@@ -6,12 +6,11 @@ import WebKit
 struct BrowserTabView: View {
     @EnvironmentObject private var container: AppContainer
     @StateObject private var vm: BrowserViewModel
+    @AppStorage("preferredEngine") private var preferredEngineRawValue: String = EngineTag.afm.rawValue
 
     // TranslationSession 트리거
     @State private var trConfig: TranslationSession.Configuration? = nil
     
-    @State private var selectedSegment: Segment?
-
     init(container: AppContainer) {
         _vm = StateObject(
             wrappedValue: BrowserViewModel(
@@ -26,26 +25,17 @@ struct BrowserTabView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            URLBarView(urlString: $vm.urlString) { url in
-                vm.load(urlString: url)
-                // 세션 트리거
-                if trConfig == nil {
-                    trConfig = TranslationSession.Configuration(
-                        // 언어 자동감지를 쓰면 nil 유지. 고정하고 싶으면 source/target 지정.
-                        source: .init(identifier: "zh-Hans"),
-                        target: .init(identifier: "ko")
-                    )
-                } else {
-                    trConfig?.invalidate() // 이미 세션이 있었다면 재생성 트리거
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                URLBarView(urlString: $vm.urlString) { url in
+                    vm.load(urlString: url)
+                    triggerTranslationSession()
                 }
-            }
-            .onAppear {
-                if trConfig == nil {
-                    trConfig = TranslationSession.Configuration(
-                        source: .init(identifier: "zh-Hans"),
-                        target: .init(identifier: "ko")
-                    )
+                .frame(maxWidth: .infinity)
+
+                VStack(alignment: .trailing, spacing: 12) {
+                    EnginePickerButton(selectedEngine: preferredEngineBinding)
+                    OverlayControlsView(showOriginal: $vm.showOriginal)
                 }
             }
 
@@ -71,15 +61,12 @@ struct BrowserTabView: View {
                     ProgressView().padding(.top, 12)
                 }
             }
-
-            OverlayControlsView(
-                showOriginal: $vm.showOriginal,
-                engineBadgeEnabled: $vm.engineBadgeEnabled,
-                reviewOnlyFilter: $vm.reviewOnlyFilter
-            )
-            .onChange(of: vm.showOriginal) { _, newValue in
-                vm.onShowOriginalChanged(newValue)
-            }
+        }
+        .padding(.top, 12)
+        .padding(.horizontal, 16)
+        .onAppear { ensureTranslationSession() }
+        .onChange(of: vm.showOriginal) { _, newValue in
+            vm.onShowOriginalChanged(newValue)
         }
         // WebView 로드 이후 자동 번역
         .task(id: vm.pendingAutoTranslateID) {
@@ -94,6 +81,30 @@ struct BrowserTabView: View {
             container.attachAFMSession(session)
         }
     }
+
+    private var preferredEngineBinding: Binding<EngineTag> {
+        Binding(
+            get: { EngineTag(rawValue: preferredEngineRawValue) ?? .afm },
+            set: { preferredEngineRawValue = $0.rawValue }
+        )
+    }
+
+    private func ensureTranslationSession() {
+        if trConfig == nil {
+            trConfig = TranslationSession.Configuration(
+                source: .init(identifier: "zh-Hans"),
+                target: .init(identifier: "ko")
+            )
+        }
+    }
+
+    private func triggerTranslationSession() {
+        if trConfig == nil {
+            ensureTranslationSession()
+        } else {
+            trConfig?.invalidate()
+        }
+    }
 }
 
 // WebContainerView의 패널 버튼 액션을 뷰모델에 연결하기 위한 호스트 뷰
@@ -106,5 +117,40 @@ private struct OverlayButtonHost: UIViewRepresentable {
         // 필요 시 Notification/Combine 등으로도 연결 가능.
         // (현 스니펫에선 패널의 버튼 콜백을 Coordinator가 직접 가지지 않게
         // 설계했으므로 별도 훅 없이 VM 메서드를 직접 호출하면 됨)
+    }
+}
+
+private struct EnginePickerButton: View {
+    @Binding var selectedEngine: EngineTag
+
+    var body: some View {
+        Menu {
+            ForEach(EngineTag.allCases, id: \.self) { engine in
+                Button {
+                    selectedEngine = engine
+                } label: {
+                    HStack {
+                        Text(engine.displayName)
+                        Spacer()
+                        if engine == selectedEngine {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(selectedEngine.displayName, systemImage: "globe")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(.systemGray6))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color(.systemGray4), lineWidth: 1)
+                )
+        }
     }
 }

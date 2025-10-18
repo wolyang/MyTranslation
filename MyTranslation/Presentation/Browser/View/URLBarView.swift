@@ -4,15 +4,152 @@ import SwiftUI
 struct URLBarView: View {
     @Binding var urlString: String
     var onGo: (String) -> Void
+    @FocusState private var isFocused: Bool
+    @AppStorage("recentURLs") private var recentURLsData: Data = Data()
+    @State private var fieldHeight: CGFloat = 0
+
+    private let maxRecentCount = 8
+
     var body: some View {
-        HStack {
+        field
+            .background(fieldHeightReader)
+            .overlay(alignment: .topLeading) {
+                if shouldShowSuggestions {
+                    suggestions
+                        .offset(y: fieldHeight + 6)
+                }
+            }
+    }
+
+    private var field: some View {
+        HStack(spacing: 8) {
             TextField("https://…", text: $urlString)
                 .textInputAutocapitalization(.never)
                 .disableAutocorrection(true)
                 .keyboardType(.URL)
-                .onSubmit { onGo(urlString) }
-            Button("이동") { onGo(urlString) }
+                .focused($isFocused)
+                .submitLabel(.go)
+                .onSubmit { commitGo() }
+
+            if !urlString.isEmpty {
+                Button {
+                    urlString = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button(action: commitGo) {
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.accentColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
         }
-        .padding(8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.systemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(.systemGray4), lineWidth: 0.5)
+        )
+    }
+
+    private var suggestions: some View {
+        let recents = filteredRecents
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(recents, id: \.self) { url in
+                Button {
+                    applySuggestion(url)
+                } label: {
+                    Text(url)
+                        .font(.footnote)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                if url != recents.last {
+                    Divider()
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.systemBackground))
+        )
+        .shadow(color: Color.black.opacity(0.1), radius: 10, y: 6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(.systemGray4), lineWidth: 0.5)
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var filteredRecents: [String] {
+        let query = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let urls = storedRecentURLs
+        guard !query.isEmpty else { return Array(urls.prefix(maxRecentCount)) }
+        return urls.filter { $0.localizedCaseInsensitiveContains(query) }
+            .prefix(maxRecentCount)
+            .map { $0 }
+    }
+
+    private var shouldShowSuggestions: Bool {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        return isFocused && !trimmed.isEmpty && !filteredRecents.isEmpty
+    }
+
+    private var storedRecentURLs: [String] {
+        get {
+            (try? JSONDecoder().decode([String].self, from: recentURLsData)) ?? []
+        }
+        set {
+            recentURLsData = (try? JSONEncoder().encode(newValue)) ?? Data()
+        }
+    }
+
+    private var fieldHeightReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { fieldHeight = proxy.size.height }
+                .onChange(of: proxy.size.height) { _, newValue in
+                    fieldHeight = newValue
+                }
+        }
+    }
+
+    private func commitGo() {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        urlString = trimmed
+        updateRecents(with: trimmed)
+        isFocused = false
+        onGo(trimmed)
+    }
+
+    private func applySuggestion(_ url: String) {
+        urlString = url
+        commitGo()
+    }
+
+    private func updateRecents(with newURL: String) {
+        guard !newURL.isEmpty else { return }
+        var urls = storedRecentURLs
+        urls.removeAll { $0.caseInsensitiveCompare(newURL) == .orderedSame }
+        urls.insert(newURL, at: 0)
+        if urls.count > maxRecentCount {
+            urls = Array(urls.prefix(maxRecentCount))
+        }
+        storedRecentURLs = urls
     }
 }
