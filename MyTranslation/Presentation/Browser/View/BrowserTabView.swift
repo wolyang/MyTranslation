@@ -32,13 +32,14 @@ struct BrowserTabView: View {
                 showOriginal: $vm.showOriginal,
                 isEditing: $vm.isEditingURL,
                 currentPageURLString: vm.currentPageURLString,
+                onGo: { url in
+                    vm.load(urlString: url)
+                    triggerTranslationSession()
+                },
                 onSelectEngine: { engine, wasShowingOriginal in
                     vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
                 }
-            ) { url in
-                vm.load(urlString: url)
-                triggerTranslationSession()
-            }
+            )
 
             ZStack(alignment: .top) {
                 WebContainerView(
