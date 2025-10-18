@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct OverlayPanelContainer: View {
     let state: BrowserViewModel.OverlayState
@@ -98,7 +99,7 @@ private struct OverlayPanelView: View {
 
     private var requiresScroll: Bool {
         guard textSize != .zero else { return false }
-        return textSize.height > maxScrollHeight
+        return textSize.height - maxScrollHeight > 1
     }
 
     var body: some View {
@@ -108,7 +109,7 @@ private struct OverlayPanelView: View {
                     ScrollView {
                         textSection
                     }
-                    .frame(height: maxScrollHeight)
+                    .frame(height: min(textSize.height, maxScrollHeight))
                 } else {
                     textSection
                 }
@@ -171,6 +172,7 @@ private struct OverlayPanelView: View {
                     }
                 }
             )
+            .frame(width: 0, height: 0)
             .allowsHitTesting(false)
         )
     }
@@ -202,17 +204,6 @@ private struct OverlayPanelSizePreferenceKey: PreferenceKey {
     }
 }
 
-private struct OverlayPanelTextSizePreferenceKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        let next = nextValue()
-        if next != .zero {
-            value = next
-        }
-    }
-}
-
 private struct OverlayPanelWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -224,31 +215,33 @@ private struct OverlayPanelWidthPreferenceKey: PreferenceKey {
     }
 }
 
-private struct OverlayPanelTextMeasurer: View {
+private struct OverlayPanelTextMeasurer: UIViewRepresentable {
     let text: String
     let width: CGFloat
     let onUpdate: (CGSize) -> Void
 
-    var body: some View {
-        Group {
-            if width > 0 {
-                Text(text)
-                    .font(.callout)
-                    .multilineTextAlignment(.leading)
-                    .frame(width: width, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear
-                                .preference(
-                                    key: OverlayPanelTextSizePreferenceKey.self,
-                                    value: proxy.size
-                                )
-                        }
-                    )
-                    .hidden()
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.font = UIFont.preferredFont(forTextStyle: .callout)
+        return label
+    }
+
+    func updateUIView(_ uiView: UILabel, context: Context) {
+        guard width > 0 else {
+            DispatchQueue.main.async {
+                onUpdate(.zero)
             }
+            return
         }
-        .onPreferenceChange(OverlayPanelTextSizePreferenceKey.self, perform: onUpdate)
+        uiView.font = UIFont.preferredFont(forTextStyle: .callout)
+        uiView.text = text
+        uiView.preferredMaxLayoutWidth = width
+        let fittingSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        let size = uiView.sizeThatFits(fittingSize)
+        DispatchQueue.main.async {
+            onUpdate(size)
+        }
     }
 }
