@@ -118,6 +118,7 @@ public final class TermMasker {
                 var shouldMask = true
                 if e.category == .person, let pid = e.personId, !pid.isEmpty, e.source.count == 1 {
                     // ---- 단일 한자 인물: 네거티브 → 화이트리스트 → 최근언급 → 짝검증 ----
+                    print("[MASKER] find \(e.source) from \(segment.originalText) with negativeBigram check: \(isNegativeBigram(ns: ns, matchRange: m.range, center: e.source))")
                     if isNegativeBigram(ns: ns, matchRange: m.range, center: e.source) {
                         shouldMask = false
                     } else if (soloFamilyAllow[pid]?.contains(e.source) == true) || (soloGivenAllow[pid]?.contains(e.source) == true) {
@@ -155,7 +156,7 @@ public final class TermMasker {
                 }
                 last = m.range.location + m.range.length
 
-                if e.category == .person, let pid = e.personId {
+                if e.category == .person, let pid = e.personId, shouldMask {
                     var arr = personQueues[pid] ?? []
                     arr.append(e.target)
                     personQueues[pid] = arr
