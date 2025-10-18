@@ -5,6 +5,7 @@ struct URLBarView: View {
     @Binding var urlString: String
     @Binding var selectedEngine: EngineTag
     @Binding var showOriginal: Bool
+    @Binding var isEditing: Bool
     var onGo: (String) -> Void
     @FocusState private var isFocused: Bool
     @AppStorage("recentURLs") private var recentURLsData: Data = Data()
@@ -78,6 +79,14 @@ struct URLBarView: View {
                 didCommitDuringEditing = false
             } else if oldValue && didCommitDuringEditing == false {
                 urlString = originalURLBeforeEditing
+            }
+            isEditing = newValue
+        }
+        .onChange(of: isEditing) { _, newValue in
+            if newValue && !isFocused {
+                isFocused = true
+            } else if !newValue && isFocused {
+                isFocused = false
             }
         }
     }

@@ -29,7 +29,8 @@ struct BrowserTabView: View {
             URLBarView(
                 urlString: $vm.urlString,
                 selectedEngine: preferredEngineBinding,
-                showOriginal: $vm.showOriginal
+                showOriginal: $vm.showOriginal,
+                isEditing: $vm.isEditingURL
             ) { url in
                 vm.load(urlString: url)
                 triggerTranslationSession()
