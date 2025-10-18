@@ -8,8 +8,6 @@ final class BrowserViewModel: ObservableObject {
     
     @Published var isTranslating: Bool = false
     @Published var showOriginal: Bool = false
-    @Published var engineBadgeEnabled: Bool = true
-    @Published var reviewOnlyFilter: Bool = false
 
     // Web loading binding
     @Published var request: URLRequest? = nil
@@ -183,7 +181,11 @@ final class BrowserViewModel: ObservableObject {
             
             let opts = TranslationOptions()
             do {
-                let results = try await router.translate(segments: segs, options: opts)
+                let results = try await router.translate(
+                    segments: segs,
+                    options: opts,
+                    preferredEngine: settings.preferredEngine
+                )
                 let pairs: [(original: String, translated: String)] =
                     zip(segs, results).compactMap { seg, res in
                         guard !res.text.isEmpty else { return nil }
