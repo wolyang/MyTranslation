@@ -6,10 +6,7 @@ struct WebContainerView: UIViewRepresentable {
     let request: URLRequest?
     var onAttach: ((WKWebView) -> Void)? = nil
     var onDidFinish: ((WKWebView, URL) -> Void)? = nil
-    var onSelectSegmentID: ((String) -> Void)? = nil
-    var onAskAI: (() -> Void)? = nil
-    var onApplyAI: (() -> Void)? = nil
-    var onClosePanel: (() -> Void)? = nil
+    var onSelectSegment: ((String, CGRect) -> Void)? = nil
     var onNavigate: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
@@ -36,8 +33,6 @@ struct WebContainerView: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         private let parent: WebContainerView
-        private var overlay: OverlayPanel?
-        private var overlayInstalled = false
         var bridge: SelectionBridge?
         private weak var webView: WKWebView?
         private var lastMarkRunKey: String?
@@ -49,7 +44,6 @@ struct WebContainerView: UIViewRepresentable {
             self.webView = webView
             webView.isInspectable = true
             self.bridge = SelectionBridge(webView: webView)
-            ensureOverlay(on: webView)
 
             // 기존 bridge.onSelect 제거됨
             webView.configuration.userContentController.removeScriptMessageHandler(forName: "selection")
@@ -75,65 +69,30 @@ struct WebContainerView: UIViewRepresentable {
                     return
                 }
 
-                // 1️⃣ parent로 segId 전달
-                self.parent.onSelectSegmentID?(segId)
-
-                // 2️⃣ rect 조회 후 오버레이 표시
+                // rect 조회 후 SwiftUI 계층으로 전달
                 Task { [weak self] in
                     guard let self else { return }
                     let exec = WKWebViewScriptAdapter(webView: web)
                     struct R: Decodable { let x: CGFloat; let y: CGFloat; let width: CGFloat; let height: CGFloat }
+                    let rect: CGRect
                     if let rectJSON: String = try? await exec.runJS(#"window.MT_GET_RECT(\#(String(reflecting: segId)))"#),
                        let data = rectJSON.data(using: .utf8),
                        let r = try? JSONDecoder().decode(R.self, from: data)
                     {
-                        await MainActor.run {
-                            self.ensureOverlay(on: web)
-                            /*let selectedText = self.parent.vm?.lastSegments.first(where: { $0.id == segId })?.originalText ?? ""*/
-
-                            self.overlay?.update(selectedText: "", improved: nil)
-                            self.overlay?.present(
-                                near: CGRect(x: r.x, y: r.y, width: r.width, height: r.height),
-                                in: web
-                            )
-                        }
+                        rect = CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
+                    } else {
+                        rect = .zero
+                    }
+                    await MainActor.run {
+                        self.parent.onSelectSegment?(segId, rect)
                     }
                 }
             default:
                 break
             }
-            
-        }
-        
-        private func ensureOverlay(on webView: WKWebView) {
-            guard overlayInstalled == false else { return }
-            overlayInstalled = true
-            let panel = OverlayPanel(frame: .zero)
-            panel.translatesAutoresizingMaskIntoConstraints = false
-            panel.isHidden = true
-            webView.addSubview(panel)
 
-            // 버튼 콜백을 ViewModel로 연결
-            panel.onAsk = { [weak self] in self?.parent.onAskAI?() }
-            panel.onApply = { [weak self] in self?.parent.onApplyAI?() }
-            panel.onClose = { [weak self] in
-                self?.parent.onClosePanel?()
-                self?.overlay?.isHidden = true
-                // 선택 강조 해제
-                let js = "window.MT && window.MT.CLEAR && window.MT.CLEAR();"
-                Task { @MainActor in _ = try? await self?.webView?.callAsyncJavaScript(js,
-                                                                                       arguments: [:],
-                                                                                       in: nil,
-                                                                                       contentWorld: .page) }
-            }
-            self.overlay = panel
         }
 
-        func showOverlay(selectedText: String, improved: String? = nil) {
-            overlay?.isHidden = false
-            overlay?.update(selectedText: selectedText, improved: improved)
-        }
-        
         func markSegments(_ pairs: [(id: String, text: String)]) async {
             // 같은 페이지(=URL)에서 같은 runKey로 두 번 이상 호출 방지
                     let urlKey = webView?.url?.absoluteString ?? UUID().uuidString
@@ -146,15 +105,6 @@ struct WebContainerView: UIViewRepresentable {
                     print("[MARK] calling MT_MARK_SEGMENTS_ALL list=\(pairs.count) chars=\(totalChars) url=\(urlKey)")
 
             await bridge?.mark(segments: pairs)
-        }
-
-        // 외부에서 개선안 반영 후 텍스트 갱신 표시하고 싶을 때 호출
-        func updateOverlay(improved: String, anchor: CGRect?) {
-            guard let overlay, let web = webView else { return }
-            overlay.update(selectedText: "", improved: improved)
-            if let rect = anchor {
-                overlay.present(near: rect, in: web)
-            }
         }
 
         func webView(_ webView: WKWebView,

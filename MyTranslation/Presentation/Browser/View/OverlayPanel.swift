@@ -5,126 +5,269 @@
 //  Created by sailor.m on 10/16/25.
 //
 
+import SwiftUI
 import UIKit
 
-final class OverlayPanel: UIView {
-    private let titleLabel = UILabel()
-    private let textLabel = UILabel()
-    private let askButton = UIButton(type: .system)
-    private let applyButton = UIButton(type: .system)
-    private let closeButton = UIButton(type: .system)
+struct OverlayPanelContainer: View {
+    let state: BrowserViewModel.OverlayState
+    let onAsk: () -> Void
+    let onApply: () -> Void
+    let onClose: () -> Void
 
-    var onAsk: (() -> Void)?
-    var onApply: (() -> Void)?
-    var onClose: (() -> Void)?
-    // 배치 시 사용: 패널 최대 너비
-    var maxWidth: CGFloat = 320
+    var body: some View {
+        OverlayPanelPositioner(
+            state: state,
+            onAsk: onAsk,
+            onApply: onApply,
+            onClose: onClose
+        )
+    }
+}
+
+private struct OverlayPanelPositioner: View {
+    let state: BrowserViewModel.OverlayState
+    let onAsk: () -> Void
+    let onApply: () -> Void
+    let onClose: () -> Void
+
+    @State private var panelSize: CGSize = .zero
+
+    private let margin: CGFloat = 8
+    private let maxWidth: CGFloat = 320
+
+    var body: some View {
+        GeometryReader { geo in
+            let containerSize = geo.size
+            let widthLimit = max(80, min(maxWidth, containerSize.width - margin * 2))
+            OverlayPanelView(
+                selectedText: state.selectedText,
+                improvedText: state.improvedText,
+                onAsk: onAsk,
+                onApply: onApply,
+                onClose: onClose
+            )
+            .frame(maxWidth: widthLimit, alignment: .leading)
+            .background(
+                GeometryReader { panelGeo in
+                    Color.clear
+                        .preference(key: OverlayPanelSizePreferenceKey.self, value: panelGeo.size)
+                }
+            )
+            .onPreferenceChange(OverlayPanelSizePreferenceKey.self) { size in
+                self.panelSize = size
+            }
+            .position(position(in: containerSize, fallbackWidth: widthLimit))
+        }
+    }
+
+    private func position(in containerSize: CGSize, fallbackWidth: CGFloat) -> CGPoint {
+        let size = panelSize == .zero ? CGSize(width: fallbackWidth, height: 120) : panelSize
+        var x = state.anchor.minX
+        var y = state.anchor.minY - size.height - margin
+
+        if y < margin {
+            y = state.anchor.maxY + margin
+        }
+        if x + size.width > containerSize.width - margin {
+            x = containerSize.width - margin - size.width
+        }
+        if x < margin {
+            x = margin
+        }
+
+        return CGPoint(x: x + size.width / 2, y: y + size.height / 2)
+    }
+}
+
+private struct OverlayPanelView: View {
+    let selectedText: String
+    let improvedText: String?
+    let onAsk: () -> Void
+    let onApply: () -> Void
+    let onClose: () -> Void
+
+    @State private var contentWidth: CGFloat = .zero
+    @State private var textSize: CGSize = .zero
+
+    private var displayText: String {
+        improvedText ?? selectedText
+    }
+
+    private var maxScrollHeight: CGFloat { 160 }
+
+    private var requiresScroll: Bool {
+        guard textSize != .zero else { return false }
+        return textSize.height - maxScrollHeight > 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Group {
+                if requiresScroll {
+                    ScrollView {
+                        textSection
+                    }
+                    .frame(height: min(textSize.height, maxScrollHeight))
+                } else {
+                    textSection
+                }
+            }
+            .scrollIndicators(.never)
+            .scrollDisabled(!requiresScroll)
+
+            HStack(alignment: .center, spacing: 6) {
+                Button(action: onAsk) {
+                    Text("AI번역")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                Button(action: onApply) {
+                    Text("적용")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(improvedText == nil)
+
+                Button(action: onClose) {
+                    Text("닫기")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .font(.callout)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .shadow(radius: 4, x: 0, y: 2)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: OverlayPanelWidthPreferenceKey.self,
+                    value: max(proxy.size.width - 20, 0) // horizontal padding
+                )
+            }
+        )
+        .onPreferenceChange(OverlayPanelWidthPreferenceKey.self) { width in
+            if width > 0 {
+                contentWidth = width
+            }
+        }
+        .overlay(
+            OverlayPanelTextMeasurer(
+                text: displayText,
+                width: contentWidth,
+                onUpdate: { size in
+                    if size != .zero {
+                        textSize = size
+                    }
+                }
+            )
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+        )
+    }
+
+    @ViewBuilder
+    private var textSection: some View {
+        // UILabel 기반 높이 측정기를 사용하지만, 실제 표시는 SwiftUI Text로 유지한다.
+        VStack(alignment: .leading, spacing: 6) {
+            Text("선택된 문장")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(displayText)
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct OverlayPanelSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
+    }
+}
+
+private struct OverlayPanelWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
+        }
+    }
+}
+
+private struct OverlayPanelTextMeasurer: UIViewRepresentable {
+    let text: String
+    let width: CGFloat
+    let onUpdate: (CGSize) -> Void
+
+    func makeUIView(context: Context) -> OverlayPanelTextMeasurementView {
+        OverlayPanelTextMeasurementView()
+    }
+
+    func updateUIView(_ uiView: OverlayPanelTextMeasurementView, context: Context) {
+        guard width > 0 else {
+            DispatchQueue.main.async {
+                onUpdate(.zero)
+            }
+            return
+        }
+
+        uiView.configure(text: text, width: width)
+
+        let fittingSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        let size = uiView.measuringLabel.sizeThatFits(fittingSize)
+
+        DispatchQueue.main.async {
+            onUpdate(size)
+        }
+    }
+}
+
+private final class OverlayPanelTextMeasurementView: UIView {
+    // UIKit UILabel을 이용해 실제 렌더링 높이를 계산하기 위한 보조 뷰로,
+    // OverlayPanelView에는 표시되지 않고 측정에만 사용된다.
+    let measuringLabel: UILabel = {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.font = UIFont.preferredFont(forTextStyle: .callout)
+        label.isHidden = true
+        return label
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = true
-        layer.cornerRadius = 12
-        layer.masksToBounds = true
-
-        // 반투명 블러 배경
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
-        blur.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(blur)
-        NSLayoutConstraint.activate([
-            blur.topAnchor.constraint(equalTo: topAnchor),
-            blur.bottomAnchor.constraint(equalTo: bottomAnchor),
-            blur.leadingAnchor.constraint(equalTo: leadingAnchor),
-            blur.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
-
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-
-        titleLabel.font = .boldSystemFont(ofSize: 15)
-        titleLabel.text = "선택된 문장"
-        titleLabel.numberOfLines = 1
-
-        textLabel.font = .systemFont(ofSize: 14)
-        textLabel.numberOfLines = 3
-
-        let h = UIStackView()
-        h.axis = .horizontal
-        h.spacing = 8
-        h.distribution = .fillEqually
-
-        askButton.setTitle("AI에 물어보기", for: .normal)
-        applyButton.setTitle("적용", for: .normal)
-        closeButton.setTitle("닫기", for: .normal)
-
-        h.addArrangedSubview(askButton)
-        h.addArrangedSubview(applyButton)
-
-        stack.addArrangedSubview(titleLabel)
-        stack.addArrangedSubview(textLabel)
-
-        let bottom = UIStackView()
-        bottom.axis = .horizontal
-        bottom.alignment = .center
-        bottom.spacing = 8
-        bottom.addArrangedSubview(h)
-        bottom.addArrangedSubview(closeButton)
-
-        stack.addArrangedSubview(bottom)
-
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-        ])
-
-        askButton.addTarget(self, action: #selector(onTapAsk), for: .touchUpInside)
-        applyButton.addTarget(self, action: #selector(onTapApply), for: .touchUpInside)
-        closeButton.addTarget(self, action: #selector(onTapClose), for: .touchUpInside)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        addSubview(measuringLabel)
     }
 
-    required init?(coder: NSCoder) { fatalError() }
-
-    func update(selectedText: String, improved: String?) {
-        textLabel.text = improved ?? selectedText
-        applyButton.isEnabled = (improved != nil)
-        setNeedsLayout()
-        layoutIfNeeded()
-    }
-    
-    /// 클릭된 요소 rect(뷰포트 기준)에 맞춰 화면 내 적절한 위치로 배치
-    func present(near rect: CGRect, in hostView: UIView, margin: CGFloat = 8) {
-        // 사이즈 계산
-        let targetWidth = min(maxWidth, hostView.bounds.width - 2*margin)
-        let size = systemLayoutSizeFitting(
-            CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
-        let panelW = min(size.width, targetWidth)
-        let panelH = size.height
-
-        // 기본 위치: target 위쪽에 띄우되, 공간 없으면 아래쪽
-        var x = rect.minX
-        var y = rect.minY - panelH - margin
-
-        // 화면 경계 보정
-        if y < margin {
-            y = rect.maxY + margin
-        }
-        if x + panelW > hostView.bounds.width - margin {
-            x = hostView.bounds.width - margin - panelW
-        }
-        if x < margin { x = margin }
-
-        frame = CGRect(x: x, y: y, width: panelW, height: panelH)
-        isHidden = false
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    @objc private func onTapAsk() { onAsk?() }
-    @objc private func onTapApply() { onApply?() }
-    @objc private func onTapClose() { onClose?() }
+    func configure(text: String, width: CGFloat) {
+        measuringLabel.font = UIFont.preferredFont(forTextStyle: .callout)
+        measuringLabel.text = text
+        measuringLabel.preferredMaxLayoutWidth = width
+        measuringLabel.frame = CGRect(origin: .zero, size: CGSize(width: width, height: .greatestFiniteMagnitude))
+    }
 }

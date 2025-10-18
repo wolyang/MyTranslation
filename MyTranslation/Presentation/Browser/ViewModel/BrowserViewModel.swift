@@ -1,5 +1,6 @@
 // File: BrowserViewModel.swift
 import Foundation
+import CoreGraphics
 import WebKit
 
 @MainActor
@@ -42,13 +43,15 @@ final class BrowserViewModel: ObservableObject {
     let replacer: InlineReplacer
     
     @Published var fmPanel: FMAnswer?
-    
+
     let fmQuery: FMQueryService
     let settings: UserSettings
-    
+
     private var selectedSegment: Segment?
     private var pendingImproved: String?
-    
+
+    @Published var overlayState: OverlayState?
+
     @Published var translateRunID: String = ""
 
     init(
@@ -102,15 +105,21 @@ final class BrowserViewModel: ObservableObject {
         self.attachedWebView = web
     }
     
-    // WebContainerView.onSelectSegmentID 에 연결
-    func onSegmentTapped(id: String) async {
-        print("[onSegmentTapped] id: \(id)")
+    // WebContainerView.onSelectSegment 에 연결
+    func onSegmentSelected(id: String, anchor: CGRect) async {
+        print("[onSegmentSelected] id: \(id)")
         guard let webView = attachedWebView, let seg = lastSegments.first(where: { $0.id == id }) else { return }
         self.selectedSegment = seg
         self.pendingImproved = nil
+        self.overlayState = OverlayState(
+            segmentID: seg.id,
+            selectedText: seg.originalText,
+            improvedText: nil,
+            anchor: anchor
+        )
 
-        // 하이라이트 표시
         let exec = WKWebViewScriptAdapter(webView: webView)
+        _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
         _ = try? await exec.runJS(#"window.MT && MT.HILITE && MT.HILITE(\#(String(reflecting: id)));"#)
     }
     
@@ -126,10 +135,9 @@ final class BrowserViewModel: ObservableObject {
         do {
             let ans = try await fmQuery.ask(for: seg, currentTranslation: current, context: .init(previous: prev, next: next))
             self.pendingImproved = ans.improvedText
-            if let web = attachedWebView,
-               let coord = web.navigationDelegate as? WebContainerView.Coordinator
-            {
-                coord.showOverlay(selectedText: seg.originalText, improved: ans.improvedText)
+            if var state = overlayState, state.segmentID == seg.id {
+                state.improvedText = ans.improvedText
+                overlayState = state
             }
         } catch {
             print("FM ask failed: \(error)")
@@ -158,8 +166,9 @@ final class BrowserViewModel: ObservableObject {
                 currentPageTranslation = state
             }
         }
-        if let coord = web.navigationDelegate as? WebContainerView.Coordinator {
-            coord.updateOverlay(improved: improved, anchor: nil)
+        if var state = overlayState, state.segmentID == seg.id {
+            state.improvedText = improved
+            overlayState = state
         }
     }
 
@@ -188,6 +197,7 @@ final class BrowserViewModel: ObservableObject {
         guard let url = webView.url else { return }
         translateRunID = UUID().uuidString
 
+        closeOverlay()
         hasAttemptedTranslationForCurrentPage = true
 
         isTranslating = true
@@ -268,6 +278,7 @@ final class BrowserViewModel: ObservableObject {
         if showOriginal {
             // 원문보기 ON → 치환 전부 복원
             replacer.restore(using: exec)
+            closeOverlay()
         } else {
             let engine = settings.preferredEngine
             if applyCachedTranslationIfAvailable(for: engine, on: webView) == false {
@@ -280,9 +291,9 @@ final class BrowserViewModel: ObservableObject {
         guard let webView = attachedWebView else { return }
         let exec = WKWebViewScriptAdapter(webView: webView)
         replacer.restore(using: exec)
-        Task { _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") }
         request = nil
         hasAttemptedTranslationForCurrentPage = false
+        closeOverlay()
         pendingURLAfterEditing = nil
         currentPageTranslation = nil
     }
@@ -315,12 +326,25 @@ final class BrowserViewModel: ObservableObject {
         lastResults = cachedResults
         hasAttemptedTranslationForCurrentPage = true
 
-        if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
-            let highlightPairs = state.segments.map { (id: $0.id, text: $0.originalText) }
-            Task { await coord.markSegments(highlightPairs) }
-        }
+        let highlightPairs = state.segments.map { (id: $0.id, text: $0.originalText) }
+        Task { await (webView.navigationDelegate as? WebContainerView.Coordinator)?.markSegments(highlightPairs) }
 
         return true
+    }
+
+    func closeOverlay() {
+        overlayState = nil
+        selectedSegment = nil
+        pendingImproved = nil
+        clearSelectionHighlight()
+    }
+
+    func clearSelectionHighlight() {
+        guard let webView = attachedWebView else { return }
+        Task { @MainActor in
+            let exec = WKWebViewScriptAdapter(webView: webView)
+            _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
+        }
     }
 }
 
@@ -329,5 +353,12 @@ extension BrowserViewModel {
         var url: URL
         var segments: [Segment]
         var resultsByEngine: [EngineTag: [TranslationResult]]
+    }
+
+    struct OverlayState: Equatable {
+        var segmentID: String
+        var selectedText: String
+        var improvedText: String?
+        var anchor: CGRect
     }
 }

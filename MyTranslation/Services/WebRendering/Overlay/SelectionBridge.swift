@@ -333,7 +333,6 @@ final class SelectionBridge: NSObject {
               var prev = document.querySelectorAll('[data-seg-id].mt-selected');
               for (var i = 0; i < prev.length; i++) prev[i].classList.remove('mt-selected');
               q.classList.add('mt-selected');
-              if (q.scrollIntoView) q.scrollIntoView({ block: 'center' });
               return true;
             } catch (e) { return false; }
           };
