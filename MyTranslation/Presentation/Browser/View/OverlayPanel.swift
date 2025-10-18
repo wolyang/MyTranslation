@@ -85,52 +85,36 @@ private struct OverlayPanelView: View {
     let onApply: () -> Void
     let onClose: () -> Void
 
+    @State private var contentWidth: CGFloat = .zero
     @State private var textSize: CGSize = .zero
 
     private var displayText: String {
         improvedText ?? selectedText
     }
 
-    private var scrollHeight: CGFloat {
-        let measuredHeight = textSize.height
-        let minHeight: CGFloat = 60
-        let maxHeight: CGFloat = 180
-        if measuredHeight <= 0 {
-            return minHeight
-        }
-        return min(max(measuredHeight, minHeight), maxHeight)
+    private var maxScrollHeight: CGFloat {
+        180
+    }
+
+    private var requiresScroll: Bool {
+        guard textSize != .zero else { return false }
+        return textSize.height > maxScrollHeight
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("선택된 문장")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Text(displayText)
-                        .font(.callout)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            GeometryReader { proxy in
-                                Color.clear.preference(
-                                    key: OverlayPanelTextSizePreferenceKey.self,
-                                    value: proxy.size
-                                )
-                            }
-                        )
-                }
-                .padding(.vertical, 4)
-            }
-            .frame(maxHeight: scrollHeight)
-            .onPreferenceChange(OverlayPanelTextSizePreferenceKey.self) { size in
-                if size != .zero {
-                    textSize = size
+            Group {
+                if requiresScroll {
+                    ScrollView {
+                        textSection
+                    }
+                    .frame(height: maxScrollHeight)
+                } else {
+                    textSection
                 }
             }
+            .scrollIndicators(.never)
+            .scrollDisabled(!requiresScroll)
 
             HStack(alignment: .center, spacing: 8) {
                 Button(action: onAsk) {
@@ -164,6 +148,47 @@ private struct OverlayPanelView: View {
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
         .shadow(radius: 4, x: 0, y: 2)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: OverlayPanelWidthPreferenceKey.self,
+                    value: max(proxy.size.width - 24, 0) // horizontal padding
+                )
+            }
+        )
+        .onPreferenceChange(OverlayPanelWidthPreferenceKey.self) { width in
+            if width > 0 {
+                contentWidth = width
+            }
+        }
+        .overlay(
+            OverlayPanelTextMeasurer(
+                text: displayText,
+                width: contentWidth,
+                onUpdate: { size in
+                    if size != .zero {
+                        textSize = size
+                    }
+                }
+            )
+            .allowsHitTesting(false)
+        )
+    }
+
+    @ViewBuilder
+    private var textSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("선택된 문장")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(displayText)
+                .font(.callout)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -185,5 +210,45 @@ private struct OverlayPanelTextSizePreferenceKey: PreferenceKey {
         if next != .zero {
             value = next
         }
+    }
+}
+
+private struct OverlayPanelWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
+        }
+    }
+}
+
+private struct OverlayPanelTextMeasurer: View {
+    let text: String
+    let width: CGFloat
+    let onUpdate: (CGSize) -> Void
+
+    var body: some View {
+        Group {
+            if width > 0 {
+                Text(text)
+                    .font(.callout)
+                    .multilineTextAlignment(.leading)
+                    .frame(width: width, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear
+                                .preference(
+                                    key: OverlayPanelTextSizePreferenceKey.self,
+                                    value: proxy.size
+                                )
+                        }
+                    )
+                    .hidden()
+            }
+        }
+        .onPreferenceChange(OverlayPanelTextSizePreferenceKey.self, perform: onUpdate)
     }
 }
