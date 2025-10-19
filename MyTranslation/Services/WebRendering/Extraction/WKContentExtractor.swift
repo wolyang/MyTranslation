@@ -27,7 +27,7 @@ final class WKContentExtractor: ContentExtractor {
             let chunks = p.split(usingRegex: #"(?<=[\.!?。！？])\s+"#)
             for ch in chunks {
                 let original = ch.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !original.isEmpty else { continue }
+                guard !original.isEmpty, !original.isPunctOnly else { continue }
                 let clipped = String(original.prefix(800))
                 // 너무 긴 문장이 들어오면 추가 분할
                 if clipped.count > 600 {
@@ -36,7 +36,7 @@ final class WKContentExtractor: ContentExtractor {
                     if subparts.count > 1 {
                         for sp in subparts {
                             let s = String(sp.prefix(400)).trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !s.isEmpty else { continue }
+                            guard !s.isEmpty, !s.isPunctOnly else { continue }
                             let normalized = normalizeForID(s)
                             let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
                             out.append(.init(id: sid, url: url, indexInPage: idx, originalText: s, normalizedText: normalized))
@@ -49,7 +49,7 @@ final class WKContentExtractor: ContentExtractor {
                     while start < clipped.endIndex {
                         let end = clipped.index(start, offsetBy: 400, limitedBy: clipped.endIndex) ?? clipped.endIndex
                         let s = String(clipped[start ..< end]).trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !s.isEmpty {
+                        if !s.isEmpty, !s.isPunctOnly {
                             let normalized = normalizeForID(s)
                             let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
                             out.append(.init(id: sid, url: url, indexInPage: idx, originalText: s, normalizedText: normalized))
@@ -106,5 +106,13 @@ private extension String {
         let tail = NSRange(location: prev, length: ns.length - prev)
         if tail.length > 0 { parts.append(ns.substring(with: tail)) }
         return parts
+    }
+    
+    // 텍스트가 문장부호로만 이루어졌는지 확인
+    var isPunctOnly: Bool {
+        let punct = CharacterSet.punctuationCharacters
+            .union(.symbols)
+            .union(.whitespacesAndNewlines)
+        return self.unicodeScalars.allSatisfy { punct.contains($0) }
     }
 }
