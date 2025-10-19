@@ -88,19 +88,17 @@ final class WKContentExtractor: ContentExtractor {
             return chars[index].unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
         }
 
-        func isSentenceTerminator(_ ch: Character) -> Bool {
-            return [".", "!", "?", "。", "！", "？"].contains(ch)
-        }
-
-        let delimiters: Set<Character> = [";", "；", ":", "："]
-
-        func emitSegment(start: Int, end: Int) {
-            guard start < end else { return }
+        func trimmedRange(start: Int, end: Int) -> (Int, Int)? {
             var s = start
             var e = end
             while s < e && isWhitespace(s) { s += 1 }
             while e > s && isWhitespace(e - 1) { e -= 1 }
-            guard s < e else { return }
+            guard s < e else { return nil }
+            return (s, e)
+        }
+
+        func emitSegment(start: Int, end: Int) {
+            guard let (s, e) = trimmedRange(start: start, end: end) else { return }
             let startIdx = text.index(text.startIndex, offsetBy: s)
             let endIdx = text.index(text.startIndex, offsetBy: e)
             let snippet = String(text[startIdx..<endIdx])
@@ -108,100 +106,70 @@ final class WKContentExtractor: ContentExtractor {
             slices.append(TextSlice(start: s, end: e))
         }
 
-        func splitByLength(start: Int, end: Int) {
-            var cursor = start
-            while cursor < end {
-                let chunkEnd = min(end, cursor + 400)
-                emitSegment(start: cursor, end: chunkEnd)
-                cursor = chunkEnd
-            }
-        }
+        let sentenceTerminators: Set<Character> = [".", "!", "?", "。", "！", "？"]
+        let hardDelimiters: Set<Character> = [";", "；", ":", "："]
+        let preferredLength = 600
+        let maxLength = 800
 
-        func emitOrSplit(start: Int, end: Int) {
-            guard start < end else { return }
-            if end - start > 600 {
-                splitByLength(start: start, end: end)
-            } else {
-                emitSegment(start: start, end: end)
-            }
-        }
-
-        func splitByDelimiters(start: Int, end: Int) -> Bool {
-            var produced = false
-            var pieceStart = start
-            var i = start
-            while i < end {
-                let ch = chars[i]
-                if delimiters.contains(ch) {
-                    var pieceEnd = i + 1
-                    while pieceEnd < end && isWhitespace(pieceEnd) { pieceEnd += 1 }
-                    emitOrSplit(start: pieceStart, end: pieceEnd)
-                    pieceStart = pieceEnd
-                    produced = true
+        func findBreakPoint(in range: Range<Int>, upperBound: Int) -> Int? {
+            guard range.lowerBound < range.upperBound else { return nil }
+            var i = range.upperBound
+            while i > range.lowerBound {
+                let ch = chars[i - 1]
+                if sentenceTerminators.contains(ch) || hardDelimiters.contains(ch) {
+                    var next = i
+                    while next < upperBound && isWhitespace(next) { next += 1 }
+                    if next > range.lowerBound { return next }
                 }
-                i += 1
+                i -= 1
             }
-            if pieceStart < end {
-                emitOrSplit(start: pieceStart, end: end)
-                produced = true
-            }
-            return produced
+            return nil
         }
 
-        func appendRange(start: Int, end: Int) {
-            guard start < end else { return }
-            var cursor = start
-            while cursor < end {
-                let clipEnd = min(end, cursor + 800)
-                if clipEnd - cursor > 600 {
-                    if splitByDelimiters(start: cursor, end: clipEnd) == false {
-                        splitByLength(start: cursor, end: clipEnd)
-                    }
-                } else {
-                    emitSegment(start: cursor, end: clipEnd)
+        func findWhitespaceBreak(in range: Range<Int>, upperBound: Int) -> Int? {
+            guard range.lowerBound < range.upperBound else { return nil }
+            var i = range.upperBound
+            while i > range.lowerBound {
+                if isWhitespace(i - 1) {
+                    var next = i
+                    while next < upperBound && isWhitespace(next) { next += 1 }
+                    if next > range.lowerBound { return next }
                 }
-                cursor = clipEnd
+                i -= 1
             }
+            return nil
         }
 
-        func processParagraph(start: Int, end: Int) {
-            var s = start
-            var e = end
-            while s < e && isWhitespace(s) { s += 1 }
-            while e > s && isWhitespace(e - 1) { e -= 1 }
-            guard s < e else { return }
-
-            var sentenceStart = s
-            var i = s
-            while i < e {
-                let ch = chars[i]
-                if isSentenceTerminator(ch) {
-                    var next = i + 1
-                    var hasWhitespace = false
-                    while next < e && isWhitespace(next) {
-                        hasWhitespace = true
-                        next += 1
-                    }
-                    if hasWhitespace {
-                        appendRange(start: sentenceStart, end: next)
-                        sentenceStart = next
-                        i = next
-                        continue
-                    }
+        func appendParagraph(start: Int, end: Int) {
+            guard let (trimmedStart, trimmedEnd) = trimmedRange(start: start, end: end) else { return }
+            var cursor = trimmedStart
+            while cursor < trimmedEnd {
+                let remaining = trimmedEnd - cursor
+                if remaining <= maxLength {
+                    emitSegment(start: cursor, end: trimmedEnd)
+                    break
                 }
-                i += 1
-            }
-            if sentenceStart < e {
-                appendRange(start: sentenceStart, end: e)
+
+                let softLimit = min(trimmedEnd, cursor + preferredLength)
+                let hardLimit = min(trimmedEnd, cursor + maxLength)
+
+                let searchLower = max(cursor + 1, softLimit)
+                let searchRange = searchLower..<hardLimit
+                let boundary = findBreakPoint(in: searchRange, upperBound: trimmedEnd)
+                    ?? findWhitespaceBreak(in: searchRange, upperBound: trimmedEnd)
+                    ?? hardLimit
+
+                emitSegment(start: cursor, end: boundary)
+                cursor = boundary
             }
         }
 
         var cursor = 0
         while cursor < count {
-            var paraEnd = cursor
-            while paraEnd < count && chars[paraEnd] != "\n" { paraEnd += 1 }
-            processParagraph(start: cursor, end: paraEnd)
-            cursor = paraEnd + 1
+            var paragraphEnd = cursor
+            while paragraphEnd < count && chars[paragraphEnd] != "\n" { paragraphEnd += 1 }
+            appendParagraph(start: cursor, end: paragraphEnd)
+            cursor = paragraphEnd + 1
         }
 
         return slices

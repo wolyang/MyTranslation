@@ -69,6 +69,27 @@ struct MyTranslationTests {
     }
 
     @Test @MainActor
+    func extractorKeepsMultiSentenceParagraphAsSingleSegment() async throws {
+        let snapshot = """
+        [
+          {
+            "text": "첫 번째 문장입니다. 두 번째 문장도 이어지고 있습니다. 마지막 문장까지 하나의 단락으로 유지됩니다.",
+            "map": [
+              { "token": "n2", "start": 0, "end": 54 }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
+        let extractor = WKContentExtractor()
+        let url = URL(string: "https://example.com/paragraph")!
+        let segments = try await extractor.extract(using: executor, url: url)
+
+        #expect(segments.count == 1)
+        #expect(segments.first?.originalText.contains("두 번째 문장") == true)
+    }
+
+    @Test @MainActor
     func extractorSplitsVeryLongParagraphIntoMultipleSegments() async throws {
         let longSentence = String(repeating: "a", count: 700) + "?" + String(repeating: "b", count: 650)
         let snapshot = """
