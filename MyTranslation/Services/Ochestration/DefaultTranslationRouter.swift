@@ -40,94 +40,131 @@ final class DefaultTranslationRouter: TranslationRouter {
     public func translateStream(
         segments: [Segment],
         options: TranslationOptions,
-        preferredEngine: EngineTag
-    ) -> AsyncThrowingStream<TranslationStreamEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let glossaryEntries: [GlossaryEntry]
-                    if options.applyGlossary {
-                        glossaryEntries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
-                    } else {
-                        glossaryEntries = []
-                    }
+        preferredEngine: EngineTag,
+        progress: @escaping (TranslationStreamEvent) -> Void
+    ) async throws -> TranslationStreamSummary {
+        let startedAt = Date()
+        let glossaryEntries: [GlossaryEntry]
+        if options.applyGlossary {
+            glossaryEntries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
+        } else {
+            glossaryEntries = []
+        }
 
-                    let engine = engine(for: preferredEngine)
-                    continuation.yield(.segments(segments))
+        let engine = engine(for: preferredEngine)
+        var succeededIDs: [String] = []
+        var failedIDs: Set<String> = []
+        var pendingSegments: [Segment] = []
+        var sequence = 0
 
-                    var pendingSegments: [Segment] = []
-                    for segment in segments {
-                        try Task.checkCancellation()
-                        let key = cacheKey(for: segment, options: options, engine: engine.tag)
-                        if let hit = cache.lookup(key: key) {
-                            continuation.yield(.result(segment: segment, result: hit))
-                        } else {
-                            pendingSegments.append(segment)
-                        }
-                    }
-
-                    if pendingSegments.isEmpty == false {
-                        try Task.checkCancellation()
-                        let termMasker = TermMasker()
-                        let maskedResults = pendingSegments.map { segment in
-                            termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
-                        }
-                        let maskedPacks = maskedResults.map { $0.pack }
-                        let maskedSegments = maskedPacks.map { item in
-                            Segment(
-                                id: item.seg.id,
-                                url: item.seg.url,
-                                indexInPage: item.seg.indexInPage,
-                                originalText: item.masked,
-                                normalizedText: item.seg.normalizedText
-                            )
-                        }
-
-                        let engineResults = try await engine.translate(maskedSegments, options: options)
-                        let finals: [TranslationResult] = engineResults.enumerated().map { index, result in
-                            let pack = maskedPacks[index]
-                            let personQueues = maskedResults[index].personQueues
-                            let raw = result.text
-                            let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
-                            let unmasked = termMasker.unlockTermsSafely(
-                                corrected,
-                                locks: pack.locks,
-                                personQueues: personQueues
-                            )
-                            let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                            let residual = Double(hanCount) / Double(max(unmasked.count, 1))
-                            return TranslationResult(
-                                id: result.id,
-                                segmentID: result.segmentID,
-                                engine: result.engine,
-                                text: unmasked,
-                                residualSourceRatio: residual,
-                                createdAt: result.createdAt
-                            )
-                        }
-
-                        for (index, result) in finals.enumerated() {
-                            try Task.checkCancellation()
-                            let originalSegment = pendingSegments[index]
-                            continuation.yield(.result(segment: originalSegment, result: result))
-                            let key = cacheKey(for: maskedPacks[index].seg, options: options, engine: engine.tag)
-                            cache.save(result: result, forKey: key)
-                        }
-                    }
-
-                    continuation.yield(.finished)
-                    continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
+        for segment in segments {
+            try Task.checkCancellation()
+            let key = cacheKey(for: segment, options: options, engine: engine.tag)
+            if let hit = cache.lookup(key: key) {
+                let payload = TranslationStreamPayload(
+                    segmentID: segment.id,
+                    originalText: segment.originalText,
+                    translatedText: hit.text,
+                    engineID: hit.engine,
+                    sequence: sequence
+                )
+                sequence += 1
+                progress(.cached(payload: payload))
+                succeededIDs.append(segment.id)
+            } else {
+                pendingSegments.append(segment)
             }
         }
+
+        if pendingSegments.isEmpty == false {
+            for segment in pendingSegments {
+                progress(.scheduled(segmentID: segment.id))
+            }
+
+            let termMasker = TermMasker()
+            let maskedResults = pendingSegments.map { segment in
+                termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
+            }
+            let maskedPacks = maskedResults.map { $0.pack }
+            let maskedSegments = maskedPacks.map { item in
+                Segment(
+                    id: item.seg.id,
+                    url: item.seg.url,
+                    indexInPage: item.seg.indexInPage,
+                    originalText: item.masked,
+                    normalizedText: item.seg.normalizedText
+                )
+            }
+
+            do {
+                let engineResults = try await engine.translate(maskedSegments, options: options)
+                for (index, result) in engineResults.enumerated() {
+                    try Task.checkCancellation()
+                    let pack = maskedPacks[index]
+                    let personQueues = maskedResults[index].personQueues
+                    let raw = result.text
+                    let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+                    let unmasked = termMasker.unlockTermsSafely(
+                        corrected,
+                        locks: pack.locks,
+                        personQueues: personQueues
+                    )
+                    let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                    let residual = Double(hanCount) / Double(max(unmasked.count, 1))
+                    let finalResult = TranslationResult(
+                        id: result.id,
+                        segmentID: result.segmentID,
+                        engine: result.engine,
+                        text: unmasked,
+                        residualSourceRatio: residual,
+                        createdAt: result.createdAt
+                    )
+
+                    let originalSegment = pendingSegments[index]
+                    let payload = TranslationStreamPayload(
+                        segmentID: originalSegment.id,
+                        originalText: originalSegment.originalText,
+                        translatedText: finalResult.text,
+                        engineID: finalResult.engine,
+                        sequence: sequence
+                    )
+                    sequence += 1
+                    progress(.final(payload))
+                    succeededIDs.append(originalSegment.id)
+
+                    let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
+                    cache.save(result: finalResult, forKey: cacheKey)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                for segment in pendingSegments where failedIDs.contains(segment.id) == false {
+                    failedIDs.insert(segment.id)
+                    progress(.failure(segmentID: segment.id, error: error))
+                }
+                let failedSummary = TranslationStreamSummary(
+                    engineID: engine.tag,
+                    totalSegments: segments.count,
+                    succeededSegmentIDs: succeededIDs,
+                    failedSegmentIDs: Array(failedIDs),
+                    startedAt: startedAt,
+                    finishedAt: Date()
+                )
+                progress(.completed(failedSummary))
+                return failedSummary
+            }
+        }
+
+        let summary = TranslationStreamSummary(
+            engineID: engine.tag,
+            totalSegments: segments.count,
+            succeededSegmentIDs: succeededIDs,
+            failedSegmentIDs: Array(failedIDs),
+            startedAt: startedAt,
+            finishedAt: Date()
+        )
+        progress(.completed(summary))
+        return summary
     }
 
     private func engine(for tag: EngineTag) -> TranslationEngine {
