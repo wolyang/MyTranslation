@@ -151,29 +151,47 @@ final class BrowserViewModel: ObservableObject {
     func applyAIImproved() {
         guard let seg = selectedSegment, let improved = pendingImproved, let web = attachedWebView else { return }
         let exec = WKWebViewScriptAdapter(webView: web)
+// <<<<<<< codex/refactor-starttranslate-for-new-streaming-api
+// 
+//         let engine = lastStreamPayloads.first(where: { $0.segmentID == seg.id })?.engineID ?? settings.preferredEngine
+//         let sequence = lastStreamPayloads.first(where: { $0.segmentID == seg.id })?.sequence ?? (lastStreamPayloads.count + 1)
+//         let payload = TranslationStreamPayload(
+//             segmentID: seg.id,
+//             originalText: seg.originalText,
+//             translatedText: improved,
+//             engineID: engine,
+//             sequence: sequence
+//         )
 
-        let engine = lastStreamPayloads.first(where: { $0.segmentID == seg.id })?.engineID ?? settings.preferredEngine
-        let sequence = lastStreamPayloads.first(where: { $0.segmentID == seg.id })?.sequence ?? (lastStreamPayloads.count + 1)
-        let payload = TranslationStreamPayload(
-            segmentID: seg.id,
-            originalText: seg.originalText,
-            translatedText: improved,
-            engineID: engine,
-            sequence: sequence
-        )
+//         replacer.upsert(payload: payload, using: exec, applyImmediately: true, highlight: false)
 
-        replacer.upsert(payload: payload, using: exec, applyImmediately: true, highlight: false)
-
-        if var state = currentPageTranslation {
-            if let currentURL = web.url, currentURL != state.url {
-                // 다른 페이지의 상태일 경우에는 캐시만 갱신하지 않는다.
-            } else {
-                var buffer = state.buffersByEngine[engine] ?? .init()
-                buffer.upsert(payload)
-                state.buffersByEngine[engine] = buffer
-                state.finalizedSegmentIDs.insert(seg.id)
-                state.failedSegmentIDs.remove(seg.id)
-                state.scheduledSegmentIDs.remove(seg.id)
+//         if var state = currentPageTranslation {
+//             if let currentURL = web.url, currentURL != state.url {
+//                 // 다른 페이지의 상태일 경우에는 캐시만 갱신하지 않는다.
+//             } else {
+//                 var buffer = state.buffersByEngine[engine] ?? .init()
+//                 buffer.upsert(payload)
+//                 state.buffersByEngine[engine] = buffer
+//                 state.finalizedSegmentIDs.insert(seg.id)
+//                 state.failedSegmentIDs.remove(seg.id)
+//                 state.scheduledSegmentIDs.remove(seg.id)
+// =======
+        replacer.upsertPair((original: seg.originalText, translated: improved), using: exec, immediateApply: true)
+        if let i = lastResults.firstIndex(where: { $0.segmentID == seg.id }) {
+            let previous = lastResults[i]
+            let updated = TranslationResult(
+                id: previous.id, segmentID: seg.id,
+                engine: previous.engine, text: improved,
+                residualSourceRatio: previous.residualSourceRatio,
+                createdAt: Date()
+            )
+            lastResults[i] = updated
+            if var state = currentPageTranslation,
+               var cached = state.resultsByEngine[previous.engine],
+               let cachedIndex = cached.firstIndex(where: { $0.segmentID == seg.id }) {
+                cached[cachedIndex] = updated
+                state.resultsByEngine[previous.engine] = cached
+// >>>>>>> streaming-translation-base
                 currentPageTranslation = state
                 lastStreamPayloads = buffer.ordered
                 failedSegmentIDs = state.failedSegmentIDs
@@ -285,23 +303,51 @@ final class BrowserViewModel: ObservableObject {
             }
 
             let opts = TranslationOptions()
-            let summary = try await router.translateStream(
-                segments: segs,
-                options: opts,
-                preferredEngine: engine
-            ) { [weak self, weak webView] event in
-                guard let self else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, let webView = webView else { return }
-                    if Task.isCancelled { return }
-                    await self.handleStreamEvent(
-                        event,
-                        engine: engine,
-                        url: url,
-                        webView,
-                        exec: exec,
-                        requestID: requestID
-                    )
+// <<<<<<< codex/refactor-starttranslate-for-new-streaming-api
+//             let summary = try await router.translateStream(
+//                 segments: segs,
+//                 options: opts,
+//                 preferredEngine: engine
+//             ) { [weak self, weak webView] event in
+//                 guard let self else { return }
+//                 Task { @MainActor [weak self] in
+//                     guard let self, let webView = webView else { return }
+//                     if Task.isCancelled { return }
+//                     await self.handleStreamEvent(
+//                         event,
+//                         engine: engine,
+//                         url: url,
+//                         webView,
+//                         exec: exec,
+//                         requestID: requestID
+//                     )
+// =======
+            do {
+                let results = try await router.translate(
+                    segments: segs,
+                    options: opts,
+                    preferredEngine: settings.preferredEngine
+                )
+                let pairs: [(original: String, translated: String)] =
+                    zip(segs, results).compactMap { seg, res in
+                        guard !res.text.isEmpty else { return nil }
+                        return (seg.originalText, res.text)
+                    }
+                // 1) 페어 등록
+                replacer.setPairs(pairs, using: exec, observer: .restart)
+                // 2) 적용 + 옵저버 켜기(더 보기 등 동적 치환)
+                replacer.apply(using: exec, observe: true)
+
+                // 캐시
+                self.lastSegments = segs
+                self.lastResults = results
+                if var state = self.currentPageTranslation, state.url == url {
+                    state.segments = segs
+                    state.resultsByEngine[engine] = results
+                    self.currentPageTranslation = state
+                } else {
+                    self.currentPageTranslation = PageTranslationState(url: url, segments: segs, resultsByEngine: [engine: results])
+// >>>>>>> streaming-translation-base
                 }
             }
 
@@ -520,7 +566,7 @@ final class BrowserViewModel: ObservableObject {
             guard payload.translatedText.isEmpty == false else { return nil }
             return (payload.originalText, payload.translatedText)
         }
-        replacer.setPairs(pairs, using: exec)
+        replacer.setPairs(pairs, using: exec, observer: .restart)
         replacer.apply(using: exec, observe: true)
         lastSegments = state.segments
         lastStreamPayloads = buffer.ordered

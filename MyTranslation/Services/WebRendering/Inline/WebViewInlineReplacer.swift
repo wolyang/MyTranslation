@@ -8,144 +8,444 @@
 import Foundation
 
 final class WebViewInlineReplacer: InlineReplacer {
-    public func setPairs(_ pairs: [(original: String, translated: String)], using exec: WebViewScriptExecutor) {
+    public func setPairs(
+        _ pairs: [(original: String, translated: String)],
+        using exec: WebViewScriptExecutor,
+        observer: InlineObserverBehavior
+    ) {
         let payload = pairs.map { ["o": $0.original, "t": $0.translated] }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let observerValue: String
+        switch observer {
+        case .keep: observerValue = "keep"
+        case .restart: observerValue = "restart"
+        case .disable: observerValue = "disable"
+        }
+
+        let js = """
+        (function(){
+          const ensure = () => {
+            if (!window.__afmInline) window.__afmInline = {};
+            const S = window.__afmInline;
+
+            if (typeof S.norm !== 'function') {
+              S.norm = s => (s||'').replace(/\\s+/g,' ').trim();
+            }
+
+            if (!(S.map instanceof Map)) {
+              S.map = new Map();
+            }
+
+            if (typeof S.shouldSkipNode !== 'function') {
+              S.shouldSkipNode = (node) => {
+                if (!node || node.nodeType !== Node.TEXT_NODE) return true;
+                const txt = node.nodeValue;
+                if (!txt || !txt.trim()) return true;
+                const el = node.parentElement;
+                if (!el) return true;
+                if (el.closest('script,style,textarea,[contenteditable]')) return true;
+                return false;
+              };
+            }
+
+            if (typeof S.tryReplaceTextNode !== 'function') {
+              S.tryReplaceTextNode = (node) => {
+                if (S.shouldSkipNode(node)) return false;
+
+                const hadApplied = !!node.__afmApplied;
+                const hasStoredOriginal = typeof node.__afmOriginal === 'string';
+                const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
+                const raw = S.norm(original);
+                const translated = S.map.get(raw);
+
+                if (translated) {
+                  if (!hadApplied) {
+                    node.__afmOriginal = node.nodeValue;
+                  } else if (!hasStoredOriginal) {
+                    node.__afmOriginal = original;
+                  }
+
+                  const changed = node.nodeValue !== translated;
+                  if (changed) {
+                    node.nodeValue = translated;
+                  }
+                  node.__afmApplied = true;
+                  return changed || !hadApplied;
+                }
+
+                if (hadApplied && hasStoredOriginal) {
+                  const changed = node.nodeValue !== node.__afmOriginal;
+                  if (changed) {
+                    node.nodeValue = node.__afmOriginal;
+                  }
+                  node.__afmOriginal = undefined;
+                  node.__afmApplied = undefined;
+                  return changed;
+                }
+
+                return false;
+              };
+            }
+
+            if (typeof S.applyAll !== 'function') {
+              S.applyAll = (root) => {
+                const r = root || document.body || document.documentElement;
+                if (!r) return 0;
+                const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+                let n, count = 0;
+                while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
+                return count;
+              };
+            }
+
+            if (typeof S.restoreAll !== 'function') {
+              S.restoreAll = (root) => {
+                const r = root || document.body || document.documentElement;
+                if (!r) return 0;
+                const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+                let n, count = 0;
+                while ((n = walker.nextNode())) {
+                  if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
+                    n.nodeValue = n.__afmOriginal;
+                    n.__afmOriginal = undefined;
+                    n.__afmApplied = undefined;
+                    count++;
+                  }
+                }
+                return count;
+              };
+            }
+
+            if (typeof S._scheduleApply !== 'function') {
+              S._pending = false;
+              S._scheduleApply = (root) => {
+                if (S._pending) return;
+                S._pending = true;
+                (window.requestAnimationFrame || setTimeout)(() => {
+                  S._pending = false;
+                  S.applyAll(root);
+                }, 16);
+              };
+            }
+
+            if (typeof S.enableObserver !== 'function') {
+              S.enableObserver = () => {
+                if (S.observer) return 'exists';
+                S.observer = new MutationObserver(muts => {
+                  for (const m of muts) {
+                    if (m.type === 'childList') {
+                      m.addedNodes && m.addedNodes.forEach(node => {
+                        if (node.nodeType === Node.TEXT_NODE) { S.tryReplaceTextNode(node); }
+                        else if (node.nodeType === Node.ELEMENT_NODE) { S.applyAll(node); }
+                      });
+                    } else if (m.type === 'characterData') {
+                      if (m.target && m.target.nodeType === Node.TEXT_NODE) S.tryReplaceTextNode(m.target);
+                    } else if (m.type === 'attributes') {
+                      const el = m.target;
+                      if (el && el.nodeType === Node.ELEMENT_NODE) S._scheduleApply(el);
+                    }
+                  }
+                });
+                const root = document.body || document.documentElement;
+                if (root) {
+                  S.observer.observe(root, {
+                    subtree: true,
+                    childList: true,
+                    characterData: true,
+                    attributes: true,
+                    attributeFilter: ['class','open','hidden','style','aria-expanded']
+                  });
+                }
+                return 'enabled';
+              };
+            }
+
+            if (typeof S.disableObserver !== 'function') {
+              S.disableObserver = () => {
+                if (S.observer) { S.observer.disconnect(); S.observer = null; return 'disabled'; }
+                return 'noop';
+              };
+            }
+
+            if (typeof S._applyForKey !== 'function') {
+              S._applyForKey = (key, root) => {
+                const r = root || document.body || document.documentElement;
+                if (!r) return 0;
+                const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+                let n, count = 0;
+                while ((n = walker.nextNode())) {
+                  const source = typeof n.__afmOriginal === 'string' ? n.__afmOriginal : n.nodeValue;
+                  if (S.norm(source) === key) {
+                    if (S.tryReplaceTextNode(n)) count++;
+                  }
+                }
+                return count;
+              };
+            }
+
+            if (typeof S.upsertPair !== 'function') {
+              S.upsertPair = (pair, opts) => {
+                if (!pair || typeof pair.o !== 'string') return 'invalid_pair';
+                const key = S.norm(pair.o);
+                if (!(S.map instanceof Map)) S.map = new Map();
+                if (typeof pair.t === 'string' && pair.t.length) {
+                  S.map.set(key, pair.t);
+                } else {
+                  S.map.delete(key);
+                }
+
+                const immediate = opts && opts.immediate === true;
+                const schedule = opts && opts.schedule === true;
+                const root = opts && opts.root ? opts.root : null;
+                let applied = 0;
+                if (immediate) {
+                  applied = S._applyForKey(key, root);
+                } else if (schedule) {
+                  S._scheduleApply(root);
+                }
+                return 'upserted:' + key + ':' + applied;
+              };
+            }
+
+            return S;
+          };
+          const S = ensure();
+
+          const behavior = '\(observerValue)';
+          if (behavior === 'restart' || behavior === 'disable') {
+            S.disableObserver && S.disableObserver();
+          }
+
+          S.map = new Map();
+
+          const P = \(json);
+          for (const p of P) {
+            if (!p || typeof p.o !== 'string') continue;
+            const key = S.norm(p.o);
+            if (typeof p.t === 'string' && p.t.length) {
+              S.map.set(key, p.t);
+            } else {
+              S.map.delete(key);
+            }
+          }
+
+          if (behavior === 'restart') {
+            S.enableObserver && S.enableObserver();
+          } else if (behavior === 'keep') {
+            // noop - 기존 옵저버 유지
+          } else if (behavior === 'disable') {
+            // 이미 disableObserver 호출됨
+          }
+
+          return 'pairs_set:' + S.map.size;
+        })();
+        """
+        Task {
+            _ = try? await exec.runJS(js)
+        }
+    }
+
+    func upsertPair(
+        _ pair: (original: String, translated: String),
+        using exec: WebViewScriptExecutor,
+        immediateApply: Bool
+    ) {
+        let payload: [String: String] = ["o": pair.original, "t": pair.translated]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
 
         let js = """
         (function(){
-          const P = \(json);
-          const norm = s => (s||'').replace(/\\s+/g,' ').trim();
-          const map = new Map(); for (const p of P) map.set(norm(p.o), p.t);
+          const ensure = () => {
+            if (!window.__afmInline) window.__afmInline = {};
+            const S = window.__afmInline;
 
-          if (!window.__afmInline) window.__afmInline = {};
-          const S = window.__afmInline;
-          S.norm = norm;
-          S.map = map;
-
-          // 스킵: script/style/textarea/contenteditable 내부는 제외
-          S.shouldSkipNode = (node) => {
-            if (!node || node.nodeType !== Node.TEXT_NODE) return true;
-            const txt = node.nodeValue;
-            if (!txt || !txt.trim()) return true;
-            const el = node.parentElement;
-            if (!el) return true;
-            if (el.closest('script,style,textarea,[contenteditable]')) return true;
-            return false;
-          };
-
-          S.tryReplaceTextNode = (node) => {
-            if (S.shouldSkipNode(node)) return false;
-
-            // 기존 로직은 __afmApplied 플래그가 true인 노드를 무조건 건너뛰어
-            // 번역 테이블(map)이 바뀌어도 새 텍스트로 갱신되지 않았다.
-            // 저장해 둔 원문(__afmOriginal)을 기준으로 다시 매핑해 항상 최신 치환을 적용한다.
-            const hadApplied = !!node.__afmApplied;
-            const hasStoredOriginal = typeof node.__afmOriginal === 'string';
-            const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
-            const raw = S.norm(original);
-            const translated = S.map.get(raw);
-
-            if (translated) {
-              if (!hadApplied) {
-                node.__afmOriginal = node.nodeValue;
-              } else if (!hasStoredOriginal) {
-                node.__afmOriginal = original;
-              }
-
-              const changed = node.nodeValue !== translated;
-              if (changed) {
-                node.nodeValue = translated;   // 텍스트만 교체 → 이벤트/구조 보존
-              }
-              node.__afmApplied = true;
-              // true를 반환하면 실제 텍스트가 새 번역으로 교체되었거나 이번 호출에서 최초로 번역 플래그를 세운 경우다.
-              return changed || !hadApplied;
+            if (typeof S.norm !== 'function') {
+              S.norm = s => (s||'').replace(/\\s+/g,' ').trim();
             }
 
-            if (hadApplied && hasStoredOriginal) {
-              const changed = node.nodeValue !== node.__afmOriginal;
-              if (changed) {
-                node.nodeValue = node.__afmOriginal;
-              }
-              node.__afmOriginal = undefined;
-              node.__afmApplied = undefined;
-              // true는 이전 번역을 걷어내고 원문으로 되돌렸다는 뜻이다.
-              return changed;
+            if (!(S.map instanceof Map)) {
+              S.map = new Map();
             }
 
-            return false;
-          };
-
-          S.applyAll = (root) => {
-            const r = root || document.body || document.documentElement;
-            const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-            let n, count = 0;
-            while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
-            return count;
-          };
-
-          S.restoreAll = (root) => {
-            const r = root || document.body || document.documentElement;
-            const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-            let n, count = 0;
-            while ((n = walker.nextNode())) {
-              if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
-                n.nodeValue = n.__afmOriginal;
-                n.__afmOriginal = undefined;
-                n.__afmApplied = undefined;
-                count++;
-              }
+            if (typeof S.shouldSkipNode !== 'function') {
+              S.shouldSkipNode = (node) => {
+                if (!node || node.nodeType !== Node.TEXT_NODE) return true;
+                const txt = node.nodeValue;
+                if (!txt || !txt.trim()) return true;
+                const el = node.parentElement;
+                if (!el) return true;
+                if (el.closest('script,style,textarea,[contenteditable]')) return true;
+                return false;
+              };
             }
-            return count;
-          };
 
-          // micro-throttle (attributes 변동 다발 시 병합)
-          S._pending = false;
-          S._scheduleApply = (root) => {
-            if (S._pending) return;
-            S._pending = true;
-            (window.requestAnimationFrame || setTimeout)(() => {
-              S._pending = false;
-              S.applyAll(root);
-            }, 16);
-          };
+            if (typeof S.tryReplaceTextNode !== 'function') {
+              S.tryReplaceTextNode = (node) => {
+                if (S.shouldSkipNode(node)) return false;
 
-          S.enableObserver = () => {
-            if (S.observer) return 'exists';
-            S.observer = new MutationObserver(muts => {
-              for (const m of muts) {
-                if (m.type === 'childList') {
-                  m.addedNodes && m.addedNodes.forEach(node => {
-                    if (node.nodeType === Node.TEXT_NODE) { S.tryReplaceTextNode(node); }
-                    else if (node.nodeType === Node.ELEMENT_NODE) { S.applyAll(node); }
-                  });
-                } else if (m.type === 'characterData') {
-                  if (m.target && m.target.nodeType === Node.TEXT_NODE) S.tryReplaceTextNode(m.target);
-                } else if (m.type === 'attributes') {
-                  // class/open/hidden/style/aria-expanded 변동 시 해당 서브트리에 재적용
-                  const el = m.target;
-                  if (el && el.nodeType === Node.ELEMENT_NODE) S._scheduleApply(el);
+                const hadApplied = !!node.__afmApplied;
+                const hasStoredOriginal = typeof node.__afmOriginal === 'string';
+                const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
+                const raw = S.norm(original);
+                const translated = S.map.get(raw);
+
+                if (translated) {
+                  if (!hadApplied) {
+                    node.__afmOriginal = node.nodeValue;
+                  } else if (!hasStoredOriginal) {
+                    node.__afmOriginal = original;
+                  }
+
+                  const changed = node.nodeValue !== translated;
+                  if (changed) {
+                    node.nodeValue = translated;
+                  }
+                  node.__afmApplied = true;
+                  return changed || !hadApplied;
                 }
-              }
-            });
-            const root = document.body || document.documentElement;
-            S.observer.observe(root, {
-              subtree: true,
-              childList: true,
-              characterData: true,
-              attributes: true,
-              attributeFilter: ['class','open','hidden','style','aria-expanded']
-            });
-            return 'enabled';
-          };
 
-          S.disableObserver = () => {
-            if (S.observer) { S.observer.disconnect(); S.observer = null; return 'disabled'; }
-            return 'noop';
-          };
+                if (hadApplied && hasStoredOriginal) {
+                  const changed = node.nodeValue !== node.__afmOriginal;
+                  if (changed) {
+                    node.nodeValue = node.__afmOriginal;
+                  }
+                  node.__afmOriginal = undefined;
+                  node.__afmApplied = undefined;
+                  return changed;
+                }
 
-          return 'pairs_set:' + S.map.size;
+                return false;
+              };
+            }
+
+            if (typeof S.applyAll !== 'function') {
+              S.applyAll = (root) => {
+                const r = root || document.body || document.documentElement;
+                if (!r) return 0;
+                const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+                let n, count = 0;
+                while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
+                return count;
+              };
+            }
+
+            if (typeof S.restoreAll !== 'function') {
+              S.restoreAll = (root) => {
+                const r = root || document.body || document.documentElement;
+                if (!r) return 0;
+                const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+                let n, count = 0;
+                while ((n = walker.nextNode())) {
+                  if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
+                    n.nodeValue = n.__afmOriginal;
+                    n.__afmOriginal = undefined;
+                    n.__afmApplied = undefined;
+                    count++;
+                  }
+                }
+                return count;
+              };
+            }
+
+            if (typeof S._scheduleApply !== 'function') {
+              S._pending = false;
+              S._scheduleApply = (root) => {
+                if (S._pending) return;
+                S._pending = true;
+                (window.requestAnimationFrame || setTimeout)(() => {
+                  S._pending = false;
+                  S.applyAll(root);
+                }, 16);
+              };
+            }
+
+            if (typeof S.enableObserver !== 'function') {
+              S.enableObserver = () => {
+                if (S.observer) return 'exists';
+                S.observer = new MutationObserver(muts => {
+                  for (const m of muts) {
+                    if (m.type === 'childList') {
+                      m.addedNodes && m.addedNodes.forEach(node => {
+                        if (node.nodeType === Node.TEXT_NODE) { S.tryReplaceTextNode(node); }
+                        else if (node.nodeType === Node.ELEMENT_NODE) { S.applyAll(node); }
+                      });
+                    } else if (m.type === 'characterData') {
+                      if (m.target && m.target.nodeType === Node.TEXT_NODE) S.tryReplaceTextNode(m.target);
+                    } else if (m.type === 'attributes') {
+                      const el = m.target;
+                      if (el && el.nodeType === Node.ELEMENT_NODE) S._scheduleApply(el);
+                    }
+                  }
+                });
+                const root = document.body || document.documentElement;
+                if (root) {
+                  S.observer.observe(root, {
+                    subtree: true,
+                    childList: true,
+                    characterData: true,
+                    attributes: true,
+                    attributeFilter: ['class','open','hidden','style','aria-expanded']
+                  });
+                }
+                return 'enabled';
+              };
+            }
+
+            if (typeof S.disableObserver !== 'function') {
+              S.disableObserver = () => {
+                if (S.observer) { S.observer.disconnect(); S.observer = null; return 'disabled'; }
+                return 'noop';
+              };
+            }
+
+            if (typeof S._applyForKey !== 'function') {
+              S._applyForKey = (key, root) => {
+                const r = root || document.body || document.documentElement;
+                if (!r) return 0;
+                const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+                let n, count = 0;
+                while ((n = walker.nextNode())) {
+                  const source = typeof n.__afmOriginal === 'string' ? n.__afmOriginal : n.nodeValue;
+                  if (S.norm(source) === key) {
+                    if (S.tryReplaceTextNode(n)) count++;
+                  }
+                }
+                return count;
+              };
+            }
+
+            if (typeof S.upsertPair !== 'function') {
+              S.upsertPair = (pair, opts) => {
+                if (!pair || typeof pair.o !== 'string') return 'invalid_pair';
+                const key = S.norm(pair.o);
+                if (!(S.map instanceof Map)) S.map = new Map();
+                if (typeof pair.t === 'string' && pair.t.length) {
+                  S.map.set(key, pair.t);
+                } else {
+                  S.map.delete(key);
+                }
+
+                const immediate = opts && opts.immediate === true;
+                const schedule = opts && opts.schedule === true;
+                const root = opts && opts.root ? opts.root : null;
+                let applied = 0;
+                if (immediate) {
+                  applied = S._applyForKey(key, root);
+                } else if (schedule) {
+                  S._scheduleApply(root);
+                }
+                return 'upserted:' + key + ':' + applied;
+              };
+            }
+
+            return S;
+          };
+          const S = ensure();
+
+          return S.upsertPair(\(json), { immediate: \(immediateApply ? "true" : "false"), schedule: true });
         })();
         """
         Task {
