@@ -38,11 +38,15 @@ final class WebViewInlineReplacer: InlineReplacer {
           S.tryReplaceTextNode = (node) => {
             if (S.shouldSkipNode(node)) return false;
 
+            // 기존 로직은 __afmApplied 플래그가 true인 노드를 무조건 건너뛰어
+            // 번역 테이블(map)이 바뀌어도 새 텍스트로 갱신되지 않았다.
+            // 저장해 둔 원문(__afmOriginal)을 기준으로 다시 매핑해 항상 최신 치환을 적용한다.
             const original = typeof node.__afmOriginal === 'string' ? node.__afmOriginal : node.nodeValue;
             const raw = S.norm(original);
             const translated = S.map.get(raw);
 
             if (!translated) {
+              // 새 번역이 없는 경우, 이전에 치환했던 노드를 원문으로 되돌린다.
               if (node.__afmApplied && typeof node.__afmOriginal === 'string') {
                 node.nodeValue = node.__afmOriginal;
                 node.__afmOriginal = undefined;
