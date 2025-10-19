@@ -20,23 +20,24 @@ struct URLBarView: View {
     private let maxRecentCount = 8
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                field
-                    .background(fieldHeightReader)
-                    .overlay(alignment: .topLeading) {
-                        if shouldShowSuggestions {
-                            suggestions
-                                .offset(y: fieldHeight + 6)
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    field
+                        .background(fieldHeightReader)
+                        .overlay(alignment: .topLeading) {
+                            if shouldShowSuggestions {
+                                suggestions
+                                    .offset(y: fieldHeight + 6)
+                            }
                         }
-                    }
-                    .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
 
-                controlGroup
+                    controlGroup
+                }
+                .background(barHeightReader)
             }
-            .background(barHeightReader)
-        }
-        .overlay(alignment: .topLeading) {
+
             if isShowingEngineOptions {
                 EnginePickerOptionsContainer {
                     EnginePickerOptionsView(
@@ -49,8 +50,9 @@ struct URLBarView: View {
                         dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
                     )
                 }
-                .offset(y: barHeight + 6)
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .padding(.top, barHeight + 6)
+                .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+                .zIndex(1)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isShowingEngineOptions)
@@ -60,6 +62,7 @@ struct URLBarView: View {
         .onChange(of: showOriginal) { _, _ in
             isShowingEngineOptions = false
         }
+        .zIndex(isShowingEngineOptions ? 1 : 0)
     }
 
     private var field: some View {
