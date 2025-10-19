@@ -108,7 +108,7 @@ final class WKContentExtractor: ContentExtractor {
             guard s < e else { return }
             let startIdx = text.index(text.startIndex, offsetBy: s)
             let endIdx = text.index(text.startIndex, offsetBy: e)
-            let snippet = text[startIdx..<endIdx]
+            let snippet = String(text[startIdx..<endIdx])
             guard snippet.isPunctOnly == false else { return }
             slices.append(TextSlice(start: s, end: e))
         }
