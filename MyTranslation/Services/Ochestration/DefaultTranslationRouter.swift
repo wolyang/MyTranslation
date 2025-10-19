@@ -98,18 +98,21 @@ final class DefaultTranslationRouter: TranslationRouter {
                 let personQueues = maskedResults[index].personQueues
                 let raw = result.text
                 let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+                let collapsedBefore = termMasker.collapseSpacesAroundTokensNearPunct(in: corrected, tokens: Array(pack.locks.keys))
                 let unmasked = termMasker.unlockTermsSafely(
-                    corrected,
+                    collapsedBefore,
                     locks: pack.locks,
                     personQueues: personQueues
                 )
-                let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                let residual = Double(hanCount) / Double(max(unmasked.count, 1))
+                let collapsedAfter = termMasker.collapseSpacesAroundReplacementsNearPunct(in: unmasked, replacements: pack.locks.mapValues({ $0.target
+                }))
+                let hanCount = collapsedAfter.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                let residual = Double(hanCount) / Double(max(collapsedAfter.count, 1))
                 return TranslationResult(
                     id: result.id,
                     segmentID: result.segmentID,
                     engine: result.engine,
-                    text: unmasked,
+                    text: collapsedAfter,
                     residualSourceRatio: residual,
                     createdAt: result.createdAt
                 )

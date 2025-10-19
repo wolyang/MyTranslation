@@ -165,6 +165,9 @@ public final class TermMasker {
             if last < ns.length { newOut += ns.substring(with: NSRange(location: last, length: ns.length - last)) }
             out = newOut
             
+            // 토큰 양 옆에 문장부호만 있을 때 공백 삽입
+            out = insertSpacesAroundTokenIfPunctOnlyNeighbors(out, token: token)
+            
             // NBSP 경계 힌트
             if e.category == .person {
                 out = surroundTokenWithNBSP(out, token: token)
@@ -199,7 +202,10 @@ public final class TermMasker {
         locks: [String: LockInfo],
         personQueues: PersonQueues
     ) -> String {
-        let pattern = #"(__PERSON_P([A-Za-z0-9_-]+)__)|(?:__PERSON_U\d+__)|(?:__MASK_[A-Z]\d+__)"#
+        let personP  = #"(__PERSON_P([0-9]+)__)"#   // group 2 = pid
+        let personU  = #"(?:__PERSON_U\d+__)"#
+        let masked   = #"(?:__MASK_[A-Z]\d+__)"#
+        let pattern  = "\(personP)|\(personU)|\(masked)"
         guard let rx = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
         
         var queues = personQueues
@@ -240,6 +246,35 @@ public final class TermMasker {
         return out
     }
     
+    /// 토큰(__...__)과 문장부호 사이에 끼워둔 임시 공백을 제거
+    func collapseSpacesAroundTokensNearPunct(in text: String, tokens: [String]) -> String {
+        var out = text
+        for tok in tokens {
+            let t = NSRegularExpression.escapedPattern(for: tok)
+            // [문장부호] + 공백 + [토큰]  → 붙이기
+            let p1 = try! NSRegularExpression(pattern: #"([\p{P}\p{S}])\s+(\#(t))"#)
+            out = p1.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1$2")
+            // [토큰] + 공백 + [문장부호]  → 붙이기
+            let p2 = try! NSRegularExpression(pattern: #"\#(t)\s+([\p{P}\p{S}])"#)
+            out = p2.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1")
+        }
+        return out
+    }
+    
+    /// replacements: ["__사람_P2__": "가이", ...] (언마스킹에 실제 사용된 매핑)
+    func collapseSpacesAroundReplacementsNearPunct(in text: String, replacements: [String:String]) -> String {
+        var out = text
+        for rep in replacements.values {
+            guard !rep.isEmpty else { continue }
+            let r = NSRegularExpression.escapedPattern(for: rep)
+            let p1 = try! NSRegularExpression(pattern: #"([\p{P}\p{S}])\s+(\#(r))"#)
+            out = p1.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1$2")
+            let p2 = try! NSRegularExpression(pattern: #"\#(r)\s+([\p{P}\p{S}])"#)
+            out = p2.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1")
+        }
+        return out
+    }
+    
     // - 단일 한자 인물의 오검출 방지 보조들
     private static let baseNegativeBigrams: Set<String> = [
         "脸红", "发红", "泛红", "通红", "变红", "红色", "红了", "红的"
@@ -273,6 +308,24 @@ public final class TermMasker {
         let ws = "(?:\\s|\\u00A0)*" // 공백 + NBSP (0개 이상)
 
         var str = s
+        
+        // 6) (이)라
+        if info.endsWithBatchim {
+            str = rxReplace(str, t + ws + "라", token + "이라")
+        } else {
+            str = rxReplace(str, t + ws + "이라", token + "라")
+        }
+
+        // 7) (으)로 — ㄹ 특례
+        if info.endsWithBatchim {
+            if info.endsWithRieul {
+                str = rxReplace(str, t + ws + "으로", token + "로") // ㄹ 받침이면 무조건 '로'
+            } else {
+                str = rxReplace(str, t + ws + "로", token + "으로") // 일반 받침: '로'→'으로'
+            }
+        } else {
+            str = rxReplace(str, t + ws + "으로", token + "로") // 받침 없음: '으로'→'로'
+        }
 
         // 2) 을/를
         if info.endsWithBatchim {
@@ -302,24 +355,6 @@ public final class TermMasker {
             str = rxReplace(str, t + ws + "과", token + "와")
         }
 
-        // 6) (이)라
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "라", token + "이라")
-        } else {
-            str = rxReplace(str, t + ws + "이라", token + "라")
-        }
-
-        // 7) (으)로 — ㄹ 특례
-        if info.endsWithBatchim {
-            if info.endsWithRieul {
-                str = rxReplace(str, t + ws + "으로", token + "로") // ㄹ 받침이면 무조건 '로'
-            } else {
-                str = rxReplace(str, t + ws + "로", token + "으로") // 일반 받침: '로'→'으로'
-            }
-        } else {
-            str = rxReplace(str, t + ws + "으로", token + "로") // 받침 없음: '으로'→'로'
-        }
-
         // 8) 아/야
         if info.endsWithBatchim {
             str = rxReplace(str, t + ws + "야", token + "아")
@@ -339,6 +374,50 @@ public final class TermMasker {
             print("[JOSA][ERR] invalid regex: \(pattern) error=\(error)")
             return str
         }
+    }
+    
+    func insertSpacesAroundTokenIfPunctOnlyNeighbors(_ text: String, token: String) -> String {
+        var out = text
+        guard !token.isEmpty else { return out }
+        let escaped = NSRegularExpression.escapedPattern(for: token)
+        // 캡처 그룹은 정확히 2개(1: 앞이 문장부호, 2: 뒤가 문장부호)
+        let pattern = #"(?<=[\p{P}\p{S}])(\#(escaped))|(\#(escaped))(?=[\p{P}\p{S}])"#
+
+        guard let rx = try? NSRegularExpression(pattern: pattern) else { return out }
+        let ns = out as NSString
+        let matches = rx.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+
+        var rebuilt = ""
+        var cursor = 0
+
+        for m in matches {
+            let whole = m.range(at: 0)
+
+            if whole.location > cursor {
+                rebuilt += ns.substring(with: NSRange(location: cursor, length: whole.location - cursor))
+            }
+
+            let r1 = (m.numberOfRanges > 1) ? m.range(at: 1) : NSRange(location: NSNotFound, length: 0)
+            let r2 = (m.numberOfRanges > 2) ? m.range(at: 2) : NSRange(location: NSNotFound, length: 0)
+
+            if r1.location != NSNotFound {
+                rebuilt += " "
+                rebuilt += ns.substring(with: r1)
+            } else if r2.location != NSNotFound {
+                rebuilt += ns.substring(with: r2)
+                rebuilt += " "
+            } else {
+                // 방어: 혹시 둘 다 없으면 원문 유지
+                rebuilt += ns.substring(with: whole)
+            }
+            cursor = whole.location + whole.length
+        }
+
+        if cursor < ns.length {
+            rebuilt += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        }
+        out = rebuilt
+        return out
     }
 
     /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
