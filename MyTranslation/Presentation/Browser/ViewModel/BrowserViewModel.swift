@@ -35,6 +35,8 @@ final class BrowserViewModel: ObservableObject {
     private(set) var lastResults: [TranslationResult] = []
     private var pendingURLAfterEditing: String?
     private var currentPageTranslation: PageTranslationState?
+    private var translationTask: Task<Void, Never>? = nil
+    private var activeTranslationID: UUID?
 
     private let container: AppContainer
     let extractor: ContentExtractor
@@ -158,10 +160,10 @@ final class BrowserViewModel: ObservableObject {
                 createdAt: Date()
             )
             lastResults[i] = updated
+            reorderLastResults()
             if var state = currentPageTranslation,
-               var cached = state.resultsByEngine[previous.engine],
-               let cachedIndex = cached.firstIndex(where: { $0.segmentID == seg.id }) {
-                cached[cachedIndex] = updated
+               var cached = state.resultsByEngine[previous.engine] {
+                cached[seg.id] = updated
                 state.resultsByEngine[previous.engine] = cached
                 currentPageTranslation = state
             }
@@ -193,74 +195,168 @@ final class BrowserViewModel: ObservableObject {
         }
     }
 
-    func startTranslate(on webView: WKWebView) async {
+    func requestTranslation(on webView: WKWebView) {
+        translationTask?.cancel()
+        let requestID = UUID()
+        activeTranslationID = requestID
+        translationTask = Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            await self.startTranslate(on: webView, requestID: requestID)
+        }
+    }
+
+    private func cancelActiveTranslation() {
+        translationTask?.cancel()
+        translationTask = nil
+        activeTranslationID = nil
+        isTranslating = false
+        if let webView = attachedWebView {
+            normalizePageScale(webView)
+        }
+    }
+
+    private func startTranslate(on webView: WKWebView, requestID: UUID) async {
         guard let url = webView.url else { return }
-        translateRunID = UUID().uuidString
+        guard activeTranslationID == requestID else { return }
+        translateRunID = requestID.uuidString
 
         closeOverlay()
         hasAttemptedTranslationForCurrentPage = true
 
         isTranslating = true
         defer {
-            Task { @MainActor in
+            if self.activeTranslationID == requestID {
                 self.normalizePageScale(webView)
                 self.isTranslating = false
+                self.translationTask = nil
+                self.activeTranslationID = nil
             }
         }
         do {
             let exec = WKWebViewScriptAdapter(webView: webView)
             let engine = settings.preferredEngine
             let segs: [Segment]
-            if let state = currentPageTranslation, state.url == url {
+            if let state = currentPageTranslation, state.url == url, state.segments.isEmpty == false {
                 segs = state.segments
             } else {
                 segs = try await extractor.extract(using: exec, url: url)
-                currentPageTranslation = PageTranslationState(url: url, segments: segs, resultsByEngine: [:])
             }
+
+            try Task.checkCancellation()
+            guard activeTranslationID == requestID else { return }
+
+            var state = currentPageTranslation ?? PageTranslationState(url: url, segments: [], resultsByEngine: [:])
+            state.url = url
+            state.segments = segs
+            state.resultsByEngine[engine] = [:]
+            currentPageTranslation = state
+
+            lastSegments = []
+            lastResults = []
+
+            replacer.restore(using: exec)
+            replacer.setPairs([], using: exec)
 
             if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
-                    let pairs = segs.map { (id: $0.id, text: $0.originalText) }
-                    await coord.markSegments(pairs)
-                }
-            
-            let opts = TranslationOptions()
-            do {
-                let results = try await router.translate(
-                    segments: segs,
-                    options: opts,
-                    preferredEngine: settings.preferredEngine
-                )
-                let pairs: [(original: String, translated: String)] =
-                    zip(segs, results).compactMap { seg, res in
-                        guard !res.text.isEmpty else { return nil }
-                        return (seg.originalText, res.text)
-                    }
-                // 1) 페어 등록
-                replacer.setPairs(pairs, using: exec)
-                // 2) 적용 + 옵저버 켜기(더 보기 등 동적 치환)
-                replacer.apply(using: exec, observe: true)
+                coord.resetMarks()
+            }
 
-                // 캐시
-                self.lastSegments = segs
-                self.lastResults = results
-                if var state = self.currentPageTranslation, state.url == url {
-                    state.segments = segs
-                    state.resultsByEngine[engine] = results
-                    self.currentPageTranslation = state
-                } else {
-                    self.currentPageTranslation = PageTranslationState(url: url, segments: segs, resultsByEngine: [engine: results])
+            let opts = TranslationOptions()
+            let stream = router.translateStream(
+                segments: segs,
+                options: opts,
+                preferredEngine: settings.preferredEngine
+            )
+
+            for try await event in stream {
+                try Task.checkCancellation()
+                guard activeTranslationID == requestID else { break }
+                switch event {
+                case .segments(let segments):
+                    await handleSegmentsEvent(segments, engine: engine, url: url, webView: webView, requestID: requestID)
+                case .result(let segment, let result):
+                    handleResultEvent(segment: segment, result: result, engine: engine, exec: exec)
+                case .finished:
+                    break
                 }
-            } catch {
-                print("translate error: \(error)")
-                replacer.restore(using: exec)
-                _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
             }
         } catch {
-            // 본문 추출 자체가 실패한 케이스(희귀)
-            print("Extract error: \(error)")
+            if error is CancellationError { return }
+            print("translate error: \(error)")
+            let exec = WKWebViewScriptAdapter(webView: webView)
+            replacer.restore(using: exec)
+            _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
         }
     }
     
+    private func handleSegmentsEvent(
+        _ segments: [Segment],
+        engine: EngineTag,
+        url: URL,
+        webView: WKWebView,
+        requestID: UUID
+    ) async {
+        if Task.isCancelled { return }
+        guard activeTranslationID == requestID else { return }
+        lastSegments = segments
+
+        if var state = currentPageTranslation, state.url == url {
+            state.segments = segments
+            if state.resultsByEngine[engine] == nil {
+                state.resultsByEngine[engine] = [:]
+            }
+            currentPageTranslation = state
+        } else {
+            currentPageTranslation = PageTranslationState(url: url, segments: segments, resultsByEngine: [engine: [:]])
+        }
+
+        if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
+            for segment in segments {
+                if Task.isCancelled { return }
+                guard activeTranslationID == requestID else { return }
+                await coord.markSegments([(id: segment.id, text: segment.originalText)])
+            }
+        }
+    }
+
+    private func handleResultEvent(
+        segment: Segment,
+        result: TranslationResult,
+        engine: EngineTag,
+        exec: WebViewScriptExecutor
+    ) {
+        upsertResult(result, for: segment, engine: engine)
+        guard result.text.isEmpty == false else { return }
+        replacer.applyIncremental((segment.originalText, result.text), using: exec, observe: true)
+    }
+
+    private func upsertResult(_ result: TranslationResult, for segment: Segment, engine: EngineTag) {
+        if let idx = lastResults.firstIndex(where: { $0.segmentID == result.segmentID }) {
+            lastResults[idx] = result
+        } else {
+            lastResults.append(result)
+        }
+        reorderLastResults()
+
+        if var state = currentPageTranslation {
+            var engineCache = state.resultsByEngine[engine] ?? [:]
+            engineCache[result.segmentID] = result
+            state.resultsByEngine[engine] = engineCache
+            currentPageTranslation = state
+        }
+    }
+
+    private func reorderLastResults() {
+        guard lastSegments.isEmpty == false else { return }
+        let order = Dictionary(uniqueKeysWithValues: lastSegments.enumerated().map { ($1.id, $0) })
+        lastResults.sort { lhs, rhs in
+            let l = order[lhs.segmentID] ?? Int.max
+            let r = order[rhs.segmentID] ?? Int.max
+            if l == r { return lhs.segmentID < rhs.segmentID }
+            return l < r
+        }
+    }
+
     private func normalizePageScale(_ webView: WKWebView) {
         // iOS 16+ WKWebView.pageZoom이 있으면 우선 적용
         if webView.responds(to: #selector(getter: WKWebView.pageZoom)) {
@@ -277,33 +373,41 @@ final class BrowserViewModel: ObservableObject {
         let exec = WKWebViewScriptAdapter(webView: webView)
         if showOriginal {
             // 원문보기 ON → 치환 전부 복원
+            cancelActiveTranslation()
             replacer.restore(using: exec)
             closeOverlay()
         } else {
             let engine = settings.preferredEngine
             if applyCachedTranslationIfAvailable(for: engine, on: webView) == false {
-                Task { await startTranslate(on: webView) }
+                requestTranslation(on: webView)
             }
         }
     }
 
     func willNavigate() {
         guard let webView = attachedWebView else { return }
+        cancelActiveTranslation()
         let exec = WKWebViewScriptAdapter(webView: webView)
         replacer.restore(using: exec)
+        if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
+            coord.resetMarks()
+        }
         request = nil
         hasAttemptedTranslationForCurrentPage = false
         closeOverlay()
         pendingURLAfterEditing = nil
         currentPageTranslation = nil
+        lastSegments = []
+        lastResults = []
     }
 
     func onEngineSelected(_ engine: EngineTag, wasShowingOriginal: Bool) {
         settings.preferredEngine = engine
         guard let webView = attachedWebView else { return }
+        cancelActiveTranslation()
         if wasShowingOriginal { return }
         if applyCachedTranslationIfAvailable(for: engine, on: webView) == false {
-            Task { await self.startTranslate(on: webView) }
+            requestTranslation(on: webView)
         }
     }
 
@@ -316,18 +420,24 @@ final class BrowserViewModel: ObservableObject {
               cachedResults.isEmpty == false else { return false }
 
         let exec = WKWebViewScriptAdapter(webView: webView)
-        let pairs = zip(state.segments, cachedResults).compactMap { seg, res -> (String, String)? in
-            guard !res.text.isEmpty else { return nil }
+        let pairs = state.segments.compactMap { seg -> (String, String)? in
+            guard let res = cachedResults[seg.id], res.text.isEmpty == false else { return nil }
             return (seg.originalText, res.text)
         }
         replacer.setPairs(pairs, using: exec)
         replacer.apply(using: exec, observe: true)
         lastSegments = state.segments
-        lastResults = cachedResults
+        lastResults = state.segments.compactMap { cachedResults[$0.id] }
         hasAttemptedTranslationForCurrentPage = true
 
-        let highlightPairs = state.segments.map { (id: $0.id, text: $0.originalText) }
-        Task { await (webView.navigationDelegate as? WebContainerView.Coordinator)?.markSegments(highlightPairs) }
+        if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
+            coord.resetMarks()
+            Task { @MainActor in
+                for segment in state.segments {
+                    await coord.markSegments([(id: segment.id, text: segment.originalText)])
+                }
+            }
+        }
 
         return true
     }
@@ -352,7 +462,7 @@ extension BrowserViewModel {
     private struct PageTranslationState {
         var url: URL
         var segments: [Segment]
-        var resultsByEngine: [EngineTag: [TranslationResult]]
+        var resultsByEngine: [EngineTag: [String: TranslationResult]]
     }
 
     struct OverlayState: Equatable {

@@ -166,6 +166,47 @@ final class WebViewInlineReplacer: InlineReplacer {
         Task { _ = try? await exec.runJS(js) }
     }
 
+    func applyIncremental(_ pair: (original: String, translated: String), using exec: WebViewScriptExecutor, observe: Bool) {
+        let payload: [String: String] = ["o": pair.original, "t": pair.translated]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let js = """
+        (function(payload){
+          if (!window.__afmInline || !window.__afmInline.map) {
+            window.__afmInline = window.__afmInline || {};
+            window.__afmInline.map = new Map();
+            window.__afmInline.norm = window.__afmInline.norm || (s => (s||'').replace(/\\s+/g,' ').trim());
+            window.__afmInline.applyAll = window.__afmInline.applyAll || function(root){
+              const R = root || document.body || document.documentElement;
+              const walker = document.createTreeWalker(R, NodeFilter.SHOW_TEXT, null);
+              let n, count = 0;
+              while ((n = walker.nextNode())) {
+                if (window.__afmInline.tryReplaceTextNode && window.__afmInline.tryReplaceTextNode(n)) count++;
+              }
+              return count;
+            };
+          }
+
+          const S = window.__afmInline;
+          const norm = S.norm || (s => (s||'').replace(/\\s+/g,' ').trim());
+          if (!S.map) S.map = new Map();
+          const key = norm(payload.o);
+          S.map.set(key, payload.t);
+          let count = 0;
+          if (S.applyAll) {
+            count = S.applyAll(document.body || document.documentElement);
+          }
+          if (\(observe ? "true" : "false")) {
+            S.enableObserver && S.enableObserver();
+          }
+          return 'incremental:' + count;
+        })(\(json));
+        """
+
+        Task { _ = try? await exec.runJS(js) }
+    }
+
     func restore(using exec: WebViewScriptExecutor) {
         let js = """
         (function(){

@@ -36,7 +36,7 @@ struct WebContainerView: UIViewRepresentable {
         private let parent: WebContainerView
         var bridge: SelectionBridge?
         private weak var webView: WKWebView?
-        private var lastMarkRunKey: String?
+        private var markedSegmentIDs: Set<String> = []
         
         init(parent: WebContainerView) { self.parent = parent }
         
@@ -94,18 +94,21 @@ struct WebContainerView: UIViewRepresentable {
 
         }
 
+        func resetMarks() {
+            markedSegmentIDs.removeAll()
+        }
+
         func markSegments(_ pairs: [(id: String, text: String)]) async {
-            // 같은 페이지(=URL)에서 같은 runKey로 두 번 이상 호출 방지
-                    let urlKey = webView?.url?.absoluteString ?? UUID().uuidString
-                    let runKey = urlKey + "|count=\(pairs.count)"
-                    if lastMarkRunKey == runKey { return }
-                    lastMarkRunKey = runKey
+            guard pairs.isEmpty == false else { return }
+            let fresh = pairs.filter { markedSegmentIDs.contains($0.id) == false }
+            guard fresh.isEmpty == false else { return }
 
-                    // 로그
-                    let totalChars = pairs.reduce(0) { $0 + $1.text.count }
-                    print("[MARK] calling MT_MARK_SEGMENTS_ALL list=\(pairs.count) chars=\(totalChars) url=\(urlKey)")
+            let urlKey = webView?.url?.absoluteString ?? UUID().uuidString
+            let totalChars = fresh.reduce(0) { $0 + $1.text.count }
+            print("[MARK] calling MT_MARK_SEGMENTS_ALL list=\(fresh.count) chars=\(totalChars) url=\(urlKey)")
 
-            await bridge?.mark(segments: pairs)
+            fresh.forEach { markedSegmentIDs.insert($0.id) }
+            await bridge?.mark(segments: fresh)
         }
 
         func webView(_ webView: WKWebView,

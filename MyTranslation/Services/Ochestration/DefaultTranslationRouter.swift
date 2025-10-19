@@ -37,97 +37,97 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.reranker = reranker
     }
 
-    public func translate(
+    public func translateStream(
         segments: [Segment],
         options: TranslationOptions,
         preferredEngine: EngineTag
-    ) async throws -> [TranslationResult] {
-        let glossaryEntries: [GlossaryEntry]
-        if options.applyGlossary {
-            glossaryEntries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
-        } else {
-            glossaryEntries = []
-        }
+    ) -> AsyncThrowingStream<TranslationStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let glossaryEntries: [GlossaryEntry]
+                    if options.applyGlossary {
+                        glossaryEntries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
+                    } else {
+                        glossaryEntries = []
+                    }
 
-        let engine = engine(for: preferredEngine)
-        return try await translate(
-            segments: segments,
-            options: options,
-            engine: engine,
-            glossaryEntries: glossaryEntries
-        )
-    }
+                    let engine = engine(for: preferredEngine)
+                    continuation.yield(.segments(segments))
 
-    private func translate(
-        segments: [Segment],
-        options: TranslationOptions,
-        engine: TranslationEngine,
-        glossaryEntries: [GlossaryEntry]
-    ) async throws -> [TranslationResult] {
-        var cached: [TranslationResult] = []
-        var toTranslate: [Segment] = []
-        for segment in segments {
-            let key = cacheKey(for: segment, options: options, engine: engine.tag)
-            if let hit = cache.lookup(key: key) {
-                cached.append(hit)
-            } else {
-                toTranslate.append(segment)
+                    var pendingSegments: [Segment] = []
+                    for segment in segments {
+                        try Task.checkCancellation()
+                        let key = cacheKey(for: segment, options: options, engine: engine.tag)
+                        if let hit = cache.lookup(key: key) {
+                            continuation.yield(.result(segment: segment, result: hit))
+                        } else {
+                            pendingSegments.append(segment)
+                        }
+                    }
+
+                    if pendingSegments.isEmpty == false {
+                        try Task.checkCancellation()
+                        let termMasker = TermMasker()
+                        let maskedResults = pendingSegments.map { segment in
+                            termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
+                        }
+                        let maskedPacks = maskedResults.map { $0.pack }
+                        let maskedSegments = maskedPacks.map { item in
+                            Segment(
+                                id: item.seg.id,
+                                url: item.seg.url,
+                                indexInPage: item.seg.indexInPage,
+                                originalText: item.masked,
+                                normalizedText: item.seg.normalizedText
+                            )
+                        }
+
+                        let engineResults = try await engine.translate(maskedSegments, options: options)
+                        let finals: [TranslationResult] = engineResults.enumerated().map { index, result in
+                            let pack = maskedPacks[index]
+                            let personQueues = maskedResults[index].personQueues
+                            let raw = result.text
+                            let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+                            let unmasked = termMasker.unlockTermsSafely(
+                                corrected,
+                                locks: pack.locks,
+                                personQueues: personQueues
+                            )
+                            let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                            let residual = Double(hanCount) / Double(max(unmasked.count, 1))
+                            return TranslationResult(
+                                id: result.id,
+                                segmentID: result.segmentID,
+                                engine: result.engine,
+                                text: unmasked,
+                                residualSourceRatio: residual,
+                                createdAt: result.createdAt
+                            )
+                        }
+
+                        for (index, result) in finals.enumerated() {
+                            try Task.checkCancellation()
+                            let originalSegment = pendingSegments[index]
+                            continuation.yield(.result(segment: originalSegment, result: result))
+                            let key = cacheKey(for: maskedPacks[index].seg, options: options, engine: engine.tag)
+                            cache.save(result: result, forKey: key)
+                        }
+                    }
+
+                    continuation.yield(.finished)
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
-
-        var translated: [TranslationResult] = []
-        if toTranslate.isEmpty == false {
-            let termMasker = TermMasker()
-            let maskedResults = toTranslate.map { segment in
-                termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
-            }
-            let maskedPacks = maskedResults.map { $0.pack }
-            let maskedSegments = maskedPacks.map { item in
-                Segment(
-                    id: item.seg.id,
-                    url: item.seg.url,
-                    indexInPage: item.seg.indexInPage,
-                    originalText: item.masked,
-                    normalizedText: item.seg.normalizedText
-                )
-            }
-
-            let engineResults = try await engine.translate(maskedSegments, options: options)
-            let finals: [TranslationResult] = engineResults.enumerated().map { index, result in
-                let pack = maskedPacks[index]
-                let personQueues = maskedResults[index].personQueues
-                let raw = result.text
-                let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
-                let unmasked = termMasker.unlockTermsSafely(
-                    corrected,
-                    locks: pack.locks,
-                    personQueues: personQueues
-                )
-                let hanCount = unmasked.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                let residual = Double(hanCount) / Double(max(unmasked.count, 1))
-                return TranslationResult(
-                    id: result.id,
-                    segmentID: result.segmentID,
-                    engine: result.engine,
-                    text: unmasked,
-                    residualSourceRatio: residual,
-                    createdAt: result.createdAt
-                )
-            }
-
-            translated.reserveCapacity(finals.count)
-            for (index, result) in finals.enumerated() {
-                translated.append(result)
-                let key = cacheKey(for: maskedPacks[index].seg, options: options, engine: engine.tag)
-                cache.save(result: result, forKey: key)
-            }
-        }
-
-        let merged = cached + translated
-        let bySegment: [String: TranslationResult] = merged.reduce(into: [:]) { storage, item in
-            storage[item.segmentID] = item
-        }
-        return segments.compactMap { bySegment[$0.id] }
     }
 
     private func engine(for tag: EngineTag) -> TranslationEngine {
