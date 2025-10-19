@@ -211,7 +211,7 @@ public final class TermMasker {
     
     // - 단일 한자 인물의 오검출 방지 보조들
     private static let baseNegativeBigrams: Set<String> = [
-        "脸红", "发红", "泛红", "通红", "变红", "红色", "红了", "红的"
+        "脸红", "发红", "泛红", "通红", "变红", "红色", "红了", "红的", "绯红"
     ]
     private var mergedNegativeBigrams: Set<String> { Self.baseNegativeBigrams.union(extraNegativeBigrams) }
     private func isNegativeBigram(ns: NSString, matchRange r: NSRange, center: String) -> Bool {

@@ -20,10 +20,22 @@ final class SelectionBridge: NSObject {
 
     deinit { }
 
-    func mark(segments: [(id: String, text: String)]) async {
+    func mark(segments: [Segment]) async {
         guard let webView else { return }
-        let payload = segments.map { ["id": $0.id, "text": $0.text] }
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+        let payload = segments.compactMap { segment -> [String: Any]? in
+            guard let dom = segment.domRange else { return nil }
+            return [
+                "id": segment.id,
+                "startToken": dom.startToken,
+                "startOffset": dom.startOffset,
+                "endToken": dom.endToken,
+                "endOffset": dom.endOffset,
+                "startIndex": dom.startIndex,
+                "endIndex": dom.endIndex
+            ]
+        }
+        guard payload.isEmpty == false,
+              let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
         let js = """
         (function(list){
@@ -45,11 +57,40 @@ final class SelectionBridge: NSObject {
         print("[MARK] returned =", result ?? "nil")
     }
 
-    private func injectBootstrap() {
-        let js = #"""
+    private static let bootstrapScript: String = {
+        return #"""
         (function () {
           if (window.MT && window.MT.BOOT_OK) return;
           window.MT = window.MT || {};
+
+          const NODE_REGISTRY = (function () {
+            const reg = window.MT.__nodeRegistry || {};
+            if (!(reg.map instanceof Map)) {
+              reg.map = new Map();
+            }
+            if (typeof reg.seq !== 'number' || !isFinite(reg.seq)) {
+              reg.seq = 0;
+            }
+            window.MT.__nodeRegistry = reg;
+            return reg;
+          })();
+
+          function ensureNodeToken(node) {
+            if (!node) return null;
+            if (!node.__afmNodeToken) {
+              NODE_REGISTRY.seq += 1;
+              node.__afmNodeToken = 'n' + NODE_REGISTRY.seq.toString(36);
+            }
+            NODE_REGISTRY.map.set(node.__afmNodeToken, node);
+            return node.__afmNodeToken;
+          }
+
+          function getNodeByToken(token) {
+            if (!token) return null;
+            const reg = window.MT.__nodeRegistry;
+            if (!reg || !(reg.map instanceof Map)) return null;
+            return reg.map.get(token) || null;
+          }
 
           try {
             var style = document.createElement('style');
@@ -81,47 +122,16 @@ final class SelectionBridge: NSObject {
           }
 
           // ====== 짧은 CJK 허용 로직 (유니코드 속성 미사용 폴백) ======
-          const ONLY_PUNCT_SPACE = /^[\s~`!@#$%^&*()\-=+\[\]{}\\|;:'",.<>\/\?]+$/;
-          const CJK_RE = /[\uAC00-\uD7A3\u3130-\u318F\u1100-\u11FF\u4E00-\u9FFF\u3400-\u4DBF\u3040-\u309F\u30A0-\u30FF]/;
-
-          function isCJKOnlyShort(s) {
-            const t = (s || '').trim();
-            if (t.length === 0 || t.length > 2) return false;
-            if (ONLY_PUNCT_SPACE.test(t)) return false; // 구두점/기호/공백만 → 제외
-            return CJK_RE.test(t) && !/^[A-Za-z0-9]+$/.test(t);
-          }
-
-          function shouldWrapText(txt) {
-            const t = (txt || '').trim();
-            return t.length >= 6 || isCJKOnlyShort(t);
-          }
-
-          // 안전한 정규식 이스케이프
-          function escReg(s) {
-            return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          }
-        // 원문을 공백으로 나눠 escape → 느슨한 서브패턴으로 연결
-        function buildLooseRegex(text) {
-          const parts = String(text || '').trim().split(/\s+/);
-          const escaped = parts.map(escReg);
-          const glue = '(?:\\s|\\u00A0)+';   // 스페이스/개행/NBSP 허용
-          return new RegExp(escaped.join(glue), 'g');
-        }
-
           // ====== 클릭 핸들러 (페이지 본문 클릭 방해 금지) ======
           document.addEventListener('click', function (e) {
             var node = e.target && e.target.closest ? e.target.closest('[data-seg-id]') : null;
-        console.log("click event listener called");
             if (!node) return;
-        console.log("node exist");
 
             // 인터랙티브 조상/자신이 인터랙티브면: 우리 기능 스킵 → 원래 클릭 유지
         //            if (isInteractive(node) || isInteractive(e.target)) return;
-        //        console.log("node is not interactive");
 
             const id = node.getAttribute('data-seg-id');
             if (!id) return;
-        console.log("node have id");
 
             // 페이지 동작 우선
             const r = node.getBoundingClientRect();
@@ -130,20 +140,9 @@ final class SelectionBridge: NSObject {
               text: (node.textContent || '').trim(),
               rect: { x: r.left, y: r.top, width: r.width, height: r.height }
             };
-        console.log("MT selection click");
             try { window.webkit?.messageHandlers?.selection?.postMessage(id); } catch (_){}
           }, true);
         
-        function collectRoots() {
-          const roots = [document]; // main DOM
-          const all = document.querySelectorAll('*');
-          for (let i = 0; i < all.length; i++) {
-            const sr = all[i].shadowRoot;
-            if (sr) roots.push(sr);  // shadow DOM도 순회 대상으로 추가
-          }
-          return roots;
-        }
-
           // ====== 마킹 (블록 단위 + Range 래핑: 노드 경계도 매칭) ======
         const BLOCK_ANCHOR_SEL = 'p, li, blockquote, h1, h2, h3, h4, h5, h6';
         
@@ -194,7 +193,7 @@ final class SelectionBridge: NSObject {
 
           function buildIndex(block) {
             // block 하위 텍스트 노드들을 순서대로 모아 큰 문자열과 매핑 테이블 구성
-            const map = []; // [{node, start, end}]
+            const map = []; // [{node, token, start, end}]
             let acc = '';
             const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
               acceptNode(n) {
@@ -210,104 +209,104 @@ final class SelectionBridge: NSObject {
             while ((node = walker.nextNode())) {
               const start = acc.length;
               acc += node.nodeValue;
-              map.push({ node, start, end: acc.length });
+              const token = ensureNodeToken(node);
+              if (!token) continue;
+              map.push({ node, token, start, end: acc.length });
             }
             return { text: acc, map };
           }
 
-          function posToNode(map, pos) {
-            // 선형 탐색으로 충분 (문자 수가 커지면 이진 탐색 가능)
-            for (let i = 0; i < map.length; i++) {
-              const m = map[i];
-              if (pos >= m.start && pos <= m.end) {
-                return { node: m.node, offset: pos - m.start };
+          function tagTextNodesWithSegment(root, id) {
+            if (!root || !id) return;
+            try {
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+              let node;
+              while ((node = walker.nextNode())) {
+                node.__afmSegmentId = id;
               }
-            }
-            // 경계 보정
-            const last = map[map.length - 1];
-            return { node: last?.node || null, offset: (last ? last.end - last.start : 0) };
+            } catch (_) {}
           }
 
-          function markBlockWithRanges(block, patterns) {
-            const { text, map } = buildIndex(block);
-            if (!text || !map.length) return 0;
-
-            const matches = [];
-            for (let k = 0; k < patterns.length; k++) {
-              const { id, re } = patterns[k];
-              re.lastIndex = 0;
-              let m;
-              while ((m = re.exec(text))) {
-                matches.push({ id, start: m.index, end: m.index + m[0].length });
-                if (re.lastIndex === m.index) re.lastIndex++;
-              }
-            }
-            if (!matches.length) return 0;
-
-            matches.sort((a,b)=> a.start===b.start ? b.end - a.end : a.start - b.start);
-
-            let hits = 0;
-            for (let i = matches.length - 1; i >= 0; i--) {
-              const { id, start, end } = matches[i];
-              const s = posToNode(map, start);
-              const e = posToNode(map, end);
-              if (!s.node || !e.node) continue;
-
-              // ① 같은 텍스트 블록(앵커) 안에서만 래핑
-              const sAnchor = s.node.parentElement?.closest(BLOCK_ANCHOR_SEL);
-              const eAnchor = e.node.parentElement?.closest(BLOCK_ANCHOR_SEL);
-              if (!sAnchor || sAnchor !== eAnchor) continue;
-
-              try {
-                const r = (block.ownerDocument || document).createRange();
-                r.setStart(s.node, s.offset);
-                r.setEnd(e.node, e.offset);
-
-                // ② 사전 점검: 블록 요소 포함 매치라면 스킵 (레이아웃 보호)
-                const probe = r.cloneContents();
-                if (fragContainsBlock(probe)) continue;
-
-                const span = document.createElement('span');
-                span.setAttribute('data-seg-id', id);
-                // 안전 삽입: extract → append → insert
-                const frag = r.extractContents();
-                span.appendChild(frag);
-                r.insertNode(span);
-                hits++;
-              } catch (_) {
-                /* skip */
-              }
-            }
-            return hits;
-          }
-
-          function markWithRanges(list) {
-            if (!Array.isArray(list) || !list.length) return 0;
-            const filtered = list.filter(it => shouldWrapText(it.text));
-            if (!filtered.length) return 0;
-
-            // 느슨한 매칭(공백/개행/NBSP 허용)
-            const patterns = filtered.map(it => ({ id: it.id, re: buildLooseRegex(it.text) }));
-
+          function buildBlockSnapshots() {
             const blocks = collectBlocks();
-            let hits = 0;
-            for (let b = 0; b < blocks.length; b++) {
-              const blk = blocks[b];
-              // 인터랙티브 블록은 통째 스킵 (페이지 동작 보호)
-              // if (isInteractive(blk)) continue;
-              hits += markBlockWithRanges(blk, patterns);
+            const snapshots = [];
+            for (let i = 0; i < blocks.length; i++) {
+              const blk = blocks[i];
+              const { text, map } = buildIndex(blk);
+              if (!text || !map.length) continue;
+              const plainMap = map.map(entry => ({ token: entry.token, start: entry.start, end: entry.end }));
+              snapshots.push({ text, map: plainMap });
             }
-            console.log('MT_MARK_SEGMENTS hits=', hits);
-            return hits;
+            return snapshots;
           }
 
-          window.MT_MARK_SEGMENTS = function (list) {
-            try { return markWithRanges(list); } catch (e) { console.log('[MT] mark error:', e?.message || e); return 0; }
+          window.MT_COLLECT_BLOCK_SNAPSHOTS = function () {
+            try {
+              const data = buildBlockSnapshots();
+              return JSON.stringify(data);
+            } catch (e) {
+              return '[]';
+            }
           };
 
+          function applySegmentDescriptor(desc) {
+            if (!desc || !desc.id) return false;
+            const startNode = getNodeByToken(desc.startToken);
+            const endNode = getNodeByToken(desc.endToken);
+            if (!startNode || !endNode) return false;
+
+            const startHost = startNode.parentElement && startNode.parentElement.closest('[data-seg-id]');
+            if (startHost && startHost.getAttribute('data-seg-id') !== desc.id) return false;
+            const endHost = endNode.parentElement && endNode.parentElement.closest('[data-seg-id]');
+            if (endHost && endHost.getAttribute('data-seg-id') !== desc.id) return false;
+
+            try {
+              const doc = startNode.ownerDocument || document;
+              const r = doc.createRange();
+              r.setStart(startNode, Math.max(0, desc.startOffset || 0));
+              r.setEnd(endNode, Math.max(0, desc.endOffset || 0));
+              if (r.collapsed) return false;
+              const probe = r.cloneContents();
+              if (fragContainsBlock(probe)) return false;
+
+              const existing = startHost || endHost;
+              if (existing && existing.getAttribute('data-seg-id') === desc.id) {
+                existing.__afmSegmentId = desc.id;
+                existing.setAttribute('data-seg-id', desc.id);
+                tagTextNodesWithSegment(existing, desc.id);
+                return true;
+              }
+
+              const span = document.createElement('span');
+              span.setAttribute('data-seg-id', desc.id);
+              span.__afmSegmentId = desc.id;
+              const frag = r.extractContents();
+              span.appendChild(frag);
+              tagTextNodesWithSegment(span, desc.id);
+              r.insertNode(span);
+              return true;
+            } catch (_) {
+              return false;
+            }
+          }
+
+          function applySegmentsByTokens(list) {
+            if (!Array.isArray(list) || !list.length) return 0;
+            const sorted = list.slice().sort((a, b) => {
+              const ax = typeof a.startIndex === 'number' ? a.startIndex : 0;
+              const bx = typeof b.startIndex === 'number' ? b.startIndex : 0;
+              if (ax === bx) return (typeof b.endIndex === 'number' ? b.endIndex : 0) - (typeof a.endIndex === 'number' ? a.endIndex : 0);
+              return bx - ax;
+            });
+            let hits = 0;
+            for (let i = 0; i < sorted.length; i++) {
+              if (applySegmentDescriptor(sorted[i])) hits++;
+            }
+            return hits;
+          }
 
           window.MT_MARK_SEGMENTS = function (list) {
-            try { return markWithRanges(list); } catch (e) { console.log('[MT] mark error:', e?.message || e); return 0; }
+            try { return applySegmentsByTokens(list); } catch (e) { console.log('[MT] mark error:', e?.message || e); return 0; }
           };
         
         window.MT_MARK_SEGMENTS_ALL = function(list){
@@ -354,6 +353,12 @@ final class SelectionBridge: NSObject {
           window.MT.BOOT_OK = true;
         })();
         """#
+    }()
+
+    static func scriptForTesting() -> String { bootstrapScript }
+
+    private func injectBootstrap() {
+        let js = SelectionBridge.bootstrapScript
         let userScript = WKUserScript(
             source: js,
             injectionTime: .atDocumentEnd,
