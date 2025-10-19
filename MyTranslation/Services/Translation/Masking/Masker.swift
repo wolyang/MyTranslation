@@ -375,6 +375,47 @@ public final class TermMasker {
         let target: String
         let variants: [String]
     }
+
+    /// 원문에 등장한 인물 용어만 선별하여 정규화용 이름 정보를 생성한다.
+    /// - Parameters:
+    ///   - original: 용어 검사를 수행할 원문 텍스트
+    ///   - entries: 용어집 엔트리 목록
+    /// - Returns: 원문에 등장한 인물 용어의 target/variants 정보 배열
+    func makeNameGlossaries(forOriginalText original: String, entries: [GlossaryEntry]) -> [NameGlossary] {
+        guard !original.isEmpty else { return [] }
+
+        let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
+
+        var variantsByTarget: [String: [String]] = [:]
+        var seenVariantKeysByTarget: [String: Set<String>] = [:]
+
+        for entry in entries where entry.category == .person {
+            guard !entry.source.isEmpty, !entry.target.isEmpty else { continue }
+            let normalizedSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
+            guard normalizedOriginal.contains(normalizedSource) else { continue }
+
+            if !entry.variants.isEmpty {
+                var bucket = variantsByTarget[entry.target, default: []]
+                var seen = seenVariantKeysByTarget[entry.target, default: []]
+                for variant in entry.variants where !variant.isEmpty {
+                    let key = normKey(variant)
+                    if seen.insert(key).inserted {
+                        bucket.append(variant)
+                    }
+                }
+                variantsByTarget[entry.target] = bucket
+                seenVariantKeysByTarget[entry.target] = seen
+            } else if variantsByTarget[entry.target] == nil {
+                variantsByTarget[entry.target] = []
+            }
+        }
+
+        guard variantsByTarget.isEmpty == false else { return [] }
+
+        return variantsByTarget.map { target, variants in
+            NameGlossary(target: target, variants: variants)
+        }
+    }
     
     struct JosaPair {
         let noBatchim: String

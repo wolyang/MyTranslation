@@ -100,6 +100,15 @@ final class DefaultTranslationRouter: TranslationRouter {
                 )
             }
 
+            let nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = {
+                guard engine.maskPerson == false else {
+                    return Array(repeating: [], count: maskedPacks.count)
+                }
+                return maskedPacks.map { pack in
+                    termMasker.makeNameGlossaries(forOriginalText: pack.seg.originalText, entries: glossaryEntries)
+                }
+            }()
+
             let batchSize = 8
             var batchIndices: [Int] = []
             batchIndices.reserveCapacity(batchSize)
@@ -128,9 +137,16 @@ final class DefaultTranslationRouter: TranslationRouter {
                         )
                         
                         if !engine.maskPerson {
-                            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
-                            output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: [:], names: glossaryEntries.map({ .init(target: $0.target, variants: $0.variants)
-                            }), mode: .namesOnly)
+                            let names = nameGlossariesPerSegment[globalIndex]
+                            if names.isEmpty == false {
+                                // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
+                                output = termMasker.normalizeEntitiesAndParticles(
+                                    in: output,
+                                    locksByToken: [:],
+                                    names: names,
+                                    mode: .namesOnly
+                                )
+                            }
                         }
 
                         if pack.locks.values.count == 1,
