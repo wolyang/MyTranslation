@@ -71,7 +71,9 @@ final class DefaultTranslationRouter: TranslationRouter {
                 )
                 sequence += 1
                 progress(.init(kind: .cachedHit, timestamp: Date()))
+                await Task.yield()
                 progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                await Task.yield()
                 succeededIDs.append(segment.id)
                 cachedCount += 1
             } else {
@@ -81,6 +83,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         if pendingSegments.isEmpty == false {
             progress(.init(kind: .requestScheduled, timestamp: Date()))
+            await Task.yield()
 
             let termMasker = TermMasker()
             let maskedResults = pendingSegments.map { segment in
@@ -131,7 +134,9 @@ final class DefaultTranslationRouter: TranslationRouter {
                     )
                     sequence += 1
                     progress(.init(kind: .partial(segment: payload), timestamp: Date()))
+                    await Task.yield()
                     progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                    await Task.yield()
                     succeededIDs.append(originalSegment.id)
 
                     let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
@@ -143,6 +148,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                 for segment in pendingSegments where failedIDs.contains(segment.id) == false {
                     failedIDs.insert(segment.id)
                     progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
+                    await Task.yield()
                 }
                 let summary = TranslationStreamSummary(
                     totalCount: segments.count,
@@ -151,6 +157,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     cachedCount: cachedCount
                 )
                 progress(.init(kind: .completed, timestamp: Date()))
+                await Task.yield()
                 return summary
             }
         }
@@ -162,6 +169,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             cachedCount: cachedCount
         )
         progress(.init(kind: .completed, timestamp: Date()))
+        await Task.yield()
         return summary
     }
 
