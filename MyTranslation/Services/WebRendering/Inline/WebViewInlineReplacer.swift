@@ -7,175 +7,320 @@
 
 import Foundation
 
+/// NOTE: JS 브릿지 명세는 Docs/streaming-translation-contract.md 를 따른다.
+/// window.__afmInline.upsertPayload({ segmentID, originalText, translatedText, engineID, sequence }) 형태로 호출된다.
 final class WebViewInlineReplacer: InlineReplacer {
-    public func setPairs(_ pairs: [(original: String, translated: String)], using exec: WebViewScriptExecutor) {
-        let payload = pairs.map { ["o": $0.original, "t": $0.translated] }
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+    private static let ensureScript: String = {
+        return #"""
+(function(){
+  if (!window.__afmInline) window.__afmInline = {};
+  const S = window.__afmInline;
+
+  if (typeof S.norm !== 'function') {
+    S.norm = function(s){ return (s || '').replace(/\s+/g, ' ').trim(); };
+  }
+
+  if (!(S.map instanceof Map)) {
+    S.map = new Map();
+  }
+
+  if (!(S.payloadBySegment instanceof Map)) {
+    S.payloadBySegment = new Map();
+  }
+
+  if (typeof S.shouldSkipNode !== 'function') {
+    S.shouldSkipNode = function(node) {
+      if (!node || node.nodeType !== Node.TEXT_NODE) return true;
+      const txt = node.nodeValue;
+      if (!txt || !txt.trim()) return true;
+      const el = node.parentElement;
+      if (!el) return true;
+      if (el.closest('script,style,textarea,[contenteditable]')) return true;
+      return false;
+    };
+  }
+
+  if (typeof S.tryReplaceTextNode !== 'function') {
+    S.tryReplaceTextNode = function(node) {
+      if (S.shouldSkipNode(node)) return false;
+
+      const hadApplied = !!node.__afmApplied;
+      const hasStoredOriginal = typeof node.__afmOriginal === 'string';
+      const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
+      const raw = S.norm(original);
+      const translated = S.map.get(raw);
+
+      if (translated) {
+        if (!hadApplied) {
+          node.__afmOriginal = node.nodeValue;
+        } else if (!hasStoredOriginal) {
+          node.__afmOriginal = original;
+        }
+
+        const changed = node.nodeValue !== translated;
+        if (changed) {
+          node.nodeValue = translated;
+        }
+        node.__afmApplied = true;
+        return changed || !hadApplied;
+      }
+
+      if (hadApplied && hasStoredOriginal) {
+        const changed = node.nodeValue !== node.__afmOriginal;
+        if (changed) {
+          node.nodeValue = node.__afmOriginal;
+        }
+        node.__afmOriginal = undefined;
+        node.__afmApplied = undefined;
+        return changed;
+      }
+
+      return false;
+    };
+  }
+
+  if (typeof S.applyAll !== 'function') {
+    S.applyAll = function(root) {
+      const r = root || document.body || document.documentElement;
+      if (!r) return 0;
+      const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+      let n, count = 0;
+      while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
+      return count;
+    };
+  }
+
+  if (typeof S.restoreAll !== 'function') {
+    S.restoreAll = function(root) {
+      const r = root || document.body || document.documentElement;
+      if (!r) return 0;
+      const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+      let n, count = 0;
+      while ((n = walker.nextNode())) {
+        if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
+          n.nodeValue = n.__afmOriginal;
+          n.__afmOriginal = undefined;
+          n.__afmApplied = undefined;
+          count++;
+        }
+      }
+      return count;
+    };
+  }
+
+  if (typeof S._scheduleApply !== 'function') {
+    S._pending = false;
+    S._scheduleApply = function(root) {
+      if (S._pending) return;
+      S._pending = true;
+      (window.requestAnimationFrame || setTimeout)(function(){
+        S._pending = false;
+        S.applyAll(root);
+      }, 16);
+    };
+  }
+
+  if (typeof S._applyForKey !== 'function') {
+    S._applyForKey = function(key, root) {
+      const r = root || document.body || document.documentElement;
+      if (!r) return 0;
+      const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
+      let n, count = 0;
+      while ((n = walker.nextNode())) {
+        const source = typeof n.__afmOriginal === 'string' ? n.__afmOriginal : n.nodeValue;
+        if (S.norm(source) === key) {
+          if (S.tryReplaceTextNode(n)) count++;
+        }
+      }
+      return count;
+    };
+  }
+
+  if (typeof S.enableObserver !== 'function') {
+    S.enableObserver = function() {
+      if (S.observer) return 'exists';
+      S.observer = new MutationObserver(function(muts){
+        for (const m of muts) {
+          if (m.type === 'childList') {
+            m.addedNodes && m.addedNodes.forEach(function(node){
+              if (node.nodeType === Node.TEXT_NODE) { S.tryReplaceTextNode(node); }
+              else if (node.nodeType === Node.ELEMENT_NODE) { S.applyAll(node); }
+            });
+          } else if (m.type === 'characterData') {
+            if (m.target && m.target.nodeType === Node.TEXT_NODE) S.tryReplaceTextNode(m.target);
+          } else if (m.type === 'attributes') {
+            const el = m.target;
+            if (el && el.nodeType === Node.ELEMENT_NODE) S._scheduleApply(el);
+          }
+        }
+      });
+      const root = document.body || document.documentElement;
+      if (root) {
+        S.observer.observe(root, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+          attributes: true,
+          attributeFilter: ['class','open','hidden','style','aria-expanded']
+        });
+      }
+      return 'enabled';
+    };
+  }
+
+  if (typeof S.disableObserver !== 'function') {
+    S.disableObserver = function() {
+      if (S.observer) { S.observer.disconnect(); S.observer = null; return 'disabled'; }
+      return 'noop';
+    };
+  }
+
+  if (typeof S._syncPayload !== 'function') {
+    S._syncPayload = function(payload) {
+      if (!payload || typeof payload.originalText !== 'string') return '';
+      const key = S.norm(payload.originalText);
+      if (!key) return key;
+      if (typeof payload.translatedText === 'string' && payload.translatedText.length) {
+        S.map.set(key, payload.translatedText);
+      } else {
+        S.map.delete(key);
+      }
+      if (!(S.payloadBySegment instanceof Map)) {
+        S.payloadBySegment = new Map();
+      }
+      if (payload.segmentID !== undefined) {
+        S.payloadBySegment.set(String(payload.segmentID), { key: key, payload: payload });
+      }
+      return key;
+    };
+  }
+
+  if (typeof S.setInitialPayloads !== 'function') {
+    S.setInitialPayloads = function(payloads, opts) {
+      if (!Array.isArray(payloads)) return 'invalid_payloads';
+      S.map = new Map();
+      S.payloadBySegment = new Map();
+      let count = 0;
+      for (const item of payloads) {
+        const key = S._syncPayload(item);
+        if (key) count++;
+      }
+      const behavior = opts && opts.behavior;
+      if (behavior === 'restart') {
+        S.disableObserver && S.disableObserver();
+        S.enableObserver && S.enableObserver();
+      } else if (behavior === 'disable') {
+        S.disableObserver && S.disableObserver();
+      }
+      return 'payloads_set:' + count;
+    };
+  }
+
+  if (typeof S.upsertPayload !== 'function') {
+    S.upsertPayload = function(payload, opts) {
+      if (!payload || typeof payload.originalText !== 'string') return 'invalid_payload';
+      const key = S._syncPayload(payload);
+      const applyImmediately = opts && opts.applyImmediately === true;
+      const highlight = opts && opts.highlight === true;
+      const root = opts && opts.root ? opts.root : null;
+      const schedule = opts && opts.schedule === true;
+      let applied = 0;
+      if (applyImmediately) {
+        applied = S._applyForKey(key, root);
+      } else if (schedule !== false) {
+        S._scheduleApply(root);
+      }
+      if (highlight && window.MT && typeof window.MT.HILITE === 'function') {
+        try { window.MT.HILITE(String(payload.segmentID)); } catch (e) { console.warn('[InlineReplacer] highlight failed', e); }
+      }
+      if (applyImmediately && S.enableObserver) { S.enableObserver(); }
+      return 'upsert:' + key + ':' + applied;
+    };
+  }
+
+  return S;
+})()
+"""#
+    }()
+
+    private let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return encoder
+    }()
+
+    private func observerString(for behavior: InlineObserverBehavior) -> String {
+        switch behavior {
+        case .keep: return "keep"
+        case .restart: return "restart"
+        case .disable: return "disable"
+        }
+    }
+
+    func setPairs(
+        _ payloads: [TranslationStreamPayload],
+        using exec: WebViewScriptExecutor,
+        observer: InlineObserverBehavior
+    ) {
+        guard let data = try? encoder.encode(payloads),
               let json = String(data: data, encoding: .utf8) else { return }
 
         let js = """
-        (function(){
-          const P = \(json);
-          const norm = s => (s||'').replace(/\\s+/g,' ').trim();
-          const map = new Map(); for (const p of P) map.set(norm(p.o), p.t);
-
-          if (!window.__afmInline) window.__afmInline = {};
-          const S = window.__afmInline;
-          S.norm = norm;
-          S.map = map;
-
-          // 스킵: script/style/textarea/contenteditable 내부는 제외
-          S.shouldSkipNode = (node) => {
-            if (!node || node.nodeType !== Node.TEXT_NODE) return true;
-            const txt = node.nodeValue;
-            if (!txt || !txt.trim()) return true;
-            const el = node.parentElement;
-            if (!el) return true;
-            if (el.closest('script,style,textarea,[contenteditable]')) return true;
-            return false;
-          };
-
-          S.tryReplaceTextNode = (node) => {
-            if (S.shouldSkipNode(node)) return false;
-
-            // 기존 로직은 __afmApplied 플래그가 true인 노드를 무조건 건너뛰어
-            // 번역 테이블(map)이 바뀌어도 새 텍스트로 갱신되지 않았다.
-            // 저장해 둔 원문(__afmOriginal)을 기준으로 다시 매핑해 항상 최신 치환을 적용한다.
-            const hadApplied = !!node.__afmApplied;
-            const hasStoredOriginal = typeof node.__afmOriginal === 'string';
-            const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
-            const raw = S.norm(original);
-            const translated = S.map.get(raw);
-
-            if (translated) {
-              if (!hadApplied) {
-                node.__afmOriginal = node.nodeValue;
-              } else if (!hasStoredOriginal) {
-                node.__afmOriginal = original;
-              }
-
-              const changed = node.nodeValue !== translated;
-              if (changed) {
-                node.nodeValue = translated;   // 텍스트만 교체 → 이벤트/구조 보존
-              }
-              node.__afmApplied = true;
-              // true를 반환하면 실제 텍스트가 새 번역으로 교체되었거나 이번 호출에서 최초로 번역 플래그를 세운 경우다.
-              return changed || !hadApplied;
-            }
-
-            if (hadApplied && hasStoredOriginal) {
-              const changed = node.nodeValue !== node.__afmOriginal;
-              if (changed) {
-                node.nodeValue = node.__afmOriginal;
-              }
-              node.__afmOriginal = undefined;
-              node.__afmApplied = undefined;
-              // true는 이전 번역을 걷어내고 원문으로 되돌렸다는 뜻이다.
-              return changed;
-            }
-
-            return false;
-          };
-
-          S.applyAll = (root) => {
-            const r = root || document.body || document.documentElement;
-            const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-            let n, count = 0;
-            while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
-            return count;
-          };
-
-          S.restoreAll = (root) => {
-            const r = root || document.body || document.documentElement;
-            const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-            let n, count = 0;
-            while ((n = walker.nextNode())) {
-              if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
-                n.nodeValue = n.__afmOriginal;
-                n.__afmOriginal = undefined;
-                n.__afmApplied = undefined;
-                count++;
-              }
-            }
-            return count;
-          };
-
-          // micro-throttle (attributes 변동 다발 시 병합)
-          S._pending = false;
-          S._scheduleApply = (root) => {
-            if (S._pending) return;
-            S._pending = true;
-            (window.requestAnimationFrame || setTimeout)(() => {
-              S._pending = false;
-              S.applyAll(root);
-            }, 16);
-          };
-
-          S.enableObserver = () => {
-            if (S.observer) return 'exists';
-            S.observer = new MutationObserver(muts => {
-              for (const m of muts) {
-                if (m.type === 'childList') {
-                  m.addedNodes && m.addedNodes.forEach(node => {
-                    if (node.nodeType === Node.TEXT_NODE) { S.tryReplaceTextNode(node); }
-                    else if (node.nodeType === Node.ELEMENT_NODE) { S.applyAll(node); }
-                  });
-                } else if (m.type === 'characterData') {
-                  if (m.target && m.target.nodeType === Node.TEXT_NODE) S.tryReplaceTextNode(m.target);
-                } else if (m.type === 'attributes') {
-                  // class/open/hidden/style/aria-expanded 변동 시 해당 서브트리에 재적용
-                  const el = m.target;
-                  if (el && el.nodeType === Node.ELEMENT_NODE) S._scheduleApply(el);
-                }
-              }
-            });
-            const root = document.body || document.documentElement;
-            S.observer.observe(root, {
-              subtree: true,
-              childList: true,
-              characterData: true,
-              attributes: true,
-              attributeFilter: ['class','open','hidden','style','aria-expanded']
-            });
-            return 'enabled';
-          };
-
-          S.disableObserver = () => {
-            if (S.observer) { S.observer.disconnect(); S.observer = null; return 'disabled'; }
-            return 'noop';
-          };
-
-          return 'pairs_set:' + S.map.size;
-        })();
+        (function(payloads, behavior){
+          const S = \(WebViewInlineReplacer.ensureScript);
+          if (!S || !S.setInitialPayloads) return 'no_state';
+          return S.setInitialPayloads(payloads, { behavior: behavior });
+        })(\(json), '\(observerString(for: observer))');
         """
-        Task {
-            _ = try? await exec.runJS(js)
-        }
+
+        Task { _ = try? await exec.runJS(js) }
     }
 
     func apply(using exec: WebViewScriptExecutor, observe: Bool) {
         let js = """
-        (function(){
-          const S = window.__afmInline;
-          if (!S || !S.map) return 'no_state';
-          const c = S.applyAll(document.body || document.documentElement);
-          if (\(observe ? "true" : "false")) S.enableObserver();
-          return 'applied:' + c;
-        })();
+        (function(observe){
+          const S = \(WebViewInlineReplacer.ensureScript);
+          if (!S || !S.applyAll) return 'no_state';
+          const count = S.applyAll(document.body || document.documentElement);
+          if (observe && S.enableObserver) S.enableObserver();
+          return 'applied:' + count;
+        })(\(observe ? "true" : "false"));
         """
+
+        Task { _ = try? await exec.runJS(js) }
+    }
+
+    func upsert(
+        payload: TranslationStreamPayload,
+        using exec: WebViewScriptExecutor,
+        applyImmediately: Bool,
+        highlight: Bool
+    ) {
+        guard let data = try? encoder.encode(payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let js = """
+        (function(payload, applyNow, highlight){
+          const S = \(WebViewInlineReplacer.ensureScript);
+          if (!S || !S.upsertPayload) return 'no_state';
+          return S.upsertPayload(payload, { applyImmediately: applyNow, highlight: highlight, schedule: true });
+        })(\(json), \(applyImmediately ? "true" : "false"), \(highlight ? "true" : "false"));
+        """
+
         Task { _ = try? await exec.runJS(js) }
     }
 
     func restore(using exec: WebViewScriptExecutor) {
         let js = """
         (function(){
-          const S = window.__afmInline;
-          if (!S) return 'no_state';
-          S.disableObserver && S.disableObserver();
-          const c = S.restoreAll(document.body || document.documentElement);
-          return 'restored:' + c;
+          const S = \(WebViewInlineReplacer.ensureScript);
+          if (!S || !S.restoreAll) return 'no_state';
+          const count = S.restoreAll(document.body || document.documentElement);
+          if (S.disableObserver) S.disableObserver();
+          return 'restored:' + count;
         })();
         """
+
         Task { _ = try? await exec.runJS(js) }
     }
 }

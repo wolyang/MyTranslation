@@ -69,9 +69,7 @@ final class WKContentExtractor: ContentExtractor {
                     normalizedText: normalized
                 ))
                 idx += 1
-                if out.count >= 300 { break }
             }
-            if out.count >= 300 { break }
         }
         let totalChars = out.reduce(0) { $0 + $1.originalText.count }
         let maxLen = out.map { $0.originalText.count }.max() ?? 0
