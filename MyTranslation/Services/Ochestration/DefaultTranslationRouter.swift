@@ -40,10 +40,9 @@ final class DefaultTranslationRouter: TranslationRouter {
     public func translateStream(
         segments: [Segment],
         options: TranslationOptions,
-        preferredEngine: EngineTag,
+        preferredEngine: TranslationEngineID?,
         progress: @escaping (TranslationStreamEvent) -> Void
     ) async throws -> TranslationStreamSummary {
-        let startedAt = Date()
         let glossaryEntries: [GlossaryEntry]
         if options.applyGlossary {
             glossaryEntries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
@@ -51,10 +50,12 @@ final class DefaultTranslationRouter: TranslationRouter {
             glossaryEntries = []
         }
 
-        let engine = engine(for: preferredEngine)
+        let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
+        let engine = engine(for: engineTag)
         var succeededIDs: [String] = []
         var failedIDs: Set<String> = []
         var pendingSegments: [Segment] = []
+        var cachedCount = 0
         var sequence = 0
 
         for segment in segments {
@@ -65,21 +66,21 @@ final class DefaultTranslationRouter: TranslationRouter {
                     segmentID: segment.id,
                     originalText: segment.originalText,
                     translatedText: hit.text,
-                    engineID: hit.engine,
+                    engineID: hit.engine.rawValue,
                     sequence: sequence
                 )
                 sequence += 1
-                progress(.cached(payload: payload))
+                progress(.init(kind: .cachedHit, timestamp: Date()))
+                progress(.init(kind: .final(segment: payload), timestamp: Date()))
                 succeededIDs.append(segment.id)
+                cachedCount += 1
             } else {
                 pendingSegments.append(segment)
             }
         }
 
         if pendingSegments.isEmpty == false {
-            for segment in pendingSegments {
-                progress(.scheduled(segmentID: segment.id))
-            }
+            progress(.init(kind: .requestScheduled, timestamp: Date()))
 
             let termMasker = TermMasker()
             let maskedResults = pendingSegments.map { segment in
@@ -125,11 +126,12 @@ final class DefaultTranslationRouter: TranslationRouter {
                         segmentID: originalSegment.id,
                         originalText: originalSegment.originalText,
                         translatedText: finalResult.text,
-                        engineID: finalResult.engine,
+                        engineID: finalResult.engine.rawValue,
                         sequence: sequence
                     )
                     sequence += 1
-                    progress(.final(payload))
+                    progress(.init(kind: .partial(segment: payload), timestamp: Date()))
+                    progress(.init(kind: .final(segment: payload), timestamp: Date()))
                     succeededIDs.append(originalSegment.id)
 
                     let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
@@ -140,31 +142,36 @@ final class DefaultTranslationRouter: TranslationRouter {
             } catch {
                 for segment in pendingSegments where failedIDs.contains(segment.id) == false {
                     failedIDs.insert(segment.id)
-                    progress(.failure(segmentID: segment.id, error: error))
+                    progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
                 }
-                let failedSummary = TranslationStreamSummary(
-                    engineID: engine.tag,
-                    totalSegments: segments.count,
-                    succeededSegmentIDs: succeededIDs,
-                    failedSegmentIDs: Array(failedIDs),
-                    startedAt: startedAt,
-                    finishedAt: Date()
+                let summary = TranslationStreamSummary(
+                    totalCount: segments.count,
+                    succeededCount: succeededIDs.count,
+                    failedCount: failedIDs.count,
+                    cachedCount: cachedCount
                 )
-                progress(.completed(failedSummary))
-                return failedSummary
+                progress(.init(kind: .completed, timestamp: Date()))
+                return summary
             }
         }
 
         let summary = TranslationStreamSummary(
-            engineID: engine.tag,
-            totalSegments: segments.count,
-            succeededSegmentIDs: succeededIDs,
-            failedSegmentIDs: Array(failedIDs),
-            startedAt: startedAt,
-            finishedAt: Date()
+            totalCount: segments.count,
+            succeededCount: succeededIDs.count,
+            failedCount: failedIDs.count,
+            cachedCount: cachedCount
         )
-        progress(.completed(summary))
+        progress(.init(kind: .completed, timestamp: Date()))
         return summary
+    }
+
+    func translate(
+        segments: [Segment],
+        options: TranslationOptions,
+        preferredEngine: EngineTag
+    ) async throws -> [TranslationResult] {
+        let engine = engine(for: preferredEngine)
+        return try await engine.translate(segments, options: options)
     }
 
     private func engine(for tag: EngineTag) -> TranslationEngine {
