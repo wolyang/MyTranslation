@@ -54,7 +54,6 @@ final class DefaultGlossaryStore: GlossaryStore {
                         let full = f + s + g
                         let fullKo = [p.familyTarget, p.givenTarget].compactMap { $0 }.joined(separator: " ")
                         if !fullKo.isEmpty {
-                            print("[FETCH PERSON] [pid: \(p.personId)] \(full): \(fullKo)")
                             entries.append(.init(source: full, target: fullKo, category: .person, personId: p.personId))
                         }
                     }
@@ -63,12 +62,10 @@ final class DefaultGlossaryStore: GlossaryStore {
             // 단일 성/이름
             if let ft = p.familyTarget {
                 for fs in p.familySources {
-                    print("[FETCH PERSON] [pid: \(p.personId)] \(fs): \(ft)")
                     entries.append(.init(source: fs, target: ft, category: .person, personId: p.personId)) }
             }
             if let gt = p.givenTarget {
                 for gs in p.givenSources {
-                    print("[FETCH PERSON] [pid: \(p.personId)] \(gs): \(gt)")
                     entries.append(.init(source: gs, target: gt, category: .person, personId: p.personId)) }
             }
             // alias
@@ -76,7 +73,6 @@ final class DefaultGlossaryStore: GlossaryStore {
                 let tgt = a.target // nil 가능
                 for s in a.sources {
                     if let tgt = tgt, !tgt.isEmpty {
-                        print("[FETCH PERSON] [pid: \(p.personId)] \(s): \(tgt)")
                         entries.append(.init(source: s, target: tgt, category: .person, personId: p.personId))
                     }
                 }

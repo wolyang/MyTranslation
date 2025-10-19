@@ -550,6 +550,21 @@
       "category": "캐릭터명"
     },
     {
+      "source": "伏井出矽",
+      "target": "후쿠이데 케이",
+      "category": "캐릭터명"
+    },
+    {
+      "source": "伏井出k",
+      "target": "후쿠이데 케이",
+      "category": "캐릭터명"
+    },
+    {
+      "source": "伊贺栗令人",
+      "target": "이가구리 레이토",
+      "category": "캐릭터명"
+    },
+    {
       "source": "凑活海",
       "target": "미나토 카츠미",
       "category": "캐릭터명"
@@ -1387,49 +1402,6 @@
             "陆"
           ],
           "target": "리쿠"
-        }
-      },
-      "aliases": []
-    },
-    {
-      "person_id": "7",
-      "name": {
-        "family": {
-          "source": [
-            "伏井出"
-          ],
-          "target": "후쿠이데"
-        },
-        "given": {
-          "source": [
-            "矽"
-          ],
-          "target": "케이"
-        }
-      },
-      "aliases": [
-        {
-          "source": [
-            "伏井出k"
-          ],
-          "target": "후쿠이데 케이"
-        }
-      ]
-    },
-    {
-      "person_id": "8",
-      "name": {
-        "family": {
-          "source": [
-            "伊贺栗"
-          ],
-          "target": "이가구리"
-        },
-        "given": {
-          "source": [
-            "令人"
-          ],
-          "target": "레이토"
         }
       },
       "aliases": []

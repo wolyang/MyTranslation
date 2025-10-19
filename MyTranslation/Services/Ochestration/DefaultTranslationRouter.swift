@@ -94,6 +94,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             for (index, pack) in maskedPacks.enumerated() {
                 try Task.checkCancellation()
                 let personQueues = maskedResults[index].personQueues
+<<<<<<< HEAD
                 let originalSegment = pendingSegments[index]
                 let maskedSegment = Segment(
                     id: pack.seg.id,
@@ -102,6 +103,29 @@ final class DefaultTranslationRouter: TranslationRouter {
                     originalText: pack.masked,
                     normalizedText: pack.seg.normalizedText
                 )
+=======
+                let raw = result.text
+                let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+                let collapsedBefore = termMasker.collapseSpacesAroundTokensNearPunct(in: corrected, tokens: Array(pack.locks.keys))
+                let unmasked = termMasker.unlockTermsSafely(
+                    collapsedBefore,
+                    locks: pack.locks,
+                    personQueues: personQueues
+                )
+                let collapsedAfter = termMasker.collapseSpacesAroundReplacementsNearPunct(in: unmasked, replacements: pack.locks.mapValues({ $0.target
+                }))
+                let hanCount = collapsedAfter.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                let residual = Double(hanCount) / Double(max(collapsedAfter.count, 1))
+                return TranslationResult(
+                    id: result.id,
+                    segmentID: result.segmentID,
+                    engine: result.engine,
+                    text: collapsedAfter,
+                    residualSourceRatio: residual,
+                    createdAt: result.createdAt
+                )
+            }
+>>>>>>> main
 
                 let scheduledPayload = TranslationStreamPayload(
                     segmentID: originalSegment.id,
