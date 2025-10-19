@@ -71,7 +71,9 @@ final class DefaultTranslationRouter: TranslationRouter {
                 )
                 sequence += 1
                 progress(.init(kind: .cachedHit, timestamp: Date()))
+                await Task.yield()
                 progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                await Task.yield()
                 succeededIDs.append(segment.id)
                 cachedCount += 1
             } else {
@@ -81,28 +83,47 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         if pendingSegments.isEmpty == false {
             progress(.init(kind: .requestScheduled, timestamp: Date()))
+            await Task.yield()
 
             let termMasker = TermMasker()
             let maskedResults = pendingSegments.map { segment in
                 termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
             }
             let maskedPacks = maskedResults.map { $0.pack }
-            let maskedSegments = maskedPacks.map { item in
-                Segment(
-                    id: item.seg.id,
-                    url: item.seg.url,
-                    indexInPage: item.seg.indexInPage,
-                    originalText: item.masked,
-                    normalizedText: item.seg.normalizedText
-                )
-            }
 
-            do {
-                let engineResults = try await engine.translate(maskedSegments, options: options)
-                for (index, result) in engineResults.enumerated() {
-                    try Task.checkCancellation()
-                    let pack = maskedPacks[index]
-                    let personQueues = maskedResults[index].personQueues
+            for (index, pack) in maskedPacks.enumerated() {
+                try Task.checkCancellation()
+                let personQueues = maskedResults[index].personQueues
+                let originalSegment = pendingSegments[index]
+                let maskedSegment = Segment(
+                    id: pack.seg.id,
+                    url: pack.seg.url,
+                    indexInPage: pack.seg.indexInPage,
+                    originalText: pack.masked,
+                    normalizedText: pack.seg.normalizedText
+                )
+
+                let scheduledPayload = TranslationStreamPayload(
+                    segmentID: originalSegment.id,
+                    originalText: originalSegment.originalText,
+                    translatedText: nil,
+                    engineID: engine.tag.rawValue,
+                    sequence: sequence
+                )
+                sequence += 1
+                progress(.init(kind: .partial(segment: scheduledPayload), timestamp: Date()))
+                await Task.yield()
+
+                do {
+                    let engineResults = try await engine.translate([maskedSegment], options: options)
+                    guard let result = engineResults.first else {
+                        if failedIDs.insert(originalSegment.id).inserted {
+                            progress(.init(kind: .failed(segmentID: originalSegment.id, error: .engineFailure(code: nil)), timestamp: Date()))
+                            await Task.yield()
+                        }
+                        continue
+                    }
+
                     let raw = result.text
                     let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
                     let unmasked = termMasker.unlockTermsSafely(
@@ -121,7 +142,6 @@ final class DefaultTranslationRouter: TranslationRouter {
                         createdAt: result.createdAt
                     )
 
-                    let originalSegment = pendingSegments[index]
                     let payload = TranslationStreamPayload(
                         segmentID: originalSegment.id,
                         originalText: originalSegment.originalText,
@@ -130,28 +150,30 @@ final class DefaultTranslationRouter: TranslationRouter {
                         sequence: sequence
                     )
                     sequence += 1
-                    progress(.init(kind: .partial(segment: payload), timestamp: Date()))
                     progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                    await Task.yield()
                     succeededIDs.append(originalSegment.id)
 
                     let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
                     cache.save(result: finalResult, forKey: cacheKey)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    for segment in pendingSegments[index...] where failedIDs.contains(segment.id) == false {
+                        failedIDs.insert(segment.id)
+                        progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
+                        await Task.yield()
+                    }
+                    let summary = TranslationStreamSummary(
+                        totalCount: segments.count,
+                        succeededCount: succeededIDs.count,
+                        failedCount: failedIDs.count,
+                        cachedCount: cachedCount
+                    )
+                    progress(.init(kind: .completed, timestamp: Date()))
+                    await Task.yield()
+                    return summary
                 }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                for segment in pendingSegments where failedIDs.contains(segment.id) == false {
-                    failedIDs.insert(segment.id)
-                    progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
-                }
-                let summary = TranslationStreamSummary(
-                    totalCount: segments.count,
-                    succeededCount: succeededIDs.count,
-                    failedCount: failedIDs.count,
-                    cachedCount: cachedCount
-                )
-                progress(.init(kind: .completed, timestamp: Date()))
-                return summary
             }
         }
 
@@ -162,6 +184,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             cachedCount: cachedCount
         )
         progress(.init(kind: .completed, timestamp: Date()))
+        await Task.yield()
         return summary
     }
 
