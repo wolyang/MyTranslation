@@ -147,8 +147,7 @@ final class BrowserViewModel: ObservableObject {
     func applyAIImproved() {
         guard let seg = selectedSegment, let improved = pendingImproved, let web = attachedWebView else { return }
         let exec = WKWebViewScriptAdapter(webView: web)
-        replacer.setPairs([(original: seg.originalText, translated: improved)], using: exec)
-        replacer.apply(using: exec, observe: false)
+        replacer.upsertPair((original: seg.originalText, translated: improved), using: exec, immediateApply: true)
         if let i = lastResults.firstIndex(where: { $0.segmentID == seg.id }) {
             let previous = lastResults[i]
             let updated = TranslationResult(
@@ -236,7 +235,7 @@ final class BrowserViewModel: ObservableObject {
                         return (seg.originalText, res.text)
                     }
                 // 1) 페어 등록
-                replacer.setPairs(pairs, using: exec)
+                replacer.setPairs(pairs, using: exec, observer: .restart)
                 // 2) 적용 + 옵저버 켜기(더 보기 등 동적 치환)
                 replacer.apply(using: exec, observe: true)
 
@@ -320,7 +319,7 @@ final class BrowserViewModel: ObservableObject {
             guard !res.text.isEmpty else { return nil }
             return (seg.originalText, res.text)
         }
-        replacer.setPairs(pairs, using: exec)
+        replacer.setPairs(pairs, using: exec, observer: .restart)
         replacer.apply(using: exec, observe: true)
         lastSegments = state.segments
         lastResults = cachedResults
