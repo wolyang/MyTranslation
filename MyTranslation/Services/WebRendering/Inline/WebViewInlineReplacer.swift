@@ -16,62 +16,113 @@ final class WebViewInlineReplacer: InlineReplacer {
   if (!window.__afmInline) window.__afmInline = {};
   const S = window.__afmInline;
 
-  if (typeof S.norm !== 'function') {
-    S.norm = function(s){ return (s || '').replace(/\s+/g, ' ').trim(); };
-  }
-
-  if (!(S.map instanceof Map)) {
-    S.map = new Map();
+  if (!(S.translationBySid instanceof Map)) {
+    S.translationBySid = new Map();
   }
 
   if (!(S.payloadBySegment instanceof Map)) {
     S.payloadBySegment = new Map();
   }
 
+  if (typeof S._getSegmentElement !== 'function') {
+    S._getSegmentElement = function(node) {
+      if (!node) return null;
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        if (node.matches && node.matches('[data-seg-id]')) return node;
+        if (node.closest) {
+          const wrap = node.closest('[data-seg-id]');
+          if (wrap) return wrap;
+        }
+        return null;
+      }
+      if (node.nodeType === Node.TEXT_NODE) {
+        const parent = node.parentElement;
+        if (!parent) return null;
+        if (parent.matches && parent.matches('[data-seg-id]')) return parent;
+        if (parent.closest) {
+          const wrap = parent.closest('[data-seg-id]');
+          if (wrap) return wrap;
+        }
+      }
+      return null;
+    };
+  }
+
+  if (typeof S._getSegmentId !== 'function') {
+    S._getSegmentId = function(node) {
+      if (!node) return null;
+      if (node.__afmSegmentId) return String(node.__afmSegmentId);
+      const element = S._getSegmentElement(node);
+      if (element && element.dataset && element.dataset.segId) {
+        const sid = String(element.dataset.segId);
+        element.__afmSegmentId = sid;
+        node.__afmSegmentId = sid;
+        return sid;
+      }
+      return null;
+    };
+  }
+
   if (typeof S.shouldSkipNode !== 'function') {
     S.shouldSkipNode = function(node) {
       if (!node || node.nodeType !== Node.TEXT_NODE) return true;
+      if (S._getSegmentId(node)) return false;
       const txt = node.nodeValue;
       if (!txt || !txt.trim()) return true;
       const el = node.parentElement;
       if (!el) return true;
-      if (el.closest('script,style,textarea,[contenteditable]')) return true;
+      if (el.closest && el.closest('script,style,textarea,[contenteditable]')) return true;
       return false;
     };
   }
 
-  if (typeof S.tryReplaceTextNode !== 'function') {
-    S.tryReplaceTextNode = function(node) {
-      if (S.shouldSkipNode(node)) return false;
+  if (typeof S._collectSegmentElements !== 'function') {
+    S._collectSegmentElements = function(root) {
+      if (!root) return [];
+      if (root.nodeType === Node.TEXT_NODE) {
+        const el = S._getSegmentElement(root);
+        return el ? [el] : [];
+      }
+      const out = [];
+      if (root.nodeType === Node.ELEMENT_NODE && root.matches && root.matches('[data-seg-id]')) {
+        out.push(root);
+      }
+      const list = root.querySelectorAll ? root.querySelectorAll('[data-seg-id]') : [];
+      for (let i = 0; i < list.length; i++) out.push(list[i]);
+      return out;
+    };
+  }
 
-      const hadApplied = !!node.__afmApplied;
-      const hasStoredOriginal = typeof node.__afmOriginal === 'string';
-      const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
-      const raw = S.norm(original);
-      const translated = S.map.get(raw);
+  if (typeof S._applySegmentElement !== 'function') {
+    S._applySegmentElement = function(element, sid) {
+      if (!element || !sid) return false;
+      element.__afmSegmentId = sid;
+      const hasTranslation = S.translationBySid instanceof Map && S.translationBySid.has(sid);
+      const translated = hasTranslation ? S.translationBySid.get(sid) : null;
 
-      if (translated) {
-        if (!hadApplied) {
-          node.__afmOriginal = node.nodeValue;
-        } else if (!hasStoredOriginal) {
-          node.__afmOriginal = original;
+      if (hasTranslation && typeof translated === 'string' && translated.length) {
+        if (element.__afmAppliedBy && element.__afmAppliedBy !== sid) return false;
+        if (typeof element.__afmOriginalText !== 'string') {
+          element.__afmOriginalText = element.textContent;
         }
-
-        const changed = node.nodeValue !== translated;
+        const changed = element.textContent !== translated;
         if (changed) {
-          node.nodeValue = translated;
+          // Use SID-based replacement (no substring matching)
+          element.textContent = translated;
         }
-        node.__afmApplied = true;
-        return changed || !hadApplied;
+        element.__afmAppliedBy = sid;
+        element.__afmApplied = true;
+        return changed;
       }
 
-      if (hadApplied && hasStoredOriginal) {
-        const changed = node.nodeValue !== node.__afmOriginal;
+      if (element.__afmAppliedBy === sid && typeof element.__afmOriginalText === 'string') {
+        const changed = element.textContent !== element.__afmOriginalText;
         if (changed) {
-          node.nodeValue = node.__afmOriginal;
+          element.textContent = element.__afmOriginalText;
         }
-        node.__afmOriginal = undefined;
-        node.__afmApplied = undefined;
+        element.__afmAppliedBy = undefined;
+        element.__afmApplied = undefined;
+        element.__afmOriginalText = undefined;
         return changed;
       }
 
@@ -79,29 +130,52 @@ final class WebViewInlineReplacer: InlineReplacer {
     };
   }
 
+  if (typeof S.tryReplaceTextNode !== 'function') {
+    S.tryReplaceTextNode = function(node) {
+      if (S.shouldSkipNode(node)) return false;
+      const element = S._getSegmentElement(node);
+      if (!element) return false;
+      const sid = S._getSegmentId(element);
+      if (!sid) return false;
+      return S._applySegmentElement(element, sid);
+    };
+  }
+
   if (typeof S.applyAll !== 'function') {
     S.applyAll = function(root) {
-      const r = root || document.body || document.documentElement;
+      const r = root || document;
       if (!r) return 0;
-      const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-      let n, count = 0;
-      while ((n = walker.nextNode())) { if (S.tryReplaceTextNode(n)) count++; }
+      const targets = S._collectSegmentElements(r);
+      let count = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const el = targets[i];
+        const sid = S._getSegmentId(el);
+        if (!sid) continue;
+        if (S._applySegmentElement(el, sid)) count++;
+      }
       return count;
     };
   }
 
   if (typeof S.restoreAll !== 'function') {
     S.restoreAll = function(root) {
-      const r = root || document.body || document.documentElement;
+      const r = root || document;
       if (!r) return 0;
-      const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-      let n, count = 0;
-      while ((n = walker.nextNode())) {
-        if (n.__afmApplied && typeof n.__afmOriginal === 'string') {
-          n.nodeValue = n.__afmOriginal;
-          n.__afmOriginal = undefined;
-          n.__afmApplied = undefined;
-          count++;
+      const targets = S._collectSegmentElements(r);
+      let count = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const el = targets[i];
+        const sid = S._getSegmentId(el);
+        if (!sid) continue;
+        if (el.__afmAppliedBy === sid && typeof el.__afmOriginalText === 'string') {
+          const changed = el.textContent !== el.__afmOriginalText;
+          if (changed) {
+            el.textContent = el.__afmOriginalText;
+          }
+          el.__afmAppliedBy = undefined;
+          el.__afmApplied = undefined;
+          el.__afmOriginalText = undefined;
+          count += changed ? 1 : 0;
         }
       }
       return count;
@@ -120,17 +194,18 @@ final class WebViewInlineReplacer: InlineReplacer {
     };
   }
 
-  if (typeof S._applyForKey !== 'function') {
-    S._applyForKey = function(key, root) {
-      const r = root || document.body || document.documentElement;
+  if (typeof S._applyForSegment !== 'function') {
+    S._applyForSegment = function(sid, root) {
+      if (!sid) return 0;
+      const r = root || document;
       if (!r) return 0;
-      const walker = document.createTreeWalker(r, NodeFilter.SHOW_TEXT, null);
-      let n, count = 0;
-      while ((n = walker.nextNode())) {
-        const source = typeof n.__afmOriginal === 'string' ? n.__afmOriginal : n.nodeValue;
-        if (S.norm(source) === key) {
-          if (S.tryReplaceTextNode(n)) count++;
-        }
+      const targets = S._collectSegmentElements(r);
+      let count = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const el = targets[i];
+        const currentSid = S._getSegmentId(el);
+        if (currentSid !== sid) continue;
+        if (S._applySegmentElement(el, sid)) count++;
       }
       return count;
     };
@@ -177,33 +252,30 @@ final class WebViewInlineReplacer: InlineReplacer {
 
   if (typeof S._syncPayload !== 'function') {
     S._syncPayload = function(payload) {
-      if (!payload || typeof payload.originalText !== 'string') return '';
-      const key = S.norm(payload.originalText);
-      if (!key) return key;
-      if (typeof payload.translatedText === 'string' && payload.translatedText.length) {
-        S.map.set(key, payload.translatedText);
-      } else {
-        S.map.delete(key);
-      }
+      if (!payload || payload.segmentID === undefined) return '';
+      const sid = String(payload.segmentID);
       if (!(S.payloadBySegment instanceof Map)) {
         S.payloadBySegment = new Map();
       }
-      if (payload.segmentID !== undefined) {
-        S.payloadBySegment.set(String(payload.segmentID), { key: key, payload: payload });
+      S.payloadBySegment.set(sid, payload);
+      if (typeof payload.translatedText === 'string' && payload.translatedText.length) {
+        S.translationBySid.set(sid, payload.translatedText);
+      } else {
+        S.translationBySid.delete(sid);
       }
-      return key;
+      return sid;
     };
   }
 
   if (typeof S.setInitialPayloads !== 'function') {
     S.setInitialPayloads = function(payloads, opts) {
       if (!Array.isArray(payloads)) return 'invalid_payloads';
-      S.map = new Map();
+      S.translationBySid = new Map();
       S.payloadBySegment = new Map();
       let count = 0;
       for (const item of payloads) {
-        const key = S._syncPayload(item);
-        if (key) count++;
+        const sid = S._syncPayload(item);
+        if (sid) count++;
       }
       const behavior = opts && opts.behavior;
       if (behavior === 'restart') {
@@ -218,15 +290,15 @@ final class WebViewInlineReplacer: InlineReplacer {
 
   if (typeof S.upsertPayload !== 'function') {
     S.upsertPayload = function(payload, opts) {
-      if (!payload || typeof payload.originalText !== 'string') return 'invalid_payload';
-      const key = S._syncPayload(payload);
+      if (!payload || payload.segmentID === undefined) return 'invalid_payload';
+      const sid = S._syncPayload(payload);
       const applyImmediately = opts && opts.applyImmediately === true;
       const highlight = opts && opts.highlight === true;
       const root = opts && opts.root ? opts.root : null;
       const schedule = opts && opts.schedule === true;
       let applied = 0;
       if (applyImmediately) {
-        applied = S._applyForKey(key, root);
+        applied = S._applyForSegment(sid, root);
       } else if (schedule !== false) {
         S._scheduleApply(root);
       }
@@ -234,7 +306,7 @@ final class WebViewInlineReplacer: InlineReplacer {
         try { window.MT.HILITE(String(payload.segmentID)); } catch (e) { console.warn('[InlineReplacer] highlight failed', e); }
       }
       if (applyImmediately && S.enableObserver) { S.enableObserver(); }
-      return 'upsert:' + key + ':' + applied;
+      return 'upsert:' + sid + ':' + applied;
     };
   }
 
@@ -242,6 +314,8 @@ final class WebViewInlineReplacer: InlineReplacer {
 })()
 """#
     }()
+
+    static func scriptForTesting() -> String { ensureScript }
 
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()

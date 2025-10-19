@@ -45,8 +45,8 @@ final class SelectionBridge: NSObject {
         print("[MARK] returned =", result ?? "nil")
     }
 
-    private func injectBootstrap() {
-        let js = #"""
+    private static let bootstrapScript: String = {
+        return #"""
         (function () {
           if (window.MT && window.MT.BOOT_OK) return;
           window.MT = window.MT || {};
@@ -228,6 +228,17 @@ final class SelectionBridge: NSObject {
             return { node: last?.node || null, offset: (last ? last.end - last.start : 0) };
           }
 
+          function tagTextNodesWithSegment(root, id) {
+            if (!root || !id) return;
+            try {
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+              let node;
+              while ((node = walker.nextNode())) {
+                node.__afmSegmentId = id;
+              }
+            } catch (_) {}
+          }
+
           function markBlockWithRanges(block, patterns) {
             const { text, map } = buildIndex(block);
             if (!text || !map.length) return 0;
@@ -269,9 +280,11 @@ final class SelectionBridge: NSObject {
 
                 const span = document.createElement('span');
                 span.setAttribute('data-seg-id', id);
+                span.__afmSegmentId = id;
                 // 안전 삽입: extract → append → insert
                 const frag = r.extractContents();
                 span.appendChild(frag);
+                tagTextNodesWithSegment(span, id);
                 r.insertNode(span);
                 hits++;
               } catch (_) {
@@ -354,6 +367,12 @@ final class SelectionBridge: NSObject {
           window.MT.BOOT_OK = true;
         })();
         """#
+    }()
+
+    static func scriptForTesting() -> String { bootstrapScript }
+
+    private func injectBootstrap() {
+        let js = SelectionBridge.bootstrapScript
         let userScript = WKUserScript(
             source: js,
             injectionTime: .atDocumentEnd,
