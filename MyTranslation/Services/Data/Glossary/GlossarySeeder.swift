@@ -53,8 +53,8 @@ enum GlossarySeeder {
             person.givenSources  = uniqSorted(p.name.given.source)
             person.familyTarget  = p.name.family.target
             person.givenTarget   = p.name.given.target
-            person.familyVariants = []
-            person.givenVariants  = []
+            person.familyVariants = uniqSorted(p.name.family.variants)
+            person.givenVariants  = uniqSorted(p.name.given.variants)
 
             // aliases: target별로 source 병합
             var exByTarget = Dictionary(uniqueKeysWithValues: person.aliases.map { (($0.target ?? "<nil>"), $0) })
@@ -63,10 +63,10 @@ enum GlossarySeeder {
                 let key = a.target ?? "<nil>"
                 if let ex = exByTarget[key] {
                     ex.sources = uniqSorted(ex.sources + a.source)
-                    ex.variants = []
+                    ex.variants = uniqSorted(ex.variants + a.variants)
                     newAliases.append(ex)
                 } else {
-                    newAliases.append(Alias(sources: uniqSorted(a.source), target: a.target, variants: [], person: person))
+                    newAliases.append(Alias(sources: uniqSorted(a.source), target: a.target, variants: uniqSorted(a.variants), person: person))
                 }
             }
             person.aliases = newAliases
@@ -81,9 +81,9 @@ enum GlossarySeeder {
             if let ex = bySource[t.source] {
                 ex.target = t.target
                 ex.category = t.category
-                ex.variants = []
+                ex.variants = uniqSorted(t.variants)
             } else {
-                let nt = Term(source: t.source, target: t.target, category: t.category, variants: [])
+                let nt = Term(source: t.source, target: t.target, category: t.category, variants: uniqSorted(t.variants))
                 ctx.insert(nt); bySource[t.source] = nt
             }
         }

@@ -77,9 +77,13 @@ final class DefaultGlossaryStore: GlossaryStore {
                 var combos: [String] = []
                 for family in familyTargets {
                     for given in givenTargets {
-                        let candidate = "\(family) \(given)"
-                        if !combos.contains(candidate) {
-                            combos.append(candidate)
+                        let spaced = "\(family) \(given)"
+                        if !combos.contains(spaced) {
+                            combos.append(spaced)
+                        }
+                        let tight = "\(family)\(given)"
+                        if !tight.isEmpty, !combos.contains(tight) {
+                            combos.append(tight)
                         }
                     }
                 }
