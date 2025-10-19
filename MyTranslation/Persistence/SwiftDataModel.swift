@@ -7,10 +7,12 @@ final class Term {
     @Attribute(.unique) var source: String
     var target: String
     var category: String
-    init(source: String, target: String, category: String) {
+    var variants: [String]
+    init(source: String, target: String, category: String, variants: [String] = []) {
         self.source = source
         self.target = target
         self.category = category
+        self.variants = variants
     }
 }
 
@@ -19,8 +21,10 @@ final class Person {
     @Attribute(.unique) var personId: String
     var familySources: [String]
     var familyTarget: String?
+    var familyVariants: [String]
     var givenSources:  [String]
     var givenTarget:   String?
+    var givenVariants: [String]
 
     // 이명/별칭 (동일 target 아래 여러 source를 묶음)
     @Relationship(deleteRule: .cascade, inverse: \Alias.person)
@@ -29,14 +33,18 @@ final class Person {
     init(personId: String,
          familySources: [String] = [],
          familyTarget: String? = nil,
+         familyVariants: [String] = [],
          givenSources: [String] = [],
          givenTarget: String? = nil,
+         givenVariants: [String] = [],
          aliases: [Alias] = []) {
         self.personId = personId
         self.familySources = familySources
         self.familyTarget  = familyTarget
+        self.familyVariants = familyVariants
         self.givenSources  = givenSources
         self.givenTarget   = givenTarget
+        self.givenVariants = givenVariants
         self.aliases       = aliases
     }
 }
@@ -45,11 +53,13 @@ final class Person {
 final class Alias {
     var sources: [String]
     var target:  String?
+    var variants: [String]
     @Relationship var person: Person?
 
-    init(sources: [String], target: String?, person: Person? = nil) {
+    init(sources: [String], target: String?, variants: [String] = [], person: Person? = nil) {
         self.sources = sources
         self.target  = target
+        self.variants = variants
         self.person  = person
     }
 }
