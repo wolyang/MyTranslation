@@ -14,22 +14,47 @@ struct URLBarView: View {
     @State private var fieldHeight: CGFloat = 0
     @State private var originalURLBeforeEditing: String = ""
     @State private var didCommitDuringEditing: Bool = false
+    @State private var isShowingEngineOptions: Bool = false
 
     private let maxRecentCount = 8
 
     var body: some View {
-        HStack(spacing: 10) {
-            field
-                .background(fieldHeightReader)
-                .overlay(alignment: .topLeading) {
-                    if shouldShowSuggestions {
-                        suggestions
-                            .offset(y: fieldHeight + 6)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                field
+                    .background(fieldHeightReader)
+                    .overlay(alignment: .topLeading) {
+                        if shouldShowSuggestions {
+                            suggestions
+                                .offset(y: fieldHeight + 6)
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity)
 
-            controlGroup
+                controlGroup
+            }
+
+            if isShowingEngineOptions {
+                EnginePickerOptionsContainer {
+                    EnginePickerOptionsView(
+                        selectedEngine: $selectedEngine,
+                        showOriginal: $showOriginal,
+                        onInteract: endEditing,
+                        onSelectEngine: { engine, wasShowingOriginal in
+                            onSelectEngine(engine, wasShowingOriginal)
+                        },
+                        dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
+                    )
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isShowingEngineOptions)
+        .onChange(of: selectedEngine) { _, _ in
+            isShowingEngineOptions = false
+        }
+        .onChange(of: showOriginal) { _, _ in
+            isShowingEngineOptions = false
         }
     }
 
@@ -79,6 +104,7 @@ struct URLBarView: View {
             if newValue {
                 originalURLBeforeEditing = urlString
                 didCommitDuringEditing = false
+                isShowingEngineOptions = false
             } else if oldValue && didCommitDuringEditing == false {
                 urlString = originalURLBeforeEditing
             }
@@ -89,6 +115,9 @@ struct URLBarView: View {
                 isFocused = true
             } else if !newValue && isFocused {
                 isFocused = false
+            }
+            if newValue {
+                isShowingEngineOptions = false
             }
         }
     }
@@ -131,6 +160,7 @@ struct URLBarView: View {
             EnginePickerButton(
                 selectedEngine: $selectedEngine,
                 showOriginal: $showOriginal,
+                isShowingOptions: $isShowingEngineOptions,
                 onInteract: endEditing,
                 onSelectEngine: { engine, wasShowingOriginal in
                     onSelectEngine(engine, wasShowingOriginal)
@@ -216,15 +246,16 @@ struct URLBarView: View {
 private struct EnginePickerButton: View {
     @Binding var selectedEngine: EngineTag
     @Binding var showOriginal: Bool
+    @Binding var isShowingOptions: Bool
     var onInteract: () -> Void = {}
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
-
-    @State private var isPresentingOptions = false
 
     var body: some View {
         Button {
             onInteract()
-            isPresentingOptions.toggle()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isShowingOptions.toggle()
+            }
         } label: {
             VStack(spacing: 2) {
                 Image(systemName: "globe")
@@ -242,16 +273,20 @@ private struct EnginePickerButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isPresentingOptions, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
-            EnginePickerOptionsView(
-                selectedEngine: $selectedEngine,
-                showOriginal: $showOriginal,
-                onInteract: onInteract,
-                onSelectEngine: onSelectEngine,
-                dismiss: { isPresentingOptions = false }
-            )
+    }
+}
+
+private struct EnginePickerOptionsContainer<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                content()
+            }
         }
-        .presentationCompactAdaptation(.popover)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -273,7 +308,6 @@ private struct EnginePickerOptionsView: View {
                 }
                 dismiss()
             }
-            .padding(.vertical, 8)
 
             Divider()
 
@@ -289,7 +323,6 @@ private struct EnginePickerOptionsView: View {
                     }
                     dismiss()
                 }
-                .padding(.vertical, 8)
 
                 if index < engines.count - 1 {
                     Divider()
@@ -297,13 +330,17 @@ private struct EnginePickerOptionsView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(minWidth: 180)
+        .padding(.vertical, 12)
+        .frame(width: 220, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
         )
-        .padding(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.systemGray4), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.08), radius: 10, y: 6)
     }
 
     private struct OptionButton: View {
@@ -322,6 +359,7 @@ private struct EnginePickerOptionsView: View {
                             .foregroundColor(.accentColor)
                     }
                 }
+                .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
