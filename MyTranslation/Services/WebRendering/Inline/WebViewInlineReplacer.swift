@@ -11,7 +11,7 @@ import Foundation
 /// window.__afmInline.upsertPayload({ segmentID, originalText, translatedText, engineID, sequence }) 형태로 호출된다.
 final class WebViewInlineReplacer: InlineReplacer {
     private static let ensureScript: String = {
-        return """
+        return #"""
 (function(){
   if (!window.__afmInline) window.__afmInline = {};
   const S = window.__afmInline;
@@ -240,7 +240,7 @@ final class WebViewInlineReplacer: InlineReplacer {
 
   return S;
 })()
-"""
+"""#
     }()
 
     private let encoder: JSONEncoder = {
