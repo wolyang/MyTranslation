@@ -12,6 +12,7 @@ struct URLBarView: View {
     @FocusState private var isFocused: Bool
     @AppStorage("recentURLs") private var recentURLsData: Data = Data()
     @State private var fieldHeight: CGFloat = 0
+    @State private var barHeight: CGFloat = 0
     @State private var originalURLBeforeEditing: String = ""
     @State private var didCommitDuringEditing: Bool = false
     @State private var isShowingEngineOptions: Bool = false
@@ -33,7 +34,9 @@ struct URLBarView: View {
 
                 controlGroup
             }
-
+            .background(barHeightReader)
+        }
+        .overlay(alignment: .topLeading) {
             if isShowingEngineOptions {
                 EnginePickerOptionsContainer {
                     EnginePickerOptionsView(
@@ -46,6 +49,7 @@ struct URLBarView: View {
                         dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
                     )
                 }
+                .offset(y: barHeight + 6)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -198,6 +202,16 @@ struct URLBarView: View {
                 .onAppear { fieldHeight = proxy.size.height }
                 .onChange(of: proxy.size.height) { _, newValue in
                     fieldHeight = newValue
+                }
+        }
+    }
+
+    private var barHeightReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { barHeight = proxy.size.height }
+                .onChange(of: proxy.size.height) { _, newValue in
+                    barHeight = newValue
                 }
         }
     }
