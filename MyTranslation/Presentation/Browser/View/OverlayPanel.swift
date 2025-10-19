@@ -40,8 +40,7 @@ private struct OverlayPanelPositioner: View {
             let containerSize = geo.size
             let widthLimit = max(80, min(maxWidth, containerSize.width - margin * 2))
             OverlayPanelView(
-                selectedText: state.selectedText,
-                improvedText: state.improvedText,
+                state: state,
                 onAsk: onAsk,
                 onApply: onApply,
                 onClose: onClose
@@ -80,8 +79,7 @@ private struct OverlayPanelPositioner: View {
 }
 
 private struct OverlayPanelView: View {
-    let selectedText: String
-    let improvedText: String?
+    let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onApply: () -> Void
     let onClose: () -> Void
@@ -89,8 +87,19 @@ private struct OverlayPanelView: View {
     @State private var contentWidth: CGFloat = .zero
     @State private var textSize: CGSize = .zero
 
-    private var displayText: String {
-        improvedText ?? selectedText
+    private var measurementText: String {
+        var blocks: [String] = []
+        if state.showsOriginalSection {
+            blocks.append(sectionMeasurementText(title: "원문", body: state.selectedText))
+        }
+        if let improved = state.improvedText, improved.isEmpty == false {
+            blocks.append(sectionMeasurementText(title: "AI 개선 번역", body: improved))
+        }
+        for translation in state.translations {
+            let body = displayText(for: translation)
+            blocks.append(sectionMeasurementText(title: translation.title, body: body))
+        }
+        return blocks.joined(separator: "\n\n")
     }
 
     private var maxScrollHeight: CGFloat { 160 }
@@ -105,11 +114,11 @@ private struct OverlayPanelView: View {
             Group {
                 if requiresScroll {
                     ScrollView {
-                        textSection
+                        contentSection
                     }
                     .frame(height: min(textSize.height, maxScrollHeight))
                 } else {
-                    textSection
+                    contentSection
                 }
             }
             .scrollIndicators(.never)
@@ -129,7 +138,7 @@ private struct OverlayPanelView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(improvedText == nil)
+                .disabled(state.improvedText == nil)
 
                 Button(action: onClose) {
                     Text("닫기")
@@ -160,28 +169,104 @@ private struct OverlayPanelView: View {
                 contentWidth = width
             }
         }
-        .onChange(of: contentWidth) { _, newWidth in
-            updateMeasuredSize(width: newWidth, text: displayText)
+        .onAppear {
+            updateMeasuredSize(width: contentWidth, text: measurementText)
         }
-        .onChange(of: displayText) { _, newText in
+        .onChange(of: contentWidth) { _, newWidth in
+            updateMeasuredSize(width: newWidth, text: measurementText)
+        }
+        .onChange(of: measurementText) { _, newText in
             updateMeasuredSize(width: contentWidth, text: newText)
         }
     }
 
     @ViewBuilder
-    private var textSection: some View {
-        // 텍스트는 SwiftUI Text로 표시하고, 높이 계산은 NSString.boundingRect를 통해 수행한다.
+    private var contentSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if state.showsOriginalSection {
+                TranslationSectionView(
+                    title: "원문",
+                    text: state.selectedText,
+                    isLoading: false,
+                    errorMessage: nil
+                )
+            }
+            if let improved = state.improvedText, improved.isEmpty == false {
+                TranslationSectionView(
+                    title: "AI 개선 번역",
+                    text: improved,
+                    isLoading: false,
+                    errorMessage: nil
+                )
+            }
+            ForEach(state.translations) { translation in
+                TranslationSectionView(
+                    title: translation.title,
+                    text: translation.text,
+                    isLoading: translation.isLoading,
+                    errorMessage: translation.errorMessage
+                )
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func sectionMeasurementText(title: String, body: String) -> String {
+        "\(title)\n\(body)"
+    }
+
+    private func displayText(for translation: BrowserViewModel.OverlayState.Translation) -> String {
+        if translation.isLoading {
+            return "불러오는 중..."
+        }
+        if let error = translation.errorMessage, error.isEmpty == false {
+            return error
+        }
+        if let text = translation.text, text.isEmpty == false {
+            return text
+        }
+        return "표시할 내용이 없습니다."
+    }
+}
+
+private struct TranslationSectionView: View {
+    let title: String
+    let text: String?
+    let isLoading: Bool
+    let errorMessage: String?
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("선택된 문장")
+            Text(title)
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(displayText)
-                .font(.callout)
+            if isLoading {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.7, anchor: .center)
+                    Text("불러오는 중...")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .multilineTextAlignment(.leading)
+            } else if let errorMessage, errorMessage.isEmpty == false {
+                Text(errorMessage)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let text, text.isEmpty == false {
+                Text(text)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.leading)
+            } else {
+                Text("표시할 내용이 없습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(.vertical, 2)
     }
 }
 

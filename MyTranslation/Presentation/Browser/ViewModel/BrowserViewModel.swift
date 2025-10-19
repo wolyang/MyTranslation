@@ -52,6 +52,7 @@ final class BrowserViewModel: ObservableObject {
 
     private var selectedSegment: Segment?
     private var pendingImproved: String?
+    private var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
 
     @Published var overlayState: OverlayState?
 
@@ -114,18 +115,46 @@ final class BrowserViewModel: ObservableObject {
     func onSegmentSelected(id: String, anchor: CGRect) async {
         print("[onSegmentSelected] id: \(id)")
         guard let webView = attachedWebView, let seg = lastSegments.first(where: { $0.id == id }) else { return }
+        cancelOverlayTranslationTasks()
         self.selectedSegment = seg
         self.pendingImproved = nil
+
+        let targetEngines = overlayTargetEngines(for: showOriginal, selectedEngine: settings.preferredEngine)
+        var translations: [OverlayState.Translation] = []
+        var enginesToFetch: [EngineTag] = []
+
+        for engine in targetEngines {
+            let engineID = engine.rawValue
+            let cached = cachedTranslation(for: seg.id, engineID: engineID)
+            let translation = OverlayState.Translation(
+                engineID: engineID,
+                title: overlaySectionTitle(for: engine),
+                text: cached,
+                isLoading: cached == nil,
+                errorMessage: nil
+            )
+            translations.append(translation)
+            if cached == nil {
+                enginesToFetch.append(engine)
+            }
+        }
+
         self.overlayState = OverlayState(
             segmentID: seg.id,
             selectedText: seg.originalText,
             improvedText: nil,
-            anchor: anchor
+            anchor: anchor,
+            translations: translations,
+            showsOriginalSection: showOriginal == false
         )
 
         let exec = WKWebViewScriptAdapter(webView: webView)
         _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
         _ = try? await exec.runJS(#"window.MT && MT.HILITE && MT.HILITE(\#(String(reflecting: id)));"#)
+
+        for engine in enginesToFetch {
+            startOverlayTranslation(for: engine, segment: seg)
+        }
     }
     
     func askAIForSelected() async {
@@ -216,6 +245,37 @@ final class BrowserViewModel: ObservableObject {
         translationTask = Task { @MainActor [weak self, weak webView] in
             guard let self, let webView else { return }
             await self.startTranslate(on: webView, requestID: requestID)
+        }
+    }
+
+    private func requestTranslation(
+        for segmentIDs: [String],
+        engine: EngineTag,
+        on webView: WKWebView
+    ) {
+        guard segmentIDs.isEmpty == false else { return }
+        guard let url = webView.url,
+              let state = currentPageTranslation,
+              state.url == url else {
+            requestTranslation(on: webView)
+            return
+        }
+
+        let identifierSet = Set(segmentIDs)
+        let segments = state.segments.filter { identifierSet.contains($0.id) }
+        guard segments.isEmpty == false else { return }
+
+        translationTask?.cancel()
+        let requestID = UUID()
+        activeTranslationID = requestID
+        translationTask = Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            await self.startPartialTranslation(
+                segments: segments,
+                engine: engine,
+                on: webView,
+                requestID: requestID
+            )
         }
     }
 
@@ -318,6 +378,73 @@ final class BrowserViewModel: ObservableObject {
             let exec = WKWebViewScriptAdapter(webView: webView)
             replacer.restore(using: exec)
             _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
+        }
+    }
+
+    private func startPartialTranslation(
+        segments: [Segment],
+        engine: EngineTag,
+        on webView: WKWebView,
+        requestID: UUID
+    ) async {
+        guard let url = webView.url else { return }
+        guard activeTranslationID == requestID else { return }
+        translateRunID = requestID.uuidString
+
+        closeOverlay()
+        isTranslating = true
+        hasAttemptedTranslationForCurrentPage = true
+        defer {
+            if self.activeTranslationID == requestID {
+                self.normalizePageScale(webView)
+                self.isTranslating = false
+                self.translationTask = nil
+                self.activeTranslationID = nil
+            }
+        }
+
+        do {
+            let exec = WKWebViewScriptAdapter(webView: webView)
+            try Task.checkCancellation()
+            guard activeTranslationID == requestID else { return }
+
+            guard var state = currentPageTranslation, state.url == url else { return }
+            state.buffersByEngine[engine.rawValue] = state.buffersByEngine[engine.rawValue] ?? .init()
+            state.lastEngineID = engine.rawValue
+            state.failedSegmentIDs.removeAll()
+            state.scheduledSegmentIDs.removeAll()
+            currentPageTranslation = state
+            failedSegmentIDs = state.failedSegmentIDs
+            updateProgress(for: engine.rawValue)
+
+            let opts = TranslationOptions()
+            let summary = try await router.translateStream(
+                segments: segments,
+                options: opts,
+                preferredEngine: engine.rawValue
+            ) { [weak self, weak webView] event in
+                guard let self else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, let webView = webView else { return }
+                    if Task.isCancelled { return }
+                    await self.handleStreamEvent(
+                        event,
+                        url: url,
+                        exec: exec,
+                        requestID: requestID
+                    )
+                }
+            }
+
+            if var updatedState = currentPageTranslation, updatedState.url == url {
+                updatedState.summary = summary
+                currentPageTranslation = updatedState
+                failedSegmentIDs = updatedState.failedSegmentIDs
+                updateProgress(for: engine.rawValue)
+            }
+        } catch {
+            if error is CancellationError { return }
+            print("partial translate error: \(error)")
         }
     }
     
@@ -448,8 +575,11 @@ final class BrowserViewModel: ObservableObject {
             closeOverlay()
         } else {
             let engine = settings.preferredEngine
-            if applyCachedTranslationIfAvailable(for: engine, on: webView) == false {
+            let cacheResult = applyCachedTranslationIfAvailable(for: engine, on: webView)
+            if cacheResult.applied == false {
                 requestTranslation(on: webView)
+            } else if cacheResult.remainingSegmentIDs.isEmpty == false {
+                requestTranslation(for: cacheResult.remainingSegmentIDs, engine: engine, on: webView)
             }
         }
     }
@@ -478,18 +608,33 @@ final class BrowserViewModel: ObservableObject {
         guard let webView = attachedWebView else { return }
         cancelActiveTranslation()
         if wasShowingOriginal { return }
-        if applyCachedTranslationIfAvailable(for: engine, on: webView) == false {
+        let cacheResult = applyCachedTranslationIfAvailable(for: engine, on: webView)
+        if cacheResult.applied == false {
             requestTranslation(on: webView)
+        } else if cacheResult.remainingSegmentIDs.isEmpty == false {
+            requestTranslation(for: cacheResult.remainingSegmentIDs, engine: engine, on: webView)
         }
     }
 
     @discardableResult
-    private func applyCachedTranslationIfAvailable(for engine: EngineTag, on webView: WKWebView) -> Bool {
+    private func applyCachedTranslationIfAvailable(for engine: EngineTag, on webView: WKWebView) -> CacheApplyResult {
         guard let url = webView.url,
               let state = currentPageTranslation,
-              state.url == url,
-              let buffer = state.buffersByEngine[engine.rawValue],
-              buffer.ordered.isEmpty == false else { return false }
+              state.url == url else {
+            return CacheApplyResult(applied: false, remainingSegmentIDs: [])
+        }
+
+        let engineBuffer = state.buffersByEngine[engine.rawValue]
+        let remainingSegmentIDs = state.segments
+            .filter { segment in
+                guard let buffer = engineBuffer else { return true }
+                return buffer.segmentIDs.contains(segment.id) == false
+            }
+            .map { $0.id }
+
+        guard let buffer = engineBuffer, buffer.ordered.isEmpty == false else {
+            return CacheApplyResult(applied: false, remainingSegmentIDs: remainingSegmentIDs)
+        }
 
         let exec = WKWebViewScriptAdapter(webView: webView)
         let payloads = buffer.ordered.compactMap { payload -> TranslationStreamPayload? in
@@ -507,8 +652,9 @@ final class BrowserViewModel: ObservableObject {
         lastSegments = state.segments
         lastStreamPayloads = buffer.ordered
         var updatedState = state
-        updatedState.finalizedSegmentIDs.formUnion(buffer.segmentIDs)
-        updatedState.scheduledSegmentIDs.subtract(buffer.segmentIDs)
+        updatedState.finalizedSegmentIDs = buffer.segmentIDs
+        updatedState.failedSegmentIDs.removeAll()
+        updatedState.scheduledSegmentIDs.removeAll()
         updatedState.lastEngineID = engine.rawValue
         currentPageTranslation = updatedState
         failedSegmentIDs = updatedState.failedSegmentIDs
@@ -524,10 +670,11 @@ final class BrowserViewModel: ObservableObject {
             }
         }
 
-        return true
+        return CacheApplyResult(applied: true, remainingSegmentIDs: remainingSegmentIDs)
     }
 
     func closeOverlay() {
+        cancelOverlayTranslationTasks()
         overlayState = nil
         selectedSegment = nil
         pendingImproved = nil
@@ -588,10 +735,181 @@ extension BrowserViewModel {
         var segmentIDs: Set<String> { Set(ordered.map { $0.segmentID }) }
     }
 
+    struct CacheApplyResult {
+        var applied: Bool
+        var remainingSegmentIDs: [String]
+    }
+
     struct OverlayState: Equatable {
+        struct Translation: Equatable, Identifiable {
+            var engineID: TranslationEngineID
+            var title: String
+            var text: String?
+            var isLoading: Bool
+            var errorMessage: String?
+
+            var id: String { engineID }
+        }
+
         var segmentID: String
         var selectedText: String
         var improvedText: String?
         var anchor: CGRect
+        var translations: [Translation] = []
+        var showsOriginalSection: Bool = true
+    }
+}
+
+private extension BrowserViewModel {
+    func overlayTargetEngines(for showOriginal: Bool, selectedEngine: EngineTag) -> [EngineTag] {
+        if showOriginal {
+            return [.afm, .google]
+        }
+        guard let alternate = overlayAlternateEngine(for: selectedEngine) else { return [] }
+        return [alternate]
+    }
+
+    func overlayAlternateEngine(for engine: EngineTag) -> EngineTag? {
+        switch engine {
+        case .afm, .afmMask:
+            return .google
+        case .google:
+            return .afm
+        case .deepl, .unknown:
+            return .google
+        }
+    }
+
+    func overlaySectionTitle(for engine: EngineTag) -> String {
+        switch engine {
+        case .afm, .afmMask:
+            return "AFM 번역"
+        case .google:
+            return "Google 번역"
+        case .deepl:
+            return "DeepL 번역"
+        case .unknown:
+            return "번역"
+        }
+    }
+
+    func cachedTranslation(for segmentID: String, engineID: TranslationEngineID) -> String? {
+        guard let state = currentPageTranslation,
+              let buffer = state.buffersByEngine[engineID] else { return nil }
+        return buffer.ordered.first(where: { $0.segmentID == segmentID })?.translatedText
+    }
+
+    func overlayTaskKey(segmentID: String, engineID: TranslationEngineID) -> String {
+        "\(segmentID)|\(engineID)"
+    }
+
+    func cancelOverlayTranslationTasks() {
+        for task in overlayTranslationTasks.values {
+            task.cancel()
+        }
+        overlayTranslationTasks.removeAll()
+    }
+
+    func startOverlayTranslation(for engine: EngineTag, segment: Segment) {
+        let key = overlayTaskKey(segmentID: segment.id, engineID: engine.rawValue)
+        overlayTranslationTasks[key]?.cancel()
+
+        let options = TranslationOptions()
+        overlayTranslationTasks[key] = Task(priority: .userInitiated) { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await router.translateStream(
+                    segments: [segment],
+                    options: options,
+                    preferredEngine: engine.rawValue
+                ) { event in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if Task.isCancelled { return }
+                        self.handleOverlayTranslationEvent(
+                            event,
+                            segmentID: segment.id,
+                            engineID: engine.rawValue
+                        )
+                    }
+                }
+            } catch is CancellationError {
+                // 취소 시 별도 처리 없음
+            } catch {
+                updateOverlayTranslation(
+                    segmentID: segment.id,
+                    engineID: engine.rawValue,
+                    text: nil,
+                    errorMessage: "번역을 가져오는 중 오류가 발생했습니다."
+                )
+            }
+
+            overlayTranslationTasks.removeValue(forKey: key)
+        }
+    }
+
+    func handleOverlayTranslationEvent(
+        _ event: TranslationStreamEvent,
+        segmentID: String,
+        engineID: TranslationEngineID
+    ) {
+        guard let currentOverlay = overlayState, currentOverlay.segmentID == segmentID else { return }
+
+        switch event.kind {
+        case let .final(segment):
+            guard segment.segmentID == segmentID else { return }
+            guard let text = segment.translatedText, text.isEmpty == false else {
+                updateOverlayTranslation(
+                    segmentID: segmentID,
+                    engineID: engineID,
+                    text: nil,
+                    errorMessage: "번역 결과가 비어 있습니다."
+                )
+                return
+            }
+            storeOverlayTranslationPayload(segment)
+            updateOverlayTranslation(
+                segmentID: segmentID,
+                engineID: engineID,
+                text: text,
+                errorMessage: nil
+            )
+        case let .failed(failedSegmentID, _):
+            guard failedSegmentID == segmentID else { return }
+            updateOverlayTranslation(
+                segmentID: segmentID,
+                engineID: engineID,
+                text: nil,
+                errorMessage: "번역에 실패했습니다."
+            )
+        default:
+            break
+        }
+    }
+
+    func updateOverlayTranslation(
+        segmentID: String,
+        engineID: TranslationEngineID,
+        text: String?,
+        errorMessage: String?
+    ) {
+        guard var state = overlayState, state.segmentID == segmentID else { return }
+        guard let index = state.translations.firstIndex(where: { $0.engineID == engineID }) else { return }
+        state.translations[index].text = text
+        state.translations[index].isLoading = false
+        state.translations[index].errorMessage = errorMessage
+        overlayState = state
+    }
+
+    func storeOverlayTranslationPayload(_ payload: TranslationStreamPayload) {
+        guard var state = currentPageTranslation,
+              let webView = attachedWebView,
+              let url = webView.url,
+              state.url == url else { return }
+
+        var buffer = state.buffersByEngine[payload.engineID] ?? .init()
+        buffer.upsert(payload)
+        state.buffersByEngine[payload.engineID] = buffer
+        currentPageTranslation = state
     }
 }
