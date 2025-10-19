@@ -96,13 +96,16 @@ struct WebContainerView: UIViewRepresentable {
             markedSegmentIDs.removeAll()
         }
 
-        func markSegments(_ pairs: [(id: String, text: String)]) async {
-            guard pairs.isEmpty == false else { return }
-            let fresh = pairs.filter { markedSegmentIDs.contains($0.id) == false }
+        func markSegments(_ segments: [Segment]) async {
+            guard segments.isEmpty == false else { return }
+            let fresh = segments.filter { segment in
+                guard markedSegmentIDs.contains(segment.id) == false else { return false }
+                return segment.domRange != nil
+            }
             guard fresh.isEmpty == false else { return }
 
             let urlKey = webView?.url?.absoluteString ?? UUID().uuidString
-            let totalChars = fresh.reduce(0) { $0 + $1.text.count }
+            let totalChars = fresh.reduce(0) { $0 + $1.originalText.count }
             print("[MARK] calling MT_MARK_SEGMENTS_ALL list=\(fresh.count) chars=\(totalChars) url=\(urlKey)")
 
             fresh.forEach { markedSegmentIDs.insert($0.id) }

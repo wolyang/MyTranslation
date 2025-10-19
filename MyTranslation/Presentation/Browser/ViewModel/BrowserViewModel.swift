@@ -342,9 +342,7 @@ final class BrowserViewModel: ObservableObject {
 
             if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
                 coord.resetMarks()
-                for segment in segs {
-                    await coord.markSegments([(id: segment.id, text: segment.originalText)])
-                }
+                await coord.markSegments(segs)
             }
 
             let opts = TranslationOptions()
@@ -664,9 +662,7 @@ final class BrowserViewModel: ObservableObject {
         if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
             coord.resetMarks()
             Task { @MainActor in
-                for segment in state.segments {
-                    await coord.markSegments([(id: segment.id, text: segment.originalText)])
-                }
+                await coord.markSegments(state.segments)
             }
         }
 

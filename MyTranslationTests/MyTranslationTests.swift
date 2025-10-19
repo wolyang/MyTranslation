@@ -26,7 +26,17 @@ struct MyTranslationTests {
 
     @Test @MainActor
     func extractorGeneratesUniqueSegmentIDsForDuplicateText() async throws {
-        let executor = StubWebViewExecutor(result: "Hello world.\nHello world.")
+        let snapshot = """
+        [
+          {
+            "text": "Hello world.\nHello world.",
+            "map": [
+              { "token": "n1", "start": 0, "end": 25 }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com")!
         let segments = try await extractor.extract(using: executor, url: url)
@@ -34,11 +44,22 @@ struct MyTranslationTests {
         #expect(segments.count == 2)
         #expect(Set(segments.map { $0.id }).count == 2)
         #expect(segments.first?.normalizedText == segments.last?.normalizedText)
+        #expect(segments.allSatisfy { $0.domRange != nil })
     }
 
     @Test @MainActor
     func extractorSkipsPunctuationOnlySegments() async throws {
-        let executor = StubWebViewExecutor(result: "쟈그라...\n......\n다시 시작한다")
+        let snapshot = """
+        [
+          {
+            "text": "쟈그라...\n......\n다시 시작한다",
+            "map": [
+              { "token": "t1", "start": 0, "end": 17 }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com/story")!
         let segments = try await extractor.extract(using: executor, url: url)
@@ -50,7 +71,17 @@ struct MyTranslationTests {
     @Test @MainActor
     func extractorSplitsVeryLongParagraphIntoMultipleSegments() async throws {
         let longSentence = String(repeating: "a", count: 700) + "?" + String(repeating: "b", count: 650)
-        let executor = StubWebViewExecutor(result: longSentence)
+        let snapshot = """
+        [
+          {
+            "text": "\(longSentence)",
+            "map": [
+              { "token": "nA", "start": 0, "end": \(longSentence.count) }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com/long")!
         let segments = try await extractor.extract(using: executor, url: url)
@@ -72,5 +103,7 @@ struct MyTranslationTests {
         let script = SelectionBridge.scriptForTesting()
         #expect(script.contains("tagTextNodesWithSegment"))
         #expect(script.contains("__afmSegmentId"))
+        #expect(script.contains("MT_COLLECT_BLOCK_SNAPSHOTS"))
+        #expect(script.contains("startToken"))
     }
 }

@@ -95,7 +95,8 @@ final class DefaultTranslationRouter: TranslationRouter {
                     url: pack.seg.url,
                     indexInPage: pack.seg.indexInPage,
                     originalText: pack.masked,
-                    normalizedText: pack.seg.normalizedText
+                    normalizedText: pack.seg.normalizedText,
+                    domRange: pack.seg.domRange
                 )
             }
 
