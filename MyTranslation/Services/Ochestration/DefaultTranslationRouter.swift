@@ -89,88 +89,86 @@ final class DefaultTranslationRouter: TranslationRouter {
             let maskedPacks = pendingSegments.map { segment in
                 termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
             }
-
-            for (index, pack) in maskedPacks.enumerated() {
-                try Task.checkCancellation()
-                let originalSegment = pendingSegments[index]
-                let maskedSegment = Segment(
+            let maskedSegments: [Segment] = maskedPacks.map { pack in
+                Segment(
                     id: pack.seg.id,
                     url: pack.seg.url,
                     indexInPage: pack.seg.indexInPage,
                     originalText: pack.masked,
                     normalizedText: pack.seg.normalizedText
                 )
+            }
 
-                let scheduledPayload = TranslationStreamPayload(
-                    segmentID: originalSegment.id,
-                    originalText: originalSegment.originalText,
-                    translatedText: nil,
-                    engineID: engine.tag.rawValue,
-                    sequence: sequence
-                )
-                sequence += 1
-                progress(.init(kind: .partial(segment: scheduledPayload), timestamp: Date()))
-                await Task.yield()
+            let batchSize = 8
+            var batchIndices: [Int] = []
+            batchIndices.reserveCapacity(batchSize)
+
+            func flushBatch() async throws -> TranslationStreamSummary? {
+                guard batchIndices.isEmpty == false else { return nil }
+                let requestSegments = batchIndices.map { maskedSegments[$0] }
 
                 do {
-                    let engineResults = try await engine.translate([maskedSegment], options: options)
-                    guard let result = engineResults.first else {
-                        if failedIDs.insert(originalSegment.id).inserted {
-                            progress(.init(kind: .failed(segmentID: originalSegment.id, error: .engineFailure(code: nil)), timestamp: Date()))
-                            await Task.yield()
+                    let engineResults = try await engine.translate(requestSegments, options: options)
+                    guard engineResults.count == batchIndices.count else {
+                        struct EngineCountMismatch: Error {}
+                        throw EngineCountMismatch()
+                    }
+
+                    for (resultIndex, result) in engineResults.enumerated() {
+                        let globalIndex = batchIndices[resultIndex]
+                        let pack = maskedPacks[globalIndex]
+                        let originalSegment = pendingSegments[globalIndex]
+
+                        let raw = result.text
+                        let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+                        let unmasked = termMasker.unlockTermsSafely(
+                            corrected,
+                            locks: pack.locks
+                        )
+
+                        var finalOutput = unmasked
+
+                        if pack.locks.values.count == 1,
+                           let target = pack.locks.values.first?.target
+                        {
+                            let collapsed = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(unmasked, target: target)
+                            finalOutput = collapsed
                         }
-                        continue
-                    }
-                    
-                    let raw = result.text
-//                    print("[Router] raw: \(raw)")
-                    let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
-//                    print("[Router] corrected: \(corrected)")
-                    let unmasked = termMasker.unlockTermsSafely(
-                        corrected,
-                        locks: pack.locks
-                    )
-//                    print("[Router] unmasked: \(unmasked)")
-                    
-                    var finalOutput = unmasked
-                    
-                    if pack.locks.values.count == 1,
-                       let target = pack.locks.values.first?.target
-                    {
-                        let collapsed = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(unmasked, target: target)
-                        finalOutput = collapsed
-//                        print("[Router] collapsed: \(collapsed)")
-                    }
-                    
-                    let hanCount = finalOutput.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                    let residual = Double(hanCount) / Double(max(finalOutput.count, 1))
-                    let finalResult = TranslationResult(
-                        id: result.id,
-                        segmentID: result.segmentID,
-                        engine: result.engine,
-                        text: finalOutput,
-                        residualSourceRatio: residual,
-                        createdAt: result.createdAt
-                    )
 
-                    let payload = TranslationStreamPayload(
-                        segmentID: originalSegment.id,
-                        originalText: originalSegment.originalText,
-                        translatedText: finalResult.text,
-                        engineID: finalResult.engine.rawValue,
-                        sequence: sequence
-                    )
-                    sequence += 1
-                    progress(.init(kind: .final(segment: payload), timestamp: Date()))
-                    await Task.yield()
-                    succeededIDs.append(originalSegment.id)
+                        let hanCount = finalOutput.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                        let residual = Double(hanCount) / Double(max(finalOutput.count, 1))
+                        let finalResult = TranslationResult(
+                            id: result.id,
+                            segmentID: result.segmentID,
+                            engine: result.engine,
+                            text: finalOutput,
+                            residualSourceRatio: residual,
+                            createdAt: result.createdAt
+                        )
 
-                    let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
-                    cache.save(result: finalResult, forKey: cacheKey)
+                        let payload = TranslationStreamPayload(
+                            segmentID: originalSegment.id,
+                            originalText: originalSegment.originalText,
+                            translatedText: finalResult.text,
+                            engineID: finalResult.engine.rawValue,
+                            sequence: sequence
+                        )
+                        sequence += 1
+                        progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                        await Task.yield()
+                        succeededIDs.append(originalSegment.id)
+
+                        let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
+                        cache.save(result: finalResult, forKey: cacheKey)
+                    }
+
+                    batchIndices.removeAll(keepingCapacity: true)
+                    return nil
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
-                    for segment in pendingSegments[index...] where failedIDs.contains(segment.id) == false {
+                    let start = batchIndices.first ?? pendingSegments.count
+                    for segment in pendingSegments[start...] where failedIDs.contains(segment.id) == false {
                         failedIDs.insert(segment.id)
                         progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
                         await Task.yield()
@@ -185,6 +183,33 @@ final class DefaultTranslationRouter: TranslationRouter {
                     await Task.yield()
                     return summary
                 }
+            }
+
+            for index in maskedPacks.indices {
+                try Task.checkCancellation()
+                let originalSegment = pendingSegments[index]
+
+                let scheduledPayload = TranslationStreamPayload(
+                    segmentID: originalSegment.id,
+                    originalText: originalSegment.originalText,
+                    translatedText: nil,
+                    engineID: engine.tag.rawValue,
+                    sequence: sequence
+                )
+                sequence += 1
+                progress(.init(kind: .partial(segment: scheduledPayload), timestamp: Date()))
+                await Task.yield()
+
+                batchIndices.append(index)
+                if batchIndices.count == batchSize {
+                    if let summary = try await flushBatch() {
+                        return summary
+                    }
+                }
+            }
+
+            if let summary = try await flushBatch() {
+                return summary
             }
         }
 
