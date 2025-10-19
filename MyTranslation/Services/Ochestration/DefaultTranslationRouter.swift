@@ -126,22 +126,28 @@ final class DefaultTranslationRouter: TranslationRouter {
                     
                     let raw = result.text
                     let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
-                    let collapsedBefore = termMasker.collapseSpacesAroundTokensNearPunct(in: corrected, tokens: Array(pack.locks.keys))
                     let unmasked = termMasker.unlockTermsSafely(
-                        collapsedBefore,
+                        corrected,
                         locks: pack.locks,
                         personQueues: personQueues
                     )
-                    let collapsedAfter = termMasker.collapseSpacesAroundReplacementsNearPunct(in: unmasked, replacements: pack.locks.mapValues({ $0.target
-                    }))
                     
-                    let hanCount = collapsedAfter.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                    let residual = Double(hanCount) / Double(max(collapsedAfter.count, 1))
+                    var finalOutput = unmasked
+                    
+                    if pack.locks.values.count == 1,
+                       let target = pack.locks.values.first?.target
+                    {
+                        let collapsed = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(unmasked, target: target)
+                        finalOutput = collapsed
+                    }
+                    
+                    let hanCount = finalOutput.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                    let residual = Double(hanCount) / Double(max(finalOutput.count, 1))
                     let finalResult = TranslationResult(
                         id: result.id,
                         segmentID: result.segmentID,
                         engine: result.engine,
-                        text: unmasked,
+                        text: finalOutput,
                         residualSourceRatio: residual,
                         createdAt: result.createdAt
                     )

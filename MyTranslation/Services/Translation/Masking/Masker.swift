@@ -98,7 +98,6 @@ public final class TermMasker {
             } else {
                 token = "__MASK_\(prefix)\(localNextIndex)__" // 기타 카테고리: 기존 각괄호 토큰 유지
             }
-            print("pid: \(String(describing: e.personId)), source: \(e.source) -> token: \(token)")
             localNextIndex += 1
 
             // 좌→우 모든 발생을 안전 치환 + 인물 큐 push
@@ -165,9 +164,6 @@ public final class TermMasker {
             if last < ns.length { newOut += ns.substring(with: NSRange(location: last, length: ns.length - last)) }
             out = newOut
             
-            // 토큰 양 옆에 문장부호만 있을 때 공백 삽입
-            out = insertSpacesAroundTokenIfPunctOnlyNeighbors(out, token: token)
-            
             // NBSP 경계 힌트
             if e.category == .person {
                 out = surroundTokenWithNBSP(out, token: token)
@@ -181,6 +177,8 @@ public final class TermMasker {
             locks[token] = LockInfo(placeholder: token, target: e.target, endsWithBatchim: b, endsWithRieul: r, category: e.category)
         }
         
+        // 토큰 양 옆에 문장부호만 있을 때 공백 삽입
+        out = insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(out)
         // nextIndex 업데이트(기존 의미 유지)
         self.nextIndex = localNextIndex
         
@@ -243,35 +241,6 @@ public final class TermMasker {
             out += ns.substring(with: NSRange(location: last, length: ns.length - last))
         }
 
-        return out
-    }
-    
-    /// 토큰(__...__)과 문장부호 사이에 끼워둔 임시 공백을 제거
-    func collapseSpacesAroundTokensNearPunct(in text: String, tokens: [String]) -> String {
-        var out = text
-        for tok in tokens {
-            let t = NSRegularExpression.escapedPattern(for: tok)
-            // [문장부호] + 공백 + [토큰]  → 붙이기
-            let p1 = try! NSRegularExpression(pattern: #"([\p{P}\p{S}])\s+(\#(t))"#)
-            out = p1.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1$2")
-            // [토큰] + 공백 + [문장부호]  → 붙이기
-            let p2 = try! NSRegularExpression(pattern: #"\#(t)\s+([\p{P}\p{S}])"#)
-            out = p2.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1")
-        }
-        return out
-    }
-    
-    /// replacements: ["__사람_P2__": "가이", ...] (언마스킹에 실제 사용된 매핑)
-    func collapseSpacesAroundReplacementsNearPunct(in text: String, replacements: [String:String]) -> String {
-        var out = text
-        for rep in replacements.values {
-            guard !rep.isEmpty else { continue }
-            let r = NSRegularExpression.escapedPattern(for: rep)
-            let p1 = try! NSRegularExpression(pattern: #"([\p{P}\p{S}])\s+(\#(r))"#)
-            out = p1.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1$2")
-            let p2 = try! NSRegularExpression(pattern: #"\#(r)\s+([\p{P}\p{S}])"#)
-            out = p2.stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "$1")
-        }
         return out
     }
     
@@ -377,47 +346,82 @@ public final class TermMasker {
         }
     }
     
-    func insertSpacesAroundTokenIfPunctOnlyNeighbors(_ text: String, token: String) -> String {
-        var out = text
-        guard !token.isEmpty else { return out }
-        let escaped = NSRegularExpression.escapedPattern(for: token)
-        // 캡처 그룹은 정확히 2개(1: 앞이 문장부호, 2: 뒤가 문장부호)
-        let pattern = #"(?<=[\p{P}\p{S}])(\#(escaped))|(\#(escaped))(?=[\p{P}\p{S}])"#
+    private let tokenRegex = #"__(?:[^_]|_(?!_))+__"#
+    
+    /// 전체 텍스트를 단락(또는 세그먼트) 단위로 나눠,
+    /// "토큰을 모두 제거하면 문장부호/공백만 남는" 단락에서만
+    /// 토큰 양옆(문장부호 인접)에 공백을 삽입한다.
+    func insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(_ text: String) -> String {
+        let paras = text.components(separatedBy: "\n")
+        var outParas: [String] = []
+        outParas.reserveCapacity(paras.count)
 
-        guard let rx = try? NSRegularExpression(pattern: pattern) else { return out }
-        let ns = out as NSString
-        let matches = rx.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+        let stripRx = try! NSRegularExpression(pattern: tokenRegex)
+        let leftRx  = try! NSRegularExpression(pattern: #"(?<=[\p{P}\p{S}])(__(?:[^_]|_(?!_))+__)"#)
+        let rightRx = try! NSRegularExpression(pattern: #"(__(?:[^_]|_(?!_))+__)(?=[\p{P}\p{S}])"#)
 
-        var rebuilt = ""
-        var cursor = 0
-
-        for m in matches {
-            let whole = m.range(at: 0)
-
-            if whole.location > cursor {
-                rebuilt += ns.substring(with: NSRange(location: cursor, length: whole.location - cursor))
+        for p in paras {
+            // 1) 단락에서 토큰을 모두 제거한 결과가 문장부호/공백 뿐인지 검사
+            let rest = stripRx.stringByReplacingMatches(in: p, range: NSRange(p.startIndex..., in: p), withTemplate: "")
+            guard rest.isPunctOrSpaceOnly else {
+                outParas.append(p) // 조건 불충족 → 변경 없음
+                continue
             }
 
-            let r1 = (m.numberOfRanges > 1) ? m.range(at: 1) : NSRange(location: NSNotFound, length: 0)
-            let r2 = (m.numberOfRanges > 2) ? m.range(at: 2) : NSRange(location: NSNotFound, length: 0)
+            // 2) 조건 통과: 토큰 좌/우가 문장부호인 곳에 공백 보장 (앞뒤 모두)
+            var q = p
+            q = leftRx.stringByReplacingMatches(in: q, range: NSRange(q.startIndex..., in: q), withTemplate: " $1")
+            q = rightRx.stringByReplacingMatches(in: q, range: NSRange(q.startIndex..., in: q), withTemplate: "$0 ")
 
-            if r1.location != NSNotFound {
-                rebuilt += " "
-                rebuilt += ns.substring(with: r1)
-            } else if r2.location != NSNotFound {
-                rebuilt += ns.substring(with: r2)
-                rebuilt += " "
-            } else {
-                // 방어: 혹시 둘 다 없으면 원문 유지
-                rebuilt += ns.substring(with: whole)
-            }
-            cursor = whole.location + whole.length
+            outParas.append(q)
         }
 
-        if cursor < ns.length {
-            rebuilt += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
-        }
-        out = rebuilt
+        return outParas.joined(separator: "\n")
+    }
+    
+    // 공백 클래스(엔진별 NBSP/좁은 NBSP/제로폭/전각 공백까지 포함)
+    private let wsClass = #"(?:\s|\u00A0|\u202F|\u2009|\u200A|\u200B|\u205F|\u3000)+"#
+
+    /// 세그먼트가 `tokenOrName`을 제외하면 '문장부호/기호/공백'만 남을 때에만,
+    /// 토큰/이름 좌우의 불필요한 공백을 접는다.
+    /// - 언마스킹 전: tokenOrName = "__PERSON_...__"
+    /// - 언마스킹 후: tokenOrName = 실제 치환된 이름
+    func collapseSpaces_PunctOrEdge_whenIsolatedSegment(_ s: String, target: String) -> String {
+        guard !target.isEmpty else { return s }
+
+        // 0) 세그먼트 가드: 해당 토큰/이름이 존재하고, 그것을 제거하면 나머지가 모두 부호/공백뿐이어야 함
+        //    (호출부에서 "토큰 1개"를 보장하지만, 안전을 위해 내부에서도 최소한 존재 여부는 확인)
+        guard s.contains(target) else { return s }
+        let rest = s.replacingOccurrences(of: target, with: "")
+        guard rest.isPunctOrSpaceOnly_loose else { return s }
+
+        // 1) 이름(또는 토큰)만 캡처하고, 문장부호/공백은 lookaround로만 검사
+        let name = NSRegularExpression.escapedPattern(for: target)
+        var out = s
+
+        // 양쪽 모두: [punct] + WS + name + WS + [punct] → name
+        out = try! NSRegularExpression(
+            pattern: #"(?<=[\p{P}\p{S}])\#(wsClass)(?<tok>\#(name))\#(wsClass)(?=[\p{P}\p{S}])"#
+        ).stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: target)
+
+        // 왼쪽만: [punct] + WS + name → name
+        out = try! NSRegularExpression(
+            pattern: #"(?<=[\p{P}\p{S}])\#(wsClass)(?<tok>\#(name))"#
+        ).stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: target)
+
+        // 오른쪽만: name + WS + [punct] → name
+        out = try! NSRegularExpression(
+            pattern: #"(?<tok>\#(name))\#(wsClass)(?=[\p{P}\p{S}])"#
+        ).stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: target)
+
+        // 문자열 경계 보정: ^ WS name → name, name WS $ → name
+        out = try! NSRegularExpression(
+            pattern: #"^\#(wsClass)(?<tok>\#(name))"#
+        ).stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: target)
+        out = try! NSRegularExpression(
+            pattern: #"(?<tok>\#(name))\#(wsClass)$"#
+        ).stringByReplacingMatches(in: out, range: NSRange(out.startIndex..., in: out), withTemplate: target)
+
         return out
     }
 
@@ -482,4 +486,21 @@ public final class TermMasker {
         }
         return out
     }
+}
+
+private extension String {
+    var isPunctOrSpaceOnly: Bool {
+        let set = CharacterSet.punctuationCharacters
+            .union(.symbols)
+            .union(.whitespacesAndNewlines)
+        return unicodeScalars.allSatisfy { set.contains($0) }
+    }
+    
+    var isPunctOrSpaceOnly_loose: Bool {
+            // 공백 계열: 일반 공백/개행 + NBSP + narrow NBSP + thin space + hair space + zero-width space + 전각 공백
+            let spaces = CharacterSet.whitespacesAndNewlines
+                .union(CharacterSet(charactersIn: "\u{00A0}\u{202F}\u{2009}\u{200A}\u{200B}\u{205F}\u{3000}"))
+            let set = CharacterSet.punctuationCharacters.union(.symbols).union(spaces)
+            return unicodeScalars.allSatisfy { set.contains($0) }
+        }
 }
