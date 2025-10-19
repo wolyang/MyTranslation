@@ -12,25 +12,56 @@ struct URLBarView: View {
     @FocusState private var isFocused: Bool
     @AppStorage("recentURLs") private var recentURLsData: Data = Data()
     @State private var fieldHeight: CGFloat = 0
+    @State private var barHeight: CGFloat = 0
     @State private var originalURLBeforeEditing: String = ""
     @State private var didCommitDuringEditing: Bool = false
+    @State private var isShowingEngineOptions: Bool = false
 
     private let maxRecentCount = 8
 
     var body: some View {
-        HStack(spacing: 10) {
-            field
-                .background(fieldHeightReader)
-                .overlay(alignment: .topLeading) {
-                    if shouldShowSuggestions {
-                        suggestions
-                            .offset(y: fieldHeight + 6)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                field
+                    .background(fieldHeightReader)
+                    .overlay(alignment: .topLeading) {
+                        if shouldShowSuggestions {
+                            suggestions
+                                .offset(y: fieldHeight + 6)
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity)
 
-            controlGroup
+                controlGroup
+            }
+            .background(barHeightReader)
         }
+        .animation(.easeInOut(duration: 0.2), value: isShowingEngineOptions)
+        .overlay(alignment: .topLeading) {
+            if isShowingEngineOptions {
+                EnginePickerOptionsContainer {
+                    EnginePickerOptionsView(
+                        selectedEngine: $selectedEngine,
+                        showOriginal: $showOriginal,
+                        onInteract: endEditing,
+                        onSelectEngine: { engine, wasShowingOriginal in
+                            onSelectEngine(engine, wasShowingOriginal)
+                        },
+                        dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
+                    )
+                }
+                .offset(y: barHeight + 6)
+                .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+                .zIndex(1)
+            }
+        }
+        .onChange(of: selectedEngine) { _, _ in
+            isShowingEngineOptions = false
+        }
+        .onChange(of: showOriginal) { _, _ in
+            isShowingEngineOptions = false
+        }
+        .zIndex(2)
     }
 
     private var field: some View {
@@ -79,6 +110,7 @@ struct URLBarView: View {
             if newValue {
                 originalURLBeforeEditing = urlString
                 didCommitDuringEditing = false
+                isShowingEngineOptions = false
             } else if oldValue && didCommitDuringEditing == false {
                 urlString = originalURLBeforeEditing
             }
@@ -89,6 +121,9 @@ struct URLBarView: View {
                 isFocused = true
             } else if !newValue && isFocused {
                 isFocused = false
+            }
+            if newValue {
+                isShowingEngineOptions = false
             }
         }
     }
@@ -131,6 +166,7 @@ struct URLBarView: View {
             EnginePickerButton(
                 selectedEngine: $selectedEngine,
                 showOriginal: $showOriginal,
+                isShowingOptions: $isShowingEngineOptions,
                 onInteract: endEditing,
                 onSelectEngine: { engine, wasShowingOriginal in
                     onSelectEngine(engine, wasShowingOriginal)
@@ -168,6 +204,16 @@ struct URLBarView: View {
                 .onAppear { fieldHeight = proxy.size.height }
                 .onChange(of: proxy.size.height) { _, newValue in
                     fieldHeight = newValue
+                }
+        }
+    }
+
+    private var barHeightReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { barHeight = proxy.size.height }
+                .onChange(of: proxy.size.height) { _, newValue in
+                    barHeight = newValue
                 }
         }
     }
@@ -216,44 +262,15 @@ struct URLBarView: View {
 private struct EnginePickerButton: View {
     @Binding var selectedEngine: EngineTag
     @Binding var showOriginal: Bool
+    @Binding var isShowingOptions: Bool
     var onInteract: () -> Void = {}
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
 
     var body: some View {
-        Menu {
-            Button {
-                onInteract()
-                if showOriginal == false {
-                    showOriginal = true
-                }
-            } label: {
-                HStack {
-                    Text("원문 보기")
-                    Spacer()
-                    if showOriginal {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-
-            ForEach(EngineTag.allCases, id: \.self) { engine in
-                Button {
-                    onInteract()
-                    let wasShowingOriginal = showOriginal
-                    selectedEngine = engine
-                    onSelectEngine(engine, wasShowingOriginal)
-                    if wasShowingOriginal {
-                        showOriginal = false
-                    }
-                } label: {
-                    HStack {
-                        Text(engine.displayName)
-                        Spacer()
-                        if !showOriginal, engine == selectedEngine {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
+        Button {
+            onInteract()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isShowingOptions.toggle()
             }
         } label: {
             VStack(spacing: 2) {
@@ -270,8 +287,98 @@ private struct EnginePickerButton: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
             .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { onInteract() })
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+    }
+}
+
+private struct EnginePickerOptionsContainer<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                content()
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct EnginePickerOptionsView: View {
+    @Binding var selectedEngine: EngineTag
+    @Binding var showOriginal: Bool
+    var onInteract: () -> Void
+    var onSelectEngine: (EngineTag, Bool) -> Void
+    var dismiss: () -> Void
+
+    var body: some View {
+        let engines = Array(EngineTag.allCases)
+
+        return VStack(spacing: 0) {
+            OptionButton(title: "원문 보기", isSelected: showOriginal) {
+                onInteract()
+                if showOriginal == false {
+                    showOriginal = true
+                }
+                dismiss()
+            }
+
+            Divider()
+
+            ForEach(engines.indices, id: \.self) { index in
+                let engine = engines[index]
+                OptionButton(title: engine.displayName, isSelected: !showOriginal && engine == selectedEngine) {
+                    onInteract()
+                    let wasShowingOriginal = showOriginal
+                    selectedEngine = engine
+                    onSelectEngine(engine, wasShowingOriginal)
+                    if wasShowingOriginal {
+                        showOriginal = false
+                    }
+                    dismiss()
+                }
+
+                if index < engines.count - 1 {
+                    Divider()
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(width: 220, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(.systemGray4), lineWidth: 0.5)
+        )
+        .shadow(color: Color.black.opacity(0.08), radius: 10, y: 6)
+    }
+
+    private struct OptionButton: View {
+        let title: String
+        let isSelected: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                HStack {
+                    Text(title)
+                        .foregroundColor(.primary)
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
     }
 }
