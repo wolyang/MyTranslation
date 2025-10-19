@@ -37,16 +37,35 @@ final class WebViewInlineReplacer: InlineReplacer {
 
           S.tryReplaceTextNode = (node) => {
             if (S.shouldSkipNode(node)) return false;
-            if (node.__afmApplied) return false;
-            const raw = S.norm(node.nodeValue);
-            const t = S.map.get(raw);
-            if (t) {
-              node.__afmOriginal = node.nodeValue;
-              node.nodeValue = t;   // 텍스트만 교체 → 이벤트/구조 보존
-              node.__afmApplied = true;
-              return true;
+
+            const original = typeof node.__afmOriginal === 'string' ? node.__afmOriginal : node.nodeValue;
+            const raw = S.norm(original);
+            const translated = S.map.get(raw);
+
+            if (!translated) {
+              if (node.__afmApplied && typeof node.__afmOriginal === 'string') {
+                node.nodeValue = node.__afmOriginal;
+                node.__afmOriginal = undefined;
+                node.__afmApplied = undefined;
+                return true;
+              }
+              return false;
             }
-            return false;
+
+            if (!node.__afmApplied) {
+              node.__afmOriginal = node.nodeValue;
+            } else if (typeof node.__afmOriginal !== 'string') {
+              node.__afmOriginal = original;
+            }
+
+            if (node.nodeValue === translated) {
+              node.__afmApplied = true;
+              return false;
+            }
+
+            node.nodeValue = translated;   // 텍스트만 교체 → 이벤트/구조 보존
+            node.__afmApplied = true;
+            return true;
           };
 
           S.applyAll = (root) => {
