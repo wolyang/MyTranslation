@@ -37,15 +37,43 @@ final class WebViewInlineReplacer: InlineReplacer {
 
           S.tryReplaceTextNode = (node) => {
             if (S.shouldSkipNode(node)) return false;
-            if (node.__afmApplied) return false;
-            const raw = S.norm(node.nodeValue);
-            const t = S.map.get(raw);
-            if (t) {
-              node.__afmOriginal = node.nodeValue;
-              node.nodeValue = t;   // 텍스트만 교체 → 이벤트/구조 보존
+
+            // 기존 로직은 __afmApplied 플래그가 true인 노드를 무조건 건너뛰어
+            // 번역 테이블(map)이 바뀌어도 새 텍스트로 갱신되지 않았다.
+            // 저장해 둔 원문(__afmOriginal)을 기준으로 다시 매핑해 항상 최신 치환을 적용한다.
+            const hadApplied = !!node.__afmApplied;
+            const hasStoredOriginal = typeof node.__afmOriginal === 'string';
+            const original = hasStoredOriginal ? node.__afmOriginal : node.nodeValue;
+            const raw = S.norm(original);
+            const translated = S.map.get(raw);
+
+            if (translated) {
+              if (!hadApplied) {
+                node.__afmOriginal = node.nodeValue;
+              } else if (!hasStoredOriginal) {
+                node.__afmOriginal = original;
+              }
+
+              const changed = node.nodeValue !== translated;
+              if (changed) {
+                node.nodeValue = translated;   // 텍스트만 교체 → 이벤트/구조 보존
+              }
               node.__afmApplied = true;
-              return true;
+              // true를 반환하면 실제 텍스트가 새 번역으로 교체되었거나 이번 호출에서 최초로 번역 플래그를 세운 경우다.
+              return changed || !hadApplied;
             }
+
+            if (hadApplied && hasStoredOriginal) {
+              const changed = node.nodeValue !== node.__afmOriginal;
+              if (changed) {
+                node.nodeValue = node.__afmOriginal;
+              }
+              node.__afmOriginal = undefined;
+              node.__afmApplied = undefined;
+              // true는 이전 번역을 걷어내고 원문으로 되돌렸다는 뜻이다.
+              return changed;
+            }
+
             return false;
           };
 
