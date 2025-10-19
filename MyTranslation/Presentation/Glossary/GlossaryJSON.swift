@@ -7,13 +7,29 @@ import SwiftUI
 struct GlossaryJSON: Codable {
     struct Meta: Codable { let version: Int; let lang: String
         public init(version: Int = 3, lang: String = "zh->ko") {
-        self.version = version
-        self.lang = lang
+            self.version = version
+            self.lang = lang
         }
     }
     struct NameVariant: Codable {
         let source: [String]
         let target: String?
+        let variants: [String]
+
+        init(source: [String], target: String?, variants: [String] = []) {
+            self.source = source
+            self.target = target
+            self.variants = variants
+        }
+
+        enum CodingKeys: String, CodingKey { case source, target, variants }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.source = try container.decode([String].self, forKey: .source)
+            self.target = try container.decodeIfPresent(String.self, forKey: .target)
+            self.variants = try container.decodeIfPresent([String].self, forKey: .variants) ?? []
+        }
     }
 
     struct PeopleName: Codable {
@@ -31,6 +47,24 @@ struct GlossaryJSON: Codable {
         let source: String
         let target: String
         let category: String
+        let variants: [String]
+
+        init(source: String, target: String, category: String, variants: [String] = []) {
+            self.source = source
+            self.target = target
+            self.category = category
+            self.variants = variants
+        }
+
+        enum CodingKeys: String, CodingKey { case source, target, category, variants }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.source = try container.decode(String.self, forKey: .source)
+            self.target = try container.decode(String.self, forKey: .target)
+            self.category = try container.decode(String.self, forKey: .category)
+            self.variants = try container.decodeIfPresent([String].self, forKey: .variants) ?? []
+        }
     }
 
     let meta: Meta
@@ -38,46 +72,65 @@ struct GlossaryJSON: Codable {
     let people: [PersonItem]
     
     public init(terms: [TermItem], people: [PersonItem] = [], meta: Meta = .init()) {
-    self.meta = meta
-    self.terms = terms
-    self.people = people
+        self.meta = meta
+        self.terms = terms
+        self.people = people
     }
 }
 
 // FileExporter 용 문서 래퍼
 public struct GlossaryJSONDocument: FileDocument {
-public static var readableContentTypes: [UTType] { [.json] }
-public static var writableContentTypes: [UTType] { [.json] }
+    public static var readableContentTypes: [UTType] { [.json] }
+    public static var writableContentTypes: [UTType] { [.json] }
 
+    var payload: GlossaryJSON
 
-var payload: GlossaryJSON
-
-
-init(payload: GlossaryJSON) {
-self.payload = payload
-}
-
-
-init(terms: [Term], people: [Person] = []) {
-let termsItems = terms.map { GlossaryJSON.TermItem(source: $0.source, target: $0.target, category: $0.category) }
-    let personItems = people.map {
-        GlossaryJSON.PersonItem(person_id: $0.personId, name: .init(family: .init(source: $0.familySources, target: $0.familyTarget), given: .init(source: $0.givenSources, target: $0.givenTarget)), aliases: $0.aliases.map({ a in
-                .init(source: a.sources, target: a.target)
-        }))
+    init(payload: GlossaryJSON) {
+        self.payload = payload
     }
-self.payload = GlossaryJSON(terms: termsItems, people: personItems)
-}
 
+    init(terms: [Term], people: [Person] = []) {
+        let termsItems = terms.map {
+            GlossaryJSON.TermItem(
+                source: $0.source,
+                target: $0.target,
+                category: $0.category,
+                variants: $0.variants
+            )
+        }
+        let personItems = people.map {
+            GlossaryJSON.PersonItem(
+                person_id: $0.personId,
+                name: .init(
+                    family: .init(
+                        source: $0.familySources,
+                        target: $0.familyTarget,
+                        variants: $0.familyVariants
+                    ),
+                    given: .init(
+                        source: $0.givenSources,
+                        target: $0.givenTarget,
+                        variants: $0.givenVariants
+                    )
+                ),
+                aliases: $0.aliases.map { alias in
+                    .init(source: alias.sources, target: alias.target, variants: alias.variants)
+                }
+            )
+        }
+        self.payload = GlossaryJSON(terms: termsItems, people: personItems)
+    }
 
-// FileDocument
-public init(configuration: ReadConfiguration) throws {
-guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
-self.payload = try JSONDecoder().decode(GlossaryJSON.self, from: data)
-}
+    // FileDocument
+    public init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        self.payload = try JSONDecoder().decode(GlossaryJSON.self, from: data)
+    }
 
-
-public func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-let data = try JSONEncoder().encode(payload)
-return .init(regularFileWithContents: data)
-}
+    public func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        let data = try JSONEncoder().encode(payload)
+        return .init(regularFileWithContents: data)
+    }
 }

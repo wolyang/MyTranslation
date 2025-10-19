@@ -50,7 +50,10 @@ final class GlossaryViewModel: ObservableObject {
                         h.append(contentsOf: p.givenSources)
                         if let ft = p.familyTarget { h.append(ft) }
                         if let gt = p.givenTarget { h.append(gt) }
+                        h.append(contentsOf: p.familyVariants)
+                        h.append(contentsOf: p.givenVariants)
                         for a in p.aliases { h.append(contentsOf: a.sources); if let t = a.target { h.append(t) } }
+                        for a in p.aliases { h.append(contentsOf: a.variants) }
                         return h
                     }
                     return haystack().contains { $0.localizedStandardContains(q) }
@@ -111,9 +114,12 @@ final class GlossaryViewModel: ObservableObject {
                        familySources: familySources,
                        familyTarget: familyTarget,
                        givenSources: givenSources,
-                       givenTarget: givenTarget)
+                       givenTarget: givenTarget,
+                       aliases: [])
+        p.familyVariants = []
+        p.givenVariants = []
         // aliases
-        p.aliases = aliases.map { Alias(sources: $0.sources, target: $0.target, person: p) }
+        p.aliases = aliases.map { Alias(sources: $0.sources, target: $0.target, variants: [], person: p) }
         modelContext.insert(p)
         try? modelContext.save()
         refresh()
@@ -127,10 +133,12 @@ final class GlossaryViewModel: ObservableObject {
                       aliases: [(sources: [String], target: String?)]) {
         person.familySources = familySources
         person.familyTarget  = familyTarget
+        person.familyVariants = []
         person.givenSources  = givenSources
         person.givenTarget   = givenTarget
+        person.givenVariants = []
         // 단순화: 기존 별칭을 교체
-        person.aliases = aliases.map { Alias(sources: $0.sources, target: $0.target, person: person) }
+        person.aliases = aliases.map { Alias(sources: $0.sources, target: $0.target, variants: [], person: person) }
         try? modelContext.save()
         refresh()
     }
@@ -150,8 +158,9 @@ final class GlossaryViewModel: ObservableObject {
             if let exist = try? modelContext.fetch(FetchDescriptor<Term>(predicate: #Predicate { $0.source == item.source })).first {
                 exist.target = item.target
                 exist.category = item.category
+                exist.variants = item.variants
             } else {
-                let t = Term(source: item.source, target: item.target, category: item.category)
+                let t = Term(source: item.source, target: item.target, category: item.category, variants: item.variants)
                 modelContext.insert(t)
             }
         }
@@ -172,7 +181,7 @@ final class GlossaryViewModel: ObservableObject {
     }
 
     func makeExportDocument() -> GlossaryJSONDocument {
-        let items = terms.map { GlossaryJSON.TermItem(source: $0.source, target: $0.target, category: $0.category) }
+        let items = terms.map { GlossaryJSON.TermItem(source: $0.source, target: $0.target, category: $0.category, variants: $0.variants) }
         let payload = GlossaryJSON(terms: items, people: [])
         return GlossaryJSONDocument(payload: payload)
     }

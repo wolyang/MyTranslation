@@ -54,7 +54,7 @@ final class DefaultGlossaryStore: GlossaryStore {
                         let full = f + s + g
                         let fullKo = [p.familyTarget, p.givenTarget].compactMap { $0 }.joined(separator: " ")
                         if !fullKo.isEmpty {
-                            entries.append(.init(source: full, target: fullKo, category: .person, personId: p.personId))
+                            entries.append(.init(source: full, target: fullKo, variants: [], category: .person, personId: p.personId))
                         }
                     }
                 }
@@ -62,18 +62,18 @@ final class DefaultGlossaryStore: GlossaryStore {
             // 단일 성/이름
             if let ft = p.familyTarget {
                 for fs in p.familySources {
-                    entries.append(.init(source: fs, target: ft, category: .person, personId: p.personId)) }
+                    entries.append(.init(source: fs, target: ft, variants: p.familyVariants, category: .person, personId: p.personId)) }
             }
             if let gt = p.givenTarget {
                 for gs in p.givenSources {
-                    entries.append(.init(source: gs, target: gt, category: .person, personId: p.personId)) }
+                    entries.append(.init(source: gs, target: gt, variants: p.givenVariants, category: .person, personId: p.personId)) }
             }
             // alias
             for a in p.aliases {
                 let tgt = a.target // nil 가능
                 for s in a.sources {
                     if let tgt = tgt, !tgt.isEmpty {
-                        entries.append(.init(source: s, target: tgt, category: .person, personId: p.personId))
+                        entries.append(.init(source: s, target: tgt, variants: a.variants, category: .person, personId: p.personId))
                     }
                 }
             }
@@ -83,7 +83,7 @@ final class DefaultGlossaryStore: GlossaryStore {
         let terms: [Term] = try fetchTerms(query: nil)
         for t in terms {
             let cat = TermCategory(with: t.category)
-            entries.append(.init(source: t.source, target: t.target, category: cat))
+            entries.append(.init(source: t.source, target: t.target, variants: t.variants, category: cat))
         }
 
         // 3️⃣ 정렬(긴 용어 우선)

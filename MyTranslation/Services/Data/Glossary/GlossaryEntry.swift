@@ -32,11 +32,13 @@ public enum TermCategory: String, Codable, Sendable {
 public struct GlossaryEntry: Sendable {
     public let source: String
     public let target: String
+    public let variants: [String]
     public let category: TermCategory
     public let personId: String?
-    public init(source: String, target: String, category: TermCategory, personId: String? = nil) {
+    public init(source: String, target: String, variants: [String] = [], category: TermCategory, personId: String? = nil) {
         self.source = source
         self.target = target
+        self.variants = variants
         self.category = category
         self.personId = personId
     }
