@@ -352,7 +352,7 @@ final class BrowserViewModel: ObservableObject {
                 engineID: segment.engineID,
                 isFinal: true,
                 exec: exec,
-                highlight: true,
+                highlight: false,
                 url: url
             )
         case let .failed(segmentID, _):
