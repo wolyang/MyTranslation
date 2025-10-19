@@ -48,13 +48,50 @@ final class DefaultGlossaryStore: GlossaryStore {
         for p in people {
             // family/given 풀네임 후보 생성(구분자: "", " ", "·", "・", "-")
             let seps = ["", " ", "·", "・", "-"]
+            let familyTargets: [String] = {
+                var results: [String] = []
+                if let ft = p.familyTarget, !ft.isEmpty {
+                    results.append(ft)
+                }
+                for variant in p.familyVariants where !variant.isEmpty {
+                    if !results.contains(variant) {
+                        results.append(variant)
+                    }
+                }
+                return results
+            }()
+            let givenTargets: [String] = {
+                var results: [String] = []
+                if let gt = p.givenTarget, !gt.isEmpty {
+                    results.append(gt)
+                }
+                for variant in p.givenVariants where !variant.isEmpty {
+                    if !results.contains(variant) {
+                        results.append(variant)
+                    }
+                }
+                return results
+            }()
+            let fullVariants: [String] = {
+                guard !familyTargets.isEmpty, !givenTargets.isEmpty else { return [] }
+                var combos: [String] = []
+                for family in familyTargets {
+                    for given in givenTargets {
+                        let candidate = "\(family) \(given)"
+                        if !combos.contains(candidate) {
+                            combos.append(candidate)
+                        }
+                    }
+                }
+                return combos
+            }()
             for f in p.familySources {
                 for g in p.givenSources {
                     for s in seps {
                         let full = f + s + g
                         let fullKo = [p.familyTarget, p.givenTarget].compactMap { $0 }.joined(separator: " ")
                         if !fullKo.isEmpty {
-                            entries.append(.init(source: full, target: fullKo, variants: [], category: .person, personId: p.personId))
+                            entries.append(.init(source: full, target: fullKo, variants: fullVariants, category: .person, personId: p.personId))
                         }
                     }
                 }
