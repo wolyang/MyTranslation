@@ -18,60 +18,55 @@ final class WKContentExtractor: ContentExtractor {
         let blocks = try JSONDecoder().decode([BlockSnapshot].self, from: data)
         guard blocks.isEmpty == false else { throw ExtractorError.noBodyText }
 
-        var combinedText = ""
-        var blockInfos: [(block: BlockSnapshot, start: Int, length: Int)] = []
-        blockInfos.reserveCapacity(blocks.count)
-
+        var segments: [Segment] = []
+        segments.reserveCapacity(blocks.count)
+        var idx = 0
+        var globalCursor = 0
         var isFirstBlock = true
+
         for block in blocks {
             guard block.text.isEmpty == false else { continue }
+
             if isFirstBlock {
                 isFirstBlock = false
             } else {
-                combinedText.append("\n")
+                globalCursor += 1 // 블록 사이에 결합했던 개행만큼 보정
             }
-            let start = combinedText.count
-            let length = block.text.count
-            blockInfos.append((block, start, length))
-            combinedText.append(contentsOf: block.text)
-        }
 
-        let slices = segmentSlices(in: combinedText)
-        var segments: [Segment] = []
-        segments.reserveCapacity(slices.count)
-        var idx = 0
-        var blockCursor = 0
-        for slice in slices {
-            while blockCursor < blockInfos.count,
-                  slice.start >= blockInfos[blockCursor].start + blockInfos[blockCursor].length {
-                blockCursor += 1
+            let baseOffset = globalCursor
+            let slices = segmentSlices(in: block.text)
+            for slice in slices {
+                let globalStart = baseOffset + slice.start
+                let globalEnd = baseOffset + slice.end
+                guard let dom = makeDomRange(
+                    for: slice,
+                    map: block.map,
+                    globalStart: globalStart,
+                    globalEnd: globalEnd
+                ) else { continue }
+
+                let startIdx = block.text.index(block.text.startIndex, offsetBy: slice.start)
+                let endIdx = block.text.index(block.text.startIndex, offsetBy: slice.end)
+                let rawSubstring = block.text[startIdx..<endIdx]
+                let raw = String(rawSubstring)
+                guard raw.count >= 2 else { continue }
+                guard raw.isPunctOnly == false else { continue }
+
+                let normalized = normalizeForID(raw)
+                let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
+                let segment = Segment(
+                    id: sid,
+                    url: url,
+                    indexInPage: idx,
+                    originalText: raw,
+                    normalizedText: normalized,
+                    domRange: dom
+                )
+                segments.append(segment)
+                idx += 1
             }
-            guard blockCursor < blockInfos.count else { continue }
-            let info = blockInfos[blockCursor]
-            guard slice.end <= info.start + info.length else { continue }
 
-            let localSlice = TextSlice(start: slice.start - info.start, end: slice.end - info.start)
-            guard let dom = makeDomRange(for: localSlice, map: info.block.map, globalStart: slice.start, globalEnd: slice.end) else { continue }
-
-            let startIdx = combinedText.index(combinedText.startIndex, offsetBy: slice.start)
-            let endIdx = combinedText.index(combinedText.startIndex, offsetBy: slice.end)
-            let rawSubstring = combinedText[startIdx..<endIdx]
-            let raw = String(rawSubstring)
-            guard raw.count >= 2 else { continue }
-            guard raw.isPunctOnly == false else { continue }
-
-            let normalized = normalizeForID(raw)
-            let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
-            let segment = Segment(
-                id: sid,
-                url: url,
-                indexInPage: idx,
-                originalText: raw,
-                normalizedText: normalized,
-                domRange: dom
-            )
-            segments.append(segment)
-            idx += 1
+            globalCursor = baseOffset + block.text.count
         }
         guard segments.isEmpty == false else { throw ExtractorError.noBodyText }
 
@@ -155,15 +150,18 @@ final class WKContentExtractor: ContentExtractor {
 
         func appendRange(start: Int, end: Int) {
             guard start < end else { return }
-            let clipEnd = min(end, start + 800)
-            if clipEnd - start > 600 {
-                if splitByDelimiters(start: start, end: clipEnd) {
-                    return
+            var cursor = start
+            while cursor < end {
+                let clipEnd = min(end, cursor + 800)
+                if clipEnd - cursor > 600 {
+                    if splitByDelimiters(start: cursor, end: clipEnd) == false {
+                        splitByLength(start: cursor, end: clipEnd)
+                    }
+                } else {
+                    emitSegment(start: cursor, end: clipEnd)
                 }
-                splitByLength(start: start, end: clipEnd)
-                return
+                cursor = clipEnd
             }
-            emitSegment(start: start, end: clipEnd)
         }
 
         func processParagraph(start: Int, end: Int) {

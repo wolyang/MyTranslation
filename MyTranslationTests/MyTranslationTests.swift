@@ -90,6 +90,31 @@ struct MyTranslationTests {
         #expect(segments.map { $0.indexInPage } == Array(0..<segments.count))
     }
 
+    @Test @MainActor
+    func extractorPreservesEntireBlockWhenChunking() async throws {
+        let block = String(repeating: "가", count: 500)
+            + String(repeating: "나", count: 500)
+            + String(repeating: "다", count: 500)
+        let snapshot = """
+        [
+          {
+            "text": "\(block)",
+            "map": [
+              { "token": "n0", "start": 0, "end": \(block.count) }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
+        let extractor = WKContentExtractor()
+        let url = URL(string: "https://example.com/full")!
+        let segments = try await extractor.extract(using: executor, url: url)
+
+        let combined = segments.map { $0.originalText }.joined()
+        #expect(combined == block)
+        #expect(segments.count >= 2)
+    }
+
     @Test
     func inlineScriptExposesSidBasedReplacementHelpers() {
         let script = WebViewInlineReplacer.scriptForTesting()
