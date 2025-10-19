@@ -32,7 +32,8 @@ final class BrowserViewModel: ObservableObject {
     var currentURL: URL? { URL(string: urlString) }
 
     private(set) var lastSegments: [Segment] = []
-    private(set) var lastResults: [TranslationResult] = []
+    /// NOTE: TranslationStreamPayload 계약은 InlineReplacer와 동일하게 유지해야 합니다.
+    private(set) var lastPayloads: [String: TranslationStreamPayload] = [:]
     private var pendingURLAfterEditing: String?
     private var currentPageTranslation: PageTranslationState?
 
@@ -145,25 +146,30 @@ final class BrowserViewModel: ObservableObject {
     }
 
     func applyAIImproved() {
-        guard let seg = selectedSegment, let improved = pendingImproved, let web = attachedWebView else { return }
+        guard let seg = selectedSegment,
+              let improved = pendingImproved,
+              let web = attachedWebView else { return }
         let exec = WKWebViewScriptAdapter(webView: web)
-        replacer.upsertPair((original: seg.originalText, translated: improved), using: exec, immediateApply: true)
-        if let i = lastResults.firstIndex(where: { $0.segmentID == seg.id }) {
-            let previous = lastResults[i]
-            let updated = TranslationResult(
-                id: previous.id, segmentID: seg.id,
-                engine: previous.engine, text: improved,
-                residualSourceRatio: previous.residualSourceRatio,
-                createdAt: Date()
-            )
-            lastResults[i] = updated
-            if var state = currentPageTranslation,
-               var cached = state.resultsByEngine[previous.engine],
-               let cachedIndex = cached.firstIndex(where: { $0.segmentID == seg.id }) {
-                cached[cachedIndex] = updated
-                state.resultsByEngine[previous.engine] = cached
-                currentPageTranslation = state
-            }
+        let engineID = settings.preferredEngine.rawValue
+        let nextSequence = (lastPayloads[seg.id]?.sequence ?? 0) + 1
+        let payload = TranslationStreamPayload(
+            segmentID: seg.id,
+            originalText: seg.originalText,
+            translatedText: improved,
+            engineID: engineID,
+            sequence: nextSequence
+        )
+        replacer.upsert(payload: payload, using: exec, applyImmediately: true, highlight: true)
+        lastPayloads[seg.id] = payload
+        if var state = currentPageTranslation,
+           (web.url == nil || state.url == web.url) {
+            var enginePayloads = state.payloadsByEngine[engineID] ?? [:]
+            enginePayloads[seg.id] = payload
+            state.payloadsByEngine[engineID] = enginePayloads
+            var failed = state.failedSegmentsByEngine[engineID] ?? Set<String>()
+            failed.remove(seg.id)
+            state.failedSegmentsByEngine[engineID] = failed
+            currentPageTranslation = state
         }
         if var state = overlayState, state.segmentID == seg.id {
             state.improvedText = improved
@@ -199,6 +205,8 @@ final class BrowserViewModel: ObservableObject {
         closeOverlay()
         hasAttemptedTranslationForCurrentPage = true
 
+        let engineID = settings.preferredEngine.rawValue
+
         isTranslating = true
         defer {
             Task { @MainActor in
@@ -206,57 +214,115 @@ final class BrowserViewModel: ObservableObject {
                 self.isTranslating = false
             }
         }
+
+        var streamFailures = Set<String>()
         do {
             let exec = WKWebViewScriptAdapter(webView: webView)
-            let engine = settings.preferredEngine
             let segs: [Segment]
             if let state = currentPageTranslation, state.url == url {
                 segs = state.segments
             } else {
                 segs = try await extractor.extract(using: exec, url: url)
-                currentPageTranslation = PageTranslationState(url: url, segments: segs, resultsByEngine: [:])
+                currentPageTranslation = PageTranslationState(
+                    url: url,
+                    segments: segs,
+                    payloadsByEngine: [:],
+                    failedSegmentsByEngine: [:]
+                )
             }
 
             if let coord = webView.navigationDelegate as? WebContainerView.Coordinator {
-                    let pairs = segs.map { (id: $0.id, text: $0.originalText) }
-                    await coord.markSegments(pairs)
-                }
-            
-            let opts = TranslationOptions()
-            do {
-                let results = try await router.translate(
-                    segments: segs,
-                    options: opts,
-                    preferredEngine: settings.preferredEngine
-                )
-                let pairs: [(original: String, translated: String)] =
-                    zip(segs, results).compactMap { seg, res in
-                        guard !res.text.isEmpty else { return nil }
-                        return (seg.originalText, res.text)
-                    }
-                // 1) 페어 등록
-                replacer.setPairs(pairs, using: exec, observer: .restart)
-                // 2) 적용 + 옵저버 켜기(더 보기 등 동적 치환)
-                replacer.apply(using: exec, observe: true)
+                let pairs = segs.map { (id: $0.id, text: $0.originalText) }
+                await coord.markSegments(pairs)
+            }
 
-                // 캐시
-                self.lastSegments = segs
-                self.lastResults = results
-                if var state = self.currentPageTranslation, state.url == url {
-                    state.segments = segs
-                    state.resultsByEngine[engine] = results
-                    self.currentPageTranslation = state
-                } else {
-                    self.currentPageTranslation = PageTranslationState(url: url, segments: segs, resultsByEngine: [engine: results])
+            let opts = TranslationOptions()
+            lastSegments = segs
+            lastPayloads = [:]
+            streamFailures.removeAll()
+
+            if var state = currentPageTranslation, state.url == url {
+                state.failedSegmentsByEngine[engineID] = Set<String>()
+                currentPageTranslation = state
+            }
+
+            let currentRunID = translateRunID
+            _ = try await router.translateStream(
+                segments: segs,
+                options: opts,
+                preferredEngine: engineID,
+                progress: { [weak self] event in
+                    guard let self else { return }
+                    Task { @MainActor in
+                        guard self.translateRunID == currentRunID,
+                              let attached = self.attachedWebView,
+                              attached === webView else { return }
+                        switch event.kind {
+                        case .cachedHit, .requestScheduled:
+                            break
+                        case let .partial(payload):
+                            self.replacer.upsert(payload: payload, using: exec, applyImmediately: true, highlight: false)
+                        case let .final(payload):
+                            streamFailures.remove(payload.segmentID)
+                            self.replacer.upsert(payload: payload, using: exec, applyImmediately: true, highlight: true)
+                            let hasTranslation = (payload.translatedText?.isEmpty ?? true) == false
+                            if hasTranslation {
+                                self.lastPayloads[payload.segmentID] = payload
+                            } else {
+                                self.lastPayloads.removeValue(forKey: payload.segmentID)
+                            }
+                            if var state = self.currentPageTranslation, state.url == url {
+                                var enginePayloads = state.payloadsByEngine[engineID] ?? [:]
+                                if hasTranslation {
+                                    enginePayloads[payload.segmentID] = payload
+                                } else {
+                                    enginePayloads.removeValue(forKey: payload.segmentID)
+                                }
+                                state.payloadsByEngine[engineID] = enginePayloads
+                                var failed = state.failedSegmentsByEngine[engineID] ?? Set<String>()
+                                failed.remove(payload.segmentID)
+                                state.failedSegmentsByEngine[engineID] = failed
+                                self.currentPageTranslation = state
+                            }
+                        case let .failed(segmentID, _):
+                            streamFailures.insert(segmentID)
+                            if var state = self.currentPageTranslation, state.url == url {
+                                var failed = state.failedSegmentsByEngine[engineID] ?? Set<String>()
+                                failed.insert(segmentID)
+                                state.failedSegmentsByEngine[engineID] = failed
+                                self.currentPageTranslation = state
+                            }
+                        case .completed:
+                            break
+                        }
+                    }
                 }
-            } catch {
-                print("translate error: \(error)")
-                replacer.restore(using: exec)
-                _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();") // 선택 강조 초기화
+            )
+
+            replacer.apply(using: exec, observe: true)
+
+            if var state = currentPageTranslation, state.url == url {
+                state.segments = segs
+                state.payloadsByEngine[engineID] = lastPayloads
+                state.failedSegmentsByEngine[engineID] = streamFailures
+                currentPageTranslation = state
+            } else {
+                currentPageTranslation = PageTranslationState(
+                    url: url,
+                    segments: segs,
+                    payloadsByEngine: [engineID: lastPayloads],
+                    failedSegmentsByEngine: [engineID: streamFailures]
+                )
             }
         } catch {
-            // 본문 추출 자체가 실패한 케이스(희귀)
-            print("Extract error: \(error)")
+            print("translate error: \(error)")
+            if var state = currentPageTranslation, state.url == url {
+                state.failedSegmentsByEngine[engineID] = streamFailures
+                currentPageTranslation = state
+            }
+            let exec = WKWebViewScriptAdapter(webView: webView)
+            replacer.restore(using: exec)
+            _ = try? await exec.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
         }
     }
     
@@ -310,19 +376,22 @@ final class BrowserViewModel: ObservableObject {
     private func applyCachedTranslationIfAvailable(for engine: EngineTag, on webView: WKWebView) -> Bool {
         guard let url = webView.url,
               let state = currentPageTranslation,
-              state.url == url,
-              let cachedResults = state.resultsByEngine[engine],
-              cachedResults.isEmpty == false else { return false }
+              state.url == url else { return false }
+
+        let engineID = engine.rawValue
+        guard let cachedPayloads = state.payloadsByEngine[engineID],
+              cachedPayloads.isEmpty == false else { return false }
+
+        let payloads = cachedPayloads.values
+            .filter { ($0.translatedText?.isEmpty ?? true) == false }
+            .sorted { $0.sequence < $1.sequence }
+        guard payloads.isEmpty == false else { return false }
 
         let exec = WKWebViewScriptAdapter(webView: webView)
-        let pairs = zip(state.segments, cachedResults).compactMap { seg, res -> (String, String)? in
-            guard !res.text.isEmpty else { return nil }
-            return (seg.originalText, res.text)
-        }
-        replacer.setPairs(pairs, using: exec, observer: .restart)
+        replacer.setPairs(payloads, using: exec, observer: .restart)
         replacer.apply(using: exec, observe: true)
         lastSegments = state.segments
-        lastResults = cachedResults
+        lastPayloads = cachedPayloads
         hasAttemptedTranslationForCurrentPage = true
 
         let highlightPairs = state.segments.map { (id: $0.id, text: $0.originalText) }
@@ -351,7 +420,8 @@ extension BrowserViewModel {
     private struct PageTranslationState {
         var url: URL
         var segments: [Segment]
-        var resultsByEngine: [EngineTag: [TranslationResult]]
+        var payloadsByEngine: [TranslationEngineID: [String: TranslationStreamPayload]]
+        var failedSegmentsByEngine: [TranslationEngineID: Set<String>]
     }
 
     struct OverlayState: Equatable {
