@@ -219,42 +219,12 @@ private struct EnginePickerButton: View {
     var onInteract: () -> Void = {}
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
 
-    var body: some View {
-        Menu {
-            Button {
-                onInteract()
-                if showOriginal == false {
-                    showOriginal = true
-                }
-            } label: {
-                HStack {
-                    Text("원문 보기")
-                    Spacer()
-                    if showOriginal {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
+    @State private var isPresentingOptions = false
 
-            ForEach(EngineTag.allCases, id: \.self) { engine in
-                Button {
-                    onInteract()
-                    let wasShowingOriginal = showOriginal
-                    selectedEngine = engine
-                    onSelectEngine(engine, wasShowingOriginal)
-                    if wasShowingOriginal {
-                        showOriginal = false
-                    }
-                } label: {
-                    HStack {
-                        Text(engine.displayName)
-                        Spacer()
-                        if !showOriginal, engine == selectedEngine {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+    var body: some View {
+        Button {
+            onInteract()
+            isPresentingOptions.toggle()
         } label: {
             VStack(spacing: 2) {
                 Image(systemName: "globe")
@@ -270,8 +240,91 @@ private struct EnginePickerButton: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
             .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { onInteract() })
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPresentingOptions, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            EnginePickerOptionsView(
+                selectedEngine: $selectedEngine,
+                showOriginal: $showOriginal,
+                onInteract: onInteract,
+                onSelectEngine: onSelectEngine,
+                dismiss: { isPresentingOptions = false }
+            )
+        }
+        .presentationCompactAdaptation(.popover)
+    }
+}
+
+private struct EnginePickerOptionsView: View {
+    @Binding var selectedEngine: EngineTag
+    @Binding var showOriginal: Bool
+    var onInteract: () -> Void
+    var onSelectEngine: (EngineTag, Bool) -> Void
+    var dismiss: () -> Void
+
+    var body: some View {
+        let engines = Array(EngineTag.allCases)
+
+        return VStack(spacing: 0) {
+            OptionButton(title: "원문 보기", isSelected: showOriginal) {
+                onInteract()
+                if showOriginal == false {
+                    showOriginal = true
+                }
+                dismiss()
+            }
+            .padding(.vertical, 8)
+
+            Divider()
+
+            ForEach(engines.indices, id: \.self) { index in
+                let engine = engines[index]
+                OptionButton(title: engine.displayName, isSelected: !showOriginal && engine == selectedEngine) {
+                    onInteract()
+                    let wasShowingOriginal = showOriginal
+                    selectedEngine = engine
+                    onSelectEngine(engine, wasShowingOriginal)
+                    if wasShowingOriginal {
+                        showOriginal = false
+                    }
+                    dismiss()
+                }
+                .padding(.vertical, 8)
+
+                if index < engines.count - 1 {
+                    Divider()
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(minWidth: 180)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .padding(12)
+    }
+
+    private struct OptionButton: View {
+        let title: String
+        let isSelected: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: action) {
+                HStack {
+                    Text(title)
+                        .foregroundColor(.primary)
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
     }
 }
