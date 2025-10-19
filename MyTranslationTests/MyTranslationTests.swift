@@ -115,6 +115,28 @@ struct MyTranslationTests {
         #expect(segments.count >= 2)
     }
 
+    @Test @MainActor
+    func extractorDoesNotSplitSegmentsByCommaWhenChunking() async throws {
+        let repeated = Array(repeating: "이 문장은 쉼표를 포함하고, 여전히 하나의 의미를 가지고, 사용자에게 보여집니다, ", count: 90).joined()
+        let snapshot = """
+        [
+          {
+            "text": "\(repeated)",
+            "map": [
+              { "token": "nComma", "start": 0, "end": \(repeated.count) }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
+        let extractor = WKContentExtractor()
+        let url = URL(string: "https://example.com/comma")!
+        let segments = try await extractor.extract(using: executor, url: url)
+
+        #expect(segments.count < 20)
+        #expect(segments.contains { $0.originalText.components(separatedBy: ",").count > 3 })
+    }
+
     @Test
     func inlineScriptExposesSidBasedReplacementHelpers() {
         let script = WebViewInlineReplacer.scriptForTesting()

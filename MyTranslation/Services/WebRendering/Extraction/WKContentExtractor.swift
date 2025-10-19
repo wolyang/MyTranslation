@@ -92,7 +92,7 @@ final class WKContentExtractor: ContentExtractor {
             return [".", "!", "?", "。", "！", "？"].contains(ch)
         }
 
-        let delimiters: Set<Character> = ["，", ",", "、", ";", "：", ":"]
+        let delimiters: Set<Character> = [";", "；", ":", "："]
 
         func emitSegment(start: Int, end: Int) {
             guard start < end else { return }
