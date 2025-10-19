@@ -306,60 +306,61 @@ public final class TermMasker {
         // 1) 안전한 패턴 파츠
         let t = NSRegularExpression.escapedPattern(for: token)
         let ws = "(?:\\s|\\u00A0)*" // 공백 + NBSP (0개 이상)
+        let B  = #"(?=$|\s|[\p{P}\p{S}])"# // 조사 뒤 경계(끝/공백/문장부호)
 
         var str = s
         
         // 6) (이)라
         if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "라", token + "이라")
+            str = rxReplace(str, t + ws + "라" + B, token + "이라")
         } else {
-            str = rxReplace(str, t + ws + "이라", token + "라")
+            str = rxReplace(str, t + ws + "이라" + B, token + "라")
         }
 
         // 7) (으)로 — ㄹ 특례
         if info.endsWithBatchim {
             if info.endsWithRieul {
-                str = rxReplace(str, t + ws + "으로", token + "로") // ㄹ 받침이면 무조건 '로'
+                str = rxReplace(str, t + ws + "으로" + B, token + "로") // ㄹ 받침이면 무조건 '로'
             } else {
-                str = rxReplace(str, t + ws + "로", token + "으로") // 일반 받침: '로'→'으로'
+                str = rxReplace(str, t + ws + "로" + B, token + "으로") // 일반 받침: '로'→'으로'
             }
         } else {
-            str = rxReplace(str, t + ws + "으로", token + "로") // 받침 없음: '으로'→'로'
+            str = rxReplace(str, t + ws + "으로" + B, token + "로") // 받침 없음: '으로'→'로'
         }
 
         // 2) 을/를
         if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "를", token + "을")
+            str = rxReplace(str, t + ws + "를" + B, token + "을")
         } else {
-            str = rxReplace(str, t + ws + "을", token + "를")
+            str = rxReplace(str, t + ws + "을" + B, token + "를")
         }
 
         // 3) 은/는
         if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "는", token + "은")
+            str = rxReplace(str, t + ws + "는" + B, token + "은")
         } else {
-            str = rxReplace(str, t + ws + "은", token + "는")
+            str = rxReplace(str, t + ws + "은" + B, token + "는")
         }
 
         // 4) 이/가
         if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "가", token + "이")
+            str = rxReplace(str, t + ws + "가" + B, token + "이")
         } else {
-            str = rxReplace(str, t + ws + "이", token + "가")
+            str = rxReplace(str, t + ws + "이" + B, token + "가")
         }
 
         // 5) 과/와
         if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "와", token + "과")
+            str = rxReplace(str, t + ws + "와" + B, token + "과")
         } else {
-            str = rxReplace(str, t + ws + "과", token + "와")
+            str = rxReplace(str, t + ws + "과" + B, token + "와")
         }
 
         // 8) 아/야
         if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "야", token + "아")
+            str = rxReplace(str, t + ws + "야" + B, token + "아")
         } else {
-            str = rxReplace(str, t + ws + "아", token + "야")
+            str = rxReplace(str, t + ws + "아" + B, token + "야")
         }
 
         return str
