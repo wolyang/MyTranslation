@@ -173,6 +173,7 @@ final class BrowserViewModel: ObservableObject {
                 state.buffersByEngine[engine] = buffer
                 state.finalizedSegmentIDs.insert(seg.id)
                 state.failedSegmentIDs.remove(seg.id)
+                state.scheduledSegmentIDs.remove(seg.id)
                 currentPageTranslation = state
                 lastStreamPayloads = buffer.ordered
                 failedSegmentIDs = state.failedSegmentIDs
@@ -381,6 +382,7 @@ final class BrowserViewModel: ObservableObject {
                state.url == url {
                 state.failedSegmentIDs.insert(segmentID)
                 state.finalizedSegmentIDs.remove(segmentID)
+                state.scheduledSegmentIDs.remove(segmentID)
                 currentPageTranslation = state
                 failedSegmentIDs = state.failedSegmentIDs
                 // TODO: 실패 세그먼트용 오류 오버레이 연동
@@ -393,6 +395,8 @@ final class BrowserViewModel: ObservableObject {
                 state.summary = summary
                 state.failedSegmentIDs.formUnion(summary.failedSegmentIDs)
                 state.finalizedSegmentIDs.formUnion(summary.succeededSegmentIDs)
+                state.scheduledSegmentIDs.subtract(summary.failedSegmentIDs)
+                state.scheduledSegmentIDs.subtract(summary.succeededSegmentIDs)
                 currentPageTranslation = state
                 failedSegmentIDs = state.failedSegmentIDs
                 updateProgress(for: engine)
@@ -415,6 +419,7 @@ final class BrowserViewModel: ObservableObject {
         if isFinal {
             state.finalizedSegmentIDs.insert(payload.segmentID)
             state.failedSegmentIDs.remove(payload.segmentID)
+            state.scheduledSegmentIDs.remove(payload.segmentID)
         }
         currentPageTranslation = state
 
@@ -521,6 +526,7 @@ final class BrowserViewModel: ObservableObject {
         lastStreamPayloads = buffer.ordered
         var updatedState = state
         updatedState.finalizedSegmentIDs.formUnion(buffer.segmentIDs)
+        updatedState.scheduledSegmentIDs.subtract(buffer.segmentIDs)
         currentPageTranslation = updatedState
         failedSegmentIDs = updatedState.failedSegmentIDs
         updateProgress(for: engine)
