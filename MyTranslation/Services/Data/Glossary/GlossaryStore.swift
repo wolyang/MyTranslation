@@ -193,7 +193,16 @@ final class DefaultGlossaryStore: GlossaryStore {
                         let full = f + s + g
                         let fullKo = [p.familyTarget, p.givenTarget].compactMap { $0 }.joined(separator: " ")
                         if !fullKo.isEmpty {
-                            entries.append(.init(source: full, target: fullKo, variants: fullVariants, category: .person, personId: p.personId))
+                            entries.append(
+                                .init(
+                                    source: full,
+                                    target: fullKo,
+                                    variants: fullVariants,
+                                    category: .person,
+                                    personId: p.personId,
+                                    sourceForms: [full]
+                                )
+                            )
                         }
                     }
                 }
@@ -201,11 +210,31 @@ final class DefaultGlossaryStore: GlossaryStore {
             // 단일 성/이름
             if let ft = p.familyTarget {
                 for fs in p.familySources {
-                    entries.append(.init(source: fs, target: ft, variants: mergedFamilyVariants, category: .person, personId: p.personId)) }
+                    entries.append(
+                        .init(
+                            source: fs,
+                            target: ft,
+                            variants: mergedFamilyVariants,
+                            category: .person,
+                            personId: p.personId,
+                            sourceForms: p.familySources
+                        )
+                    )
+                }
             }
             if let gt = p.givenTarget {
                 for gs in p.givenSources {
-                    entries.append(.init(source: gs, target: gt, variants: mergedGivenVariants, category: .person, personId: p.personId)) }
+                    entries.append(
+                        .init(
+                            source: gs,
+                            target: gt,
+                            variants: mergedGivenVariants,
+                            category: .person,
+                            personId: p.personId,
+                            sourceForms: p.givenSources
+                        )
+                    )
+                }
             }
             // alias
             for a in p.aliases {
@@ -216,7 +245,16 @@ final class DefaultGlossaryStore: GlossaryStore {
                             primary: a.variants,
                             fallback: seedIndex.aliasVariants(personId: p.personId, sources: a.sources, target: a.target)
                         )
-                        entries.append(.init(source: s, target: tgt, variants: aliasVariants, category: .person, personId: p.personId))
+                        entries.append(
+                            .init(
+                                source: s,
+                                target: tgt,
+                                variants: aliasVariants,
+                                category: .person,
+                                personId: p.personId,
+                                sourceForms: a.sources
+                            )
+                        )
                     }
                 }
             }

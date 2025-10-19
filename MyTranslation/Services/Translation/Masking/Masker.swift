@@ -74,8 +74,11 @@ public final class TermMasker {
         var singleSourcesByPid: [String: Set<String>] = [:]
         for e in sorted where e.category == .person {
             guard let pid = e.personId, !pid.isEmpty else { continue }
-            if e.source.count >= 2 { fullSourcesByPid[pid, default: []].insert(e.source) }
-            else { singleSourcesByPid[pid, default: []].insert(e.source) }
+            let sources = e.sourceForms.isEmpty ? [e.source] : e.sourceForms
+            for src in sources {
+                if src.count >= 2 { fullSourcesByPid[pid, default: []].insert(src) }
+                else { singleSourcesByPid[pid, default: []].insert(src) }
+            }
         }
         var lastMentionIndexByPid: [String: Int] = [:]
 
@@ -390,9 +393,10 @@ public final class TermMasker {
         var seenVariantKeysByTarget: [String: Set<String>] = [:]
 
         for entry in entries where entry.category == .person {
-            guard !entry.source.isEmpty, !entry.target.isEmpty else { continue }
-            let normalizedSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
-            guard normalizedOriginal.contains(normalizedSource) else { continue }
+            guard !entry.target.isEmpty else { continue }
+            let sourceForms = entry.sourceForms.isEmpty ? [entry.source] : entry.sourceForms
+            let normalizedSources = sourceForms.map { $0.precomposedStringWithCompatibilityMapping.lowercased() }
+            guard normalizedSources.contains(where: { !$0.isEmpty && normalizedOriginal.contains($0) }) else { continue }
 
             if !entry.variants.isEmpty {
                 var bucket = variantsByTarget[entry.target, default: []]
