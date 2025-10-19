@@ -20,5 +20,11 @@ public protocol InlineReplacer {
         immediateApply: Bool
     )
     func apply(using exec: WebViewScriptExecutor, observe: Bool)
+    func upsert(
+        payload: TranslationStreamPayload,
+        using exec: WebViewScriptExecutor,
+        applyImmediately: Bool,
+        highlight: Bool
+    )
     func restore(using exec: WebViewScriptExecutor)
 }

@@ -466,6 +466,57 @@ final class WebViewInlineReplacer: InlineReplacer {
         Task { _ = try? await exec.runJS(js) }
     }
 
+    func upsert(
+        payload: TranslationStreamPayload,
+        using exec: WebViewScriptExecutor,
+        applyImmediately: Bool,
+        highlight: Bool
+    ) {
+        guard let data = try? JSONEncoder().encode(payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        let js = """
+        (function(payload, applyNow, highlight){
+          if (!window.__afmInline || !window.__afmInline.map) {
+            window.__afmInline = window.__afmInline || {};
+            window.__afmInline.norm = window.__afmInline.norm || (s => (s||'').replace(/\\s+/g,' ').trim());
+            window.__afmInline.map = window.__afmInline.map || new Map();
+            window.__afmInline.applyAll = window.__afmInline.applyAll || function(root){
+              const R = root || document.body || document.documentElement;
+              const walker = document.createTreeWalker(R, NodeFilter.SHOW_TEXT, null);
+              let n, count = 0;
+              while ((n = walker.nextNode())) {
+                if (window.__afmInline.tryReplaceTextNode && window.__afmInline.tryReplaceTextNode(n)) count++;
+              }
+              return count;
+            };
+          }
+
+          const S = window.__afmInline;
+          const norm = S.norm || (s => (s||'').replace(/\\s+/g,' ').trim());
+          const key = norm(payload.originalText);
+          if (!S.map) S.map = new Map();
+          S.map.set(key, payload.translatedText || '');
+
+          if (applyNow && S.applyAll) {
+            S.applyAll(document.body || document.documentElement);
+          }
+
+          if (highlight && window.MT && window.MT.HILITE) {
+            try { window.MT.HILITE(String(payload.segmentID)); } catch(e) { console.warn('[InlineReplacer] highlight failed', e); }
+          }
+
+          if (applyNow && window.__afmInline && window.__afmInline.enableObserver) {
+            window.__afmInline.enableObserver();
+          }
+
+          return 'upsert:' + key;
+        })(\(json), \(applyImmediately ? "true" : "false"), \(highlight ? "true" : "false"));
+        """
+
+        Task { _ = try? await exec.runJS(js) }
+    }
+
     func restore(using exec: WebViewScriptExecutor) {
         let js = """
         (function(){
