@@ -61,7 +61,7 @@ struct URLBarView: View {
         .onChange(of: showOriginal) { _, _ in
             isShowingEngineOptions = false
         }
-        .zIndex(isShowingEngineOptions ? 2 : 1)
+        .zIndex(2)
     }
 
     private var field: some View {
