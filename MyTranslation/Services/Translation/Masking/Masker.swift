@@ -53,165 +53,163 @@ public final class TermMasker {
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
     public func maskWithLocks(
-            segment: Segment,
-            glossary entries: [GlossaryEntry]
-        ) -> MaskedPack {
-            let text = segment.originalText
-            guard !text.isEmpty, !entries.isEmpty else {
-                return .init(seg: segment, masked: text, tags: [], locks: [:])
-            }
-
-            let sorted = entries.sorted { $0.source.count > $1.source.count }
-
-            var out = text
-            var tags: [String] = []
-            var locks: [String: LockInfo] = [:]
-            var localNextIndex = self.nextIndex
-
-            // === 단일 한자 검증용 사전 구축 (그대로 유지)
-            var fullSourcesByPid: [String: Set<String>] = [:]
-            var singleSourcesByPid: [String: Set<String>] = [:]
-            for e in sorted where e.category == .person {
-                guard let pid = e.personId, !pid.isEmpty else { continue }
-                if e.source.count >= 2 { fullSourcesByPid[pid, default: []].insert(e.source) }
-                else { singleSourcesByPid[pid, default: []].insert(e.source) }
-            }
-            var lastMentionIndexByPid: [String: Int] = [:]
-
-            for e in sorted {
-                guard !e.source.isEmpty, out.contains(e.source) else { continue }
-
-                // === (1) 유니크 토큰 생성 ===
-                let token = "__ENT#\(localNextIndex)__"
-                localNextIndex += 1
-
-                let pattern = NSRegularExpression.escapedPattern(for: e.source)
-                guard let rx = try? NSRegularExpression(pattern: pattern) else { continue }
-                let ns = out as NSString
-                let matches = rx.matches(in: out, range: NSRange(location: 0, length: ns.length))
-                if matches.isEmpty { continue }
-
-                var newOut = String()
-                newOut.reserveCapacity(out.utf16.count)
-                var last = 0
-
-                for m in matches {
-                    if last < m.range.location {
-                        newOut += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-                    }
-
-                    var shouldMask = true
-                    if e.category == .person,
-                       let pid = e.personId,
-                       !pid.isEmpty,
-                       e.source.count == 1 {
-                        // ---- 단일 한자 인물: 네거티브 → 화이트리스트 → 최근언급 → 짝검증 ----
-                        if isNegativeBigram(ns: ns, matchRange: m.range, center: e.source) {
-                            shouldMask = false
-                        } else if (soloFamilyAllow[pid]?.contains(e.source) == true)
-                            || (soloGivenAllow[pid]?.contains(e.source) == true)
-                                    || (soloAliasAllow[pid]?.contains(e.source) == true) {
-                            shouldMask = true
-                        } else if let last = lastMentionIndexByPid[pid],
-                                  (m.range.location - last) <= contextWindow {
-                            shouldMask = true
-                        } else {
-                            let prev1 = Self.substringSafe(ns, m.range.location - 1, 1)
-                            let prev2 = Self.substringSafe(ns, m.range.location - 2, 2)
-                            let next1 = Self.substringSafe(ns, m.range.location + m.range.length, 1)
-                            let next2 = Self.substringSafe(ns, m.range.location + m.range.length, 2)
-                            let fulls = fullSourcesByPid[pid] ?? []
-                            shouldMask = fulls.contains(prev1 + e.source)
-                                || fulls.contains(prev2)
-                                || fulls.contains(e.source + next1)
-                                || fulls.contains(e.source + next2)
-                        }
-                    }
-
-                    if shouldMask {
-                        newOut += token
-                        if e.category == .person, let pid = e.personId {
-                            lastMentionIndexByPid[pid] = m.range.location
-                        }
-                    } else {
-                        newOut += ns.substring(with: m.range)
-                    }
-
-                    last = m.range.location + m.range.length
-                }
-
-                if last < ns.length {
-                    newOut += ns.substring(with: NSRange(location: last, length: ns.length - last))
-                }
-                out = newOut
-
-                // (2) 사람일 때만 NBSP 힌트 주입
-                if e.category == .person {
-                    out = surroundTokenWithNBSP(out, token: token)
-                }
-
-                // (3) 라우터 태그 유지
-                tags.append(e.target)
-
-                // (4) LockInfo 등록
-                let (b, r) = hangulFinalJongInfo(e.target)
-                locks[token] = LockInfo(
-                    placeholder: token,
-                    target: e.target,
-                    endsWithBatchim: b,
-                    endsWithRieul: r,
-                    category: e.category
-                )
-            }
-
-            // (5) 토큰 좌우 문장부호 인접 시 공백 삽입
-            out = insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(out)
-
-            self.nextIndex = localNextIndex
-            return .init(seg: segment, masked: out, tags: tags, locks: locks)
+        segment: Segment,
+        glossary entries: [GlossaryEntry],
+        maskPerson: Bool
+    ) -> MaskedPack {
+        let text = segment.originalText
+        guard !text.isEmpty, !entries.isEmpty else {
+            return .init(seg: segment, masked: text, tags: [], locks: [:])
         }
 
-    /// 토큰 주변 조사(은/는, 이/가, 을/를, 과/와, (이)라, (으)로, (아/야)) 교정
-    public func fixParticlesAroundLocks(_ text: String, locks: [String: LockInfo]) -> String {
+        let sorted = entries.sorted { $0.source.count > $1.source.count }
+
         var out = text
-        for (_, info) in locks {
-            out = fixAroundToken(out, token: info.placeholder, info: info)
+        var tags: [String] = []
+        var locks: [String: LockInfo] = [:]
+        var localNextIndex = self.nextIndex
+
+        // === 단일 한자 검증용 사전 구축
+        var fullSourcesByPid: [String: Set<String>] = [:]
+        var singleSourcesByPid: [String: Set<String>] = [:]
+        for e in sorted where e.category == .person {
+            guard let pid = e.personId, !pid.isEmpty else { continue }
+            if e.source.count >= 2 { fullSourcesByPid[pid, default: []].insert(e.source) }
+            else { singleSourcesByPid[pid, default: []].insert(e.source) }
         }
-        return out
-    }
+        var lastMentionIndexByPid: [String: Int] = [:]
 
-    // (C) 언마스킹: 유니크 토큰으로 직접 복원
-        func unlockTermsSafely(_ text: String, locks: [String: LockInfo]) -> String {
-            guard let rx = try? NSRegularExpression(pattern: tokenRegex, options: []) else { return text }
-            let ns = text as NSString
-            let matches = rx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        for e in sorted {
+            guard !e.source.isEmpty, out.contains(e.source) else { continue }
+            // 일단 상세 인물명만 엔진에 따라 마스킹하지 않음
+            if !maskPerson && e.category == .person && e.personId != nil { continue }
 
-            var out = String()
-            out.reserveCapacity(text.utf16.count)
+            // === (1) 유니크 토큰 생성 ===
+            let token = "__ENT#\(localNextIndex)__"
+            localNextIndex += 1
+
+            let pattern = NSRegularExpression.escapedPattern(for: e.source)
+            guard let rx = try? NSRegularExpression(pattern: pattern) else { continue }
+            let ns = out as NSString
+            let matches = rx.matches(in: out, range: NSRange(location: 0, length: ns.length))
+            if matches.isEmpty { continue }
+
+            var newOut = String()
+            newOut.reserveCapacity(out.utf16.count)
             var last = 0
 
             for m in matches {
-                let full = m.range(at: 0)
-                if last < full.location {
-                    out += ns.substring(with: NSRange(location: last, length: full.location - last))
+                if last < m.range.location {
+                    newOut += ns.substring(with: NSRange(location: last, length: m.range.location - last))
                 }
-                let whole = ns.substring(with: full)
-                out += locks[whole]?.target ?? whole
-                last = full.location + full.length
+
+                var shouldMask = true
+                if e.category == .person,
+                   let pid = e.personId,
+                   !pid.isEmpty,
+                   e.source.count == 1
+                {
+                    // ---- 단일 한자 인물: 네거티브 → 화이트리스트 → 최근언급 → 짝검증 ----
+                    if isNegativeBigram(ns: ns, matchRange: m.range, center: e.source) {
+                        shouldMask = false
+                    } else if (soloFamilyAllow[pid]?.contains(e.source) == true)
+                        || (soloGivenAllow[pid]?.contains(e.source) == true)
+                        || (soloAliasAllow[pid]?.contains(e.source) == true)
+                    {
+                        shouldMask = true
+                    } else if let last = lastMentionIndexByPid[pid],
+                              (m.range.location - last) <= contextWindow
+                    {
+                        shouldMask = true
+                    } else {
+                        let prev1 = Self.substringSafe(ns, m.range.location - 1, 1)
+                        let prev2 = Self.substringSafe(ns, m.range.location - 2, 2)
+                        let next1 = Self.substringSafe(ns, m.range.location + m.range.length, 1)
+                        let next2 = Self.substringSafe(ns, m.range.location + m.range.length, 2)
+                        let fulls = fullSourcesByPid[pid] ?? []
+                        shouldMask = fulls.contains(prev1 + e.source)
+                            || fulls.contains(prev2)
+                            || fulls.contains(e.source + next1)
+                            || fulls.contains(e.source + next2)
+                    }
+                }
+
+                if shouldMask {
+                    newOut += token
+                    if e.category == .person, let pid = e.personId {
+                        lastMentionIndexByPid[pid] = m.range.location
+                    }
+                } else {
+                    newOut += ns.substring(with: m.range)
+                }
+
+                last = m.range.location + m.range.length
             }
 
             if last < ns.length {
-                out += ns.substring(with: NSRange(location: last, length: ns.length - last))
+                newOut += ns.substring(with: NSRange(location: last, length: ns.length - last))
             }
-            return out
+            out = newOut
+
+            // (2) 사람일 때만 NBSP 힌트 주입
+            if e.category == .person {
+                out = surroundTokenWithNBSP(out, token: token)
+            }
+
+            // (3) 라우터 태그 유지
+            tags.append(e.target)
+
+            // (4) LockInfo 등록
+            let (b, r) = hangulFinalJongInfo(e.target)
+            locks[token] = LockInfo(
+                placeholder: token,
+                target: e.target,
+                endsWithBatchim: b,
+                endsWithRieul: r,
+                category: e.category
+            )
         }
 
-        // --------------------------------------
-        private let tokenRegex = #"__(?:[^_]|_(?!_))+__"#
+        // (5) 토큰 좌우 문장부호 인접 시 공백 삽입
+        out = insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(out)
+
+        self.nextIndex = localNextIndex
+        return .init(seg: segment, masked: out, tags: tags, locks: locks)
+    }
+
+    // (C) 언마스킹: 유니크 토큰으로 직접 복원
+    func unlockTermsSafely(_ text: String, locks: [String: LockInfo]) -> String {
+        guard let rx = try? NSRegularExpression(pattern: tokenRegex, options: []) else { return text }
+        let ns = text as NSString
+        let matches = rx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+
+        var out = String()
+        out.reserveCapacity(text.utf16.count)
+        var last = 0
+
+        for m in matches {
+            let full = m.range(at: 0)
+            if last < full.location {
+                out += ns.substring(with: NSRange(location: last, length: full.location - last))
+            }
+            let whole = ns.substring(with: full)
+            out += locks[whole]?.target ?? whole
+            last = full.location + full.length
+        }
+
+        if last < ns.length {
+            out += ns.substring(with: NSRange(location: last, length: ns.length - last))
+        }
+        
+        return out
+    }
+
+    // --------------------------------------
+    private let tokenRegex = #"__(?:[^_]|_(?!_))+__"#
     
     // - 단일 한자 인물의 오검출 방지 보조들
     private static let baseNegativeBigrams: Set<String> = [
-        "脸红", "发红", "泛红", "通红", "变红", "红色", "红了", "红的", "绯红"
+        "脸红", "发红", "泛红", "通红", "变红", "红色", "红了", "红的", "绯红",
     ]
     private var mergedNegativeBigrams: Set<String> { Self.baseNegativeBigrams.union(extraNegativeBigrams) }
     private func isNegativeBigram(ns: NSString, matchRange r: NSRange, center: String) -> Bool {
@@ -226,6 +224,7 @@ public final class TermMasker {
         if neg.contains(next2) { return true }
         return false
     }
+
     private static func substringSafe(_ ns: NSString, _ loc: Int, _ len: Int) -> String {
         guard len > 0 else { return "" }
         if loc < 0 { return "" }
@@ -233,82 +232,6 @@ public final class TermMasker {
         let end = min(ns.length, loc + len)
         if end <= loc { return "" }
         return ns.substring(with: NSRange(location: loc, length: end - loc))
-    }
-
-    // 조사 교정 세부
-    private func fixAroundToken(_ s: String, token: String, info: LockInfo) -> String {
-        // 1) 안전한 패턴 파츠
-        let t = NSRegularExpression.escapedPattern(for: token)
-        let ws = "(?:\\s|\\u00A0)*" // 공백 + NBSP (0개 이상)
-        let B  = #"(?=$|\s|[\p{P}\p{S}])"# // 조사 뒤 경계(끝/공백/문장부호)
-
-        var str = s
-        
-        // 6) (이)라
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "라" + B, token + "이라")
-        } else {
-            str = rxReplace(str, t + ws + "이라" + B, token + "라")
-        }
-
-        // 7) (으)로 — ㄹ 특례
-        if info.endsWithBatchim {
-            if info.endsWithRieul {
-                str = rxReplace(str, t + ws + "으로" + B, token + "로") // ㄹ 받침이면 무조건 '로'
-            } else {
-                str = rxReplace(str, t + ws + "로" + B, token + "으로") // 일반 받침: '로'→'으로'
-            }
-        } else {
-            str = rxReplace(str, t + ws + "으로" + B, token + "로") // 받침 없음: '으로'→'로'
-        }
-
-        // 2) 을/를
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "를" + B, token + "을")
-        } else {
-            str = rxReplace(str, t + ws + "을" + B, token + "를")
-        }
-
-        // 3) 은/는
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "는" + B, token + "은")
-        } else {
-            str = rxReplace(str, t + ws + "은" + B, token + "는")
-        }
-
-        // 4) 이/가
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "가" + B, token + "이")
-        } else {
-            str = rxReplace(str, t + ws + "이" + B, token + "가")
-        }
-
-        // 5) 과/와
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "와" + B, token + "과")
-        } else {
-            str = rxReplace(str, t + ws + "과" + B, token + "와")
-        }
-
-        // 8) 아/야
-        if info.endsWithBatchim {
-            str = rxReplace(str, t + ws + "야" + B, token + "아")
-        } else {
-            str = rxReplace(str, t + ws + "아" + B, token + "야")
-        }
-
-        return str
-    }
-    
-    func rxReplace(_ str: String, _ pattern: String, _ repl: String) -> String {
-        do {
-            let rx = try NSRegularExpression(pattern: pattern, options: [])
-            let range = NSRange(str.startIndex..., in: str)
-            return rx.stringByReplacingMatches(in: str, options: [], range: range, withTemplate: repl)
-        } catch {
-            print("[JOSA][ERR] invalid regex: \(pattern) error=\(error)")
-            return str
-        }
     }
     
     /// 전체 텍스트를 단락(또는 세그먼트) 단위로 나눠,
@@ -320,7 +243,7 @@ public final class TermMasker {
         outParas.reserveCapacity(paras.count)
 
         let stripRx = try! NSRegularExpression(pattern: tokenRegex)
-        let leftRx  = try! NSRegularExpression(pattern: #"(?<=[\p{P}\p{S}])(__(?:[^_]|_(?!_))+__)"#)
+        let leftRx = try! NSRegularExpression(pattern: #"(?<=[\p{P}\p{S}])(__(?:[^_]|_(?!_))+__)"#)
         let rightRx = try! NSRegularExpression(pattern: #"(__(?:[^_]|_(?!_))+__)(?=[\p{P}\p{S}])"#)
 
         for p in paras {
@@ -447,6 +370,150 @@ public final class TermMasker {
         }
         return out
     }
+    
+    struct NameGlossary {
+        let target: String
+        let variants: [String]
+    }
+    
+    struct JosaPair {
+        let noBatchim: String
+        let withBatchim: String
+        let rieulException: Bool     // (으)로 계열 특례
+    }
+
+    // 최소 세트 (필요 시 확장)
+    let josaPairs: [JosaPair] = [
+        .init(noBatchim: "는",   withBatchim: "은",   rieulException: false),
+        .init(noBatchim: "가",   withBatchim: "이",   rieulException: false),
+        .init(noBatchim: "를",   withBatchim: "을",   rieulException: false),
+        .init(noBatchim: "와",   withBatchim: "과",   rieulException: false),
+        .init(noBatchim: "랑",   withBatchim: "이랑", rieulException: false),
+        .init(noBatchim: "로",   withBatchim: "으로", rieulException: true),
+        .init(noBatchim: "라",   withBatchim: "이라", rieulException: false),
+        .init(noBatchim: "라고", withBatchim: "이라고", rieulException: false),
+        .init(noBatchim: "라서", withBatchim: "이라서", rieulException: false),
+        .init(noBatchim: "라면", withBatchim: "이라면", rieulException: false),
+        .init(noBatchim: "라니", withBatchim: "이라니", rieulException: false),
+        .init(noBatchim: "라도", withBatchim: "이라도", rieulException: false),
+    ]
+    
+    private let cjkOrWord = "[\\p{Han}\\p{Hiragana}\\p{Katakana}ァ-ン一-龥ぁ-んA-Za-z0-9_]"
+    private lazy var josaAlternation: String = {
+        let all = Set(josaPairs.flatMap { [$0.noBatchim, $0.withBatchim] })
+        return all.sorted { $0.count > $1.count }
+            .map { NSRegularExpression.escapedPattern(for: $0) }
+            .joined(separator: "|")
+    }()
+    
+    private func chooseJosa(for candidate: String?, baseHasBatchim: Bool, baseIsRieul: Bool) -> String {
+        guard let cand = candidate, !cand.isEmpty else { return "" }
+        if let pair = josaPairs.first(where: { $0.noBatchim == cand || $0.withBatchim == cand }) {
+            if pair.rieulException && baseIsRieul { return pair.noBatchim } // ㄹ받침 → '로'
+            return baseHasBatchim ? pair.withBatchim : pair.noBatchim
+        }
+        return cand
+    }
+    
+    private func normKey(_ s: String) -> String {
+        s.precomposedStringWithCompatibilityMapping.lowercased()
+    }
+    
+    enum EntityMode { case tokensOnly, namesOnly, both }
+    
+    /// 토큰/이름을 한 번에 처리.
+    /// - Parameters:
+    ///   - text: 번역 텍스트
+    ///   - locksByToken: 토큰 문자열 → LockInfo (언마스킹 전에도 후에도 사용 가능)
+    ///   - names: NameGlossary 배열 (언마스킹 후 이름 표기 통일용)
+    ///   - mode: 처리 모드(토큰만/이름만/둘다)
+    func normalizeEntitiesAndParticles(
+        in text: String,
+        locksByToken: [String: LockInfo],
+        names: [NameGlossary],
+        mode: EntityMode = .both
+    ) -> String {
+
+        // 1) 패턴 준비
+        let tokenAlts: String? = {
+            guard mode != .namesOnly, !locksByToken.isEmpty else { return nil }
+            return locksByToken.keys
+                .map { NSRegularExpression.escapedPattern(for: $0) }
+                .sorted { $0.count > $1.count }
+                .joined(separator: "|")
+        }()
+
+        let nameAlts: String? = {
+            guard mode != .tokensOnly, !names.isEmpty else { return nil }
+            let alts = names.flatMap { $0.variants + [$0.target] }
+                .map { NSRegularExpression.escapedPattern(for: $0) }
+            return alts.sorted { $0.count > $1.count }.joined(separator: "|")
+        }()
+
+        // (토큰|이름) + 선택적 공백 + 선택적 조사
+        let entityAlt = [tokenAlts, nameAlts].compactMap { $0 }.joined(separator: "|")
+        if entityAlt.isEmpty { return text }
+
+        let pattern = """
+        (?<!\(cjkOrWord)) # 앞 경계
+        (
+          \(entityAlt)
+        )
+        \(wsClass)
+        (\(josaAlternation))?
+        (?!\(cjkOrWord))  # 뒤 경계
+        """
+        let rx = try! NSRegularExpression(pattern: pattern, options: [.allowCommentsAndWhitespace, .caseInsensitive])
+
+        // 2) 매칭-치환
+        let ns = text as NSString
+        var out = ""
+        var last = 0
+
+        rx.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+            guard let m = m else { return }
+            let whole = m.range(at: 0)
+            let nameRange = m.range(at: 1)
+            let afterNameLoc = NSMaxRange(nameRange)
+            let josaLen = NSMaxRange(whole) - afterNameLoc
+            let candidateJosa = josaLen > 0 ? ns.substring(with: NSRange(location: afterNameLoc, length: josaLen)) : nil
+
+            let matched = ns.substring(with: nameRange)
+
+            // 분기: 토큰인가? 이름인가?
+            if mode != .namesOnly, let info = locksByToken[matched] {
+                // 토큰은 그대로 두고 조사만 교정
+                let chosen = chooseJosa(for: candidateJosa,
+                                        baseHasBatchim: info.endsWithBatchim,
+                                        baseIsRieul: info.endsWithRieul)
+                out += ns.substring(with: NSRange(location: last, length: nameRange.location - last))
+                out += matched + chosen
+                last = NSMaxRange(whole)
+            } else if mode != .tokensOnly {
+                // 이름: canonical로 통일 + canonical 기준으로 조사 재계산
+                let canon = canonicalFor(matched, entries: names)
+                let (has, rieul) = hangulFinalJongInfo(canon)
+                let chosen = chooseJosa(for: candidateJosa, baseHasBatchim: has, baseIsRieul: rieul)
+                out += ns.substring(with: NSRange(location: last, length: nameRange.location - last))
+                out += canon + chosen
+                last = NSMaxRange(whole)
+            } else {
+                // 여기로 올 일 거의 없음(방어)
+            }
+        }
+        out += ns.substring(from: last)
+        return out
+    }
+
+    // 이름 매핑
+    private func canonicalFor(_ matched: String, entries: [NameGlossary]) -> String {
+        let key = normKey(matched)
+        for e in entries {
+            if normKey(e.target) == key { return e.target }
+            for v in e.variants { if normKey(v) == key { return e.target } }
+        }
+        return matched
+    }
 }
 
 private extension String {
@@ -458,10 +525,10 @@ private extension String {
     }
     
     var isPunctOrSpaceOnly_loose: Bool {
-            // 공백 계열: 일반 공백/개행 + NBSP + narrow NBSP + thin space + hair space + zero-width space + 전각 공백
-            let spaces = CharacterSet.whitespacesAndNewlines
-                .union(CharacterSet(charactersIn: "\u{00A0}\u{202F}\u{2009}\u{200A}\u{200B}\u{205F}\u{3000}"))
-            let set = CharacterSet.punctuationCharacters.union(.symbols).union(spaces)
-            return unicodeScalars.allSatisfy { set.contains($0) }
-        }
+        // 공백 계열: 일반 공백/개행 + NBSP + narrow NBSP + thin space + hair space + zero-width space + 전각 공백
+        let spaces = CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: "\u{00A0}\u{202F}\u{2009}\u{200A}\u{200B}\u{205F}\u{3000}"))
+        let set = CharacterSet.punctuationCharacters.union(.symbols).union(spaces)
+        return unicodeScalars.allSatisfy { set.contains($0) }
+    }
 }

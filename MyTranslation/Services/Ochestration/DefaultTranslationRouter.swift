@@ -87,7 +87,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
             let termMasker = TermMasker()
             let maskedPacks = pendingSegments.map { segment in
-                termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
+                termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries, maskPerson: engine.maskPerson)
             }
             let maskedSegments: [Segment] = maskedPacks.map { pack in
                 Segment(
@@ -120,29 +120,32 @@ final class DefaultTranslationRouter: TranslationRouter {
                         let pack = maskedPacks[globalIndex]
                         let originalSegment = pendingSegments[globalIndex]
 
-                        let raw = result.text
-                        let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
-                        let unmasked = termMasker.unlockTermsSafely(
-                            corrected,
+                        var output = result.text
+                        output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: pack.locks, names: [], mode: .tokensOnly)
+                        output = termMasker.unlockTermsSafely(
+                            output,
                             locks: pack.locks
                         )
-
-                        var finalOutput = unmasked
+                        
+                        if !engine.maskPerson {
+                            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
+                            output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: [:], names: glossaryEntries.map({ .init(target: $0.target, variants: $0.variants)
+                            }), mode: .namesOnly)
+                        }
 
                         if pack.locks.values.count == 1,
                            let target = pack.locks.values.first?.target
                         {
-                            let collapsed = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(unmasked, target: target)
-                            finalOutput = collapsed
+                            output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
                         }
 
-                        let hanCount = finalOutput.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                        let residual = Double(hanCount) / Double(max(finalOutput.count, 1))
+                        let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                        let residual = Double(hanCount) / Double(max(output.count, 1))
                         let finalResult = TranslationResult(
                             id: result.id,
                             segmentID: result.segmentID,
                             engine: result.engine,
-                            text: finalOutput,
+                            text: output,
                             residualSourceRatio: residual,
                             createdAt: result.createdAt
                         )

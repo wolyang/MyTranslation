@@ -3,6 +3,7 @@ import Foundation
 
 final class GoogleEngine: TranslationEngine {
     let tag: EngineTag = .google
+    public let maskPerson: Bool = true
     private let client: GoogleTranslateV2Client
     public init(client: GoogleTranslateV2Client) {
         self.client = client

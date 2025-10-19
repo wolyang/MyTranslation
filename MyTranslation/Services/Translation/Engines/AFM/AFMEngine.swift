@@ -15,6 +15,7 @@ public protocol AFMClient {
 public struct AFMEngine: TranslationEngine {
     public let tag: EngineTag = .afm
     private let client: AFMClient
+    public let maskPerson: Bool = false
 
     public init(client: AFMClient) {
         self.client = client
