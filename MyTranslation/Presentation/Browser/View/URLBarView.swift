@@ -20,24 +20,24 @@ struct URLBarView: View {
     private let maxRecentCount = 8
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    field
-                        .background(fieldHeightReader)
-                        .overlay(alignment: .topLeading) {
-                            if shouldShowSuggestions {
-                                suggestions
-                                    .offset(y: fieldHeight + 6)
-                            }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                field
+                    .background(fieldHeightReader)
+                    .overlay(alignment: .topLeading) {
+                        if shouldShowSuggestions {
+                            suggestions
+                                .offset(y: fieldHeight + 6)
                         }
-                        .frame(maxWidth: .infinity)
+                    }
+                    .frame(maxWidth: .infinity)
 
-                    controlGroup
-                }
-                .background(barHeightReader)
+                controlGroup
             }
-
+            .background(barHeightReader)
+        }
+        .animation(.easeInOut(duration: 0.2), value: isShowingEngineOptions)
+        .overlay(alignment: .topLeading) {
             if isShowingEngineOptions {
                 EnginePickerOptionsContainer {
                     EnginePickerOptionsView(
@@ -50,12 +50,11 @@ struct URLBarView: View {
                         dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
                     )
                 }
-                .padding(.top, barHeight + 6)
+                .offset(y: barHeight + 6)
                 .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
                 .zIndex(1)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isShowingEngineOptions)
         .onChange(of: selectedEngine) { _, _ in
             isShowingEngineOptions = false
         }
