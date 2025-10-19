@@ -22,7 +22,7 @@ final class GoogleEngine: TranslationEngine {
             let slice = Array(segments[i ..< end])
             let texts = slice.map { $0.originalText }
 
-            print("[GoogleEngine] batch i=\(i) count=\(slice.count)")
+//            print("[GoogleEngine] batch i=\(i) count=\(slice.count)")
 
             // 실제 API 호출
             let translations = try await client.translate(

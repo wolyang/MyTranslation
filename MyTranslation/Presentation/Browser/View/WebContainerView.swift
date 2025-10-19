@@ -54,8 +54,6 @@ struct WebContainerView: UIViewRepresentable {
         }
 
         func userContentController(_ ucc: WKUserContentController, didReceive msg: WKScriptMessage) {
-            print("[UCC] didReceive message")
-            
             switch msg.name {
             case "mtconsole":
                 if let m = msg.body as? [String: Any],

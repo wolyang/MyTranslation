@@ -86,14 +86,12 @@ final class DefaultTranslationRouter: TranslationRouter {
             await Task.yield()
 
             let termMasker = TermMasker()
-            let maskedResults = pendingSegments.map { segment in
+            let maskedPacks = pendingSegments.map { segment in
                 termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
             }
-            let maskedPacks = maskedResults.map { $0.pack }
 
             for (index, pack) in maskedPacks.enumerated() {
                 try Task.checkCancellation()
-                let personQueues = maskedResults[index].personQueues
                 let originalSegment = pendingSegments[index]
                 let maskedSegment = Segment(
                     id: pack.seg.id,
@@ -125,12 +123,14 @@ final class DefaultTranslationRouter: TranslationRouter {
                     }
                     
                     let raw = result.text
+//                    print("[Router] raw: \(raw)")
                     let corrected = termMasker.fixParticlesAroundLocks(raw, locks: pack.locks)
+//                    print("[Router] corrected: \(corrected)")
                     let unmasked = termMasker.unlockTermsSafely(
                         corrected,
-                        locks: pack.locks,
-                        personQueues: personQueues
+                        locks: pack.locks
                     )
+//                    print("[Router] unmasked: \(unmasked)")
                     
                     var finalOutput = unmasked
                     
@@ -139,6 +139,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     {
                         let collapsed = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(unmasked, target: target)
                         finalOutput = collapsed
+//                        print("[Router] collapsed: \(collapsed)")
                     }
                     
                     let hanCount = finalOutput.unicodeScalars.filter { $0.properties.isIdeographic }.count

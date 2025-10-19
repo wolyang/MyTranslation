@@ -39,7 +39,7 @@ public struct AFMEngine: TranslationEngine {
             let sliceLens = slice.map { $0.originalText.count }
             let batchChars = sliceLens.reduce(0,+)
             let maxInBatch = sliceLens.max() ?? 0
-            print("[AFMEngine] batch i=\(i) count=\(slice.count) chars=\(batchChars) maxLen=\(maxInBatch)")
+//            print("[AFMEngine] batch i=\(i) count=\(slice.count) chars=\(batchChars) maxLen=\(maxInBatch)")
             
             let outs = try await client.translateBatch(
                 texts: texts,
