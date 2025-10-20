@@ -18,60 +18,55 @@ final class WKContentExtractor: ContentExtractor {
         let blocks = try JSONDecoder().decode([BlockSnapshot].self, from: data)
         guard blocks.isEmpty == false else { throw ExtractorError.noBodyText }
 
-        var combinedText = ""
-        var blockInfos: [(block: BlockSnapshot, start: Int, length: Int)] = []
-        blockInfos.reserveCapacity(blocks.count)
-
+        var segments: [Segment] = []
+        segments.reserveCapacity(blocks.count)
+        var idx = 0
+        var globalCursor = 0
         var isFirstBlock = true
+
         for block in blocks {
             guard block.text.isEmpty == false else { continue }
+
             if isFirstBlock {
                 isFirstBlock = false
             } else {
-                combinedText.append("\n")
+                globalCursor += 1 // 블록 사이에 결합했던 개행만큼 보정
             }
-            let start = combinedText.count
-            let length = block.text.count
-            blockInfos.append((block, start, length))
-            combinedText.append(contentsOf: block.text)
-        }
 
-        let slices = segmentSlices(in: combinedText)
-        var segments: [Segment] = []
-        segments.reserveCapacity(slices.count)
-        var idx = 0
-        var blockCursor = 0
-        for slice in slices {
-            while blockCursor < blockInfos.count,
-                  slice.start >= blockInfos[blockCursor].start + blockInfos[blockCursor].length {
-                blockCursor += 1
+            let baseOffset = globalCursor
+            let slices = segmentSlices(in: block.text)
+            for slice in slices {
+                let globalStart = baseOffset + slice.start
+                let globalEnd = baseOffset + slice.end
+                guard let dom = makeDomRange(
+                    for: slice,
+                    map: block.map,
+                    globalStart: globalStart,
+                    globalEnd: globalEnd
+                ) else { continue }
+
+                let startIdx = block.text.index(block.text.startIndex, offsetBy: slice.start)
+                let endIdx = block.text.index(block.text.startIndex, offsetBy: slice.end)
+                let rawSubstring = block.text[startIdx..<endIdx]
+                let raw = String(rawSubstring)
+                guard raw.count >= 2 else { continue }
+                guard raw.isPunctOnly == false else { continue }
+
+                let normalized = normalizeForID(raw)
+                let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
+                let segment = Segment(
+                    id: sid,
+                    url: url,
+                    indexInPage: idx,
+                    originalText: raw,
+                    normalizedText: normalized,
+                    domRange: dom
+                )
+                segments.append(segment)
+                idx += 1
             }
-            guard blockCursor < blockInfos.count else { continue }
-            let info = blockInfos[blockCursor]
-            guard slice.end <= info.start + info.length else { continue }
 
-            let localSlice = TextSlice(start: slice.start - info.start, end: slice.end - info.start)
-            guard let dom = makeDomRange(for: localSlice, map: info.block.map, globalStart: slice.start, globalEnd: slice.end) else { continue }
-
-            let startIdx = combinedText.index(combinedText.startIndex, offsetBy: slice.start)
-            let endIdx = combinedText.index(combinedText.startIndex, offsetBy: slice.end)
-            let rawSubstring = combinedText[startIdx..<endIdx]
-            let raw = String(rawSubstring)
-            guard raw.count >= 2 else { continue }
-            guard raw.isPunctOnly == false else { continue }
-
-            let normalized = normalizeForID(raw)
-            let sid = sha1Hex("\(normalized)|\(url.absoluteString)#\(idx)::v1")
-            let segment = Segment(
-                id: sid,
-                url: url,
-                indexInPage: idx,
-                originalText: raw,
-                normalizedText: normalized,
-                domRange: dom
-            )
-            segments.append(segment)
-            idx += 1
+            globalCursor = baseOffset + block.text.count
         }
         guard segments.isEmpty == false else { throw ExtractorError.noBodyText }
 
@@ -93,19 +88,17 @@ final class WKContentExtractor: ContentExtractor {
             return chars[index].unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
         }
 
-        func isSentenceTerminator(_ ch: Character) -> Bool {
-            return [".", "!", "?", "。", "！", "？"].contains(ch)
-        }
-
-        let delimiters: Set<Character> = ["，", ",", "、", ";", "：", ":"]
-
-        func emitSegment(start: Int, end: Int) {
-            guard start < end else { return }
+        func trimmedRange(start: Int, end: Int) -> (Int, Int)? {
             var s = start
             var e = end
             while s < e && isWhitespace(s) { s += 1 }
             while e > s && isWhitespace(e - 1) { e -= 1 }
-            guard s < e else { return }
+            guard s < e else { return nil }
+            return (s, e)
+        }
+
+        func emitSegment(start: Int, end: Int) {
+            guard let (s, e) = trimmedRange(start: start, end: end) else { return }
             let startIdx = text.index(text.startIndex, offsetBy: s)
             let endIdx = text.index(text.startIndex, offsetBy: e)
             let snippet = String(text[startIdx..<endIdx])
@@ -113,97 +106,70 @@ final class WKContentExtractor: ContentExtractor {
             slices.append(TextSlice(start: s, end: e))
         }
 
-        func splitByLength(start: Int, end: Int) {
-            var cursor = start
-            while cursor < end {
-                let chunkEnd = min(end, cursor + 400)
-                emitSegment(start: cursor, end: chunkEnd)
-                cursor = chunkEnd
-            }
-        }
+        let sentenceTerminators: Set<Character> = [".", "!", "?", "。", "！", "？"]
+        let hardDelimiters: Set<Character> = [";", "；", ":", "："]
+        let preferredLength = 600
+        let maxLength = 800
 
-        func emitOrSplit(start: Int, end: Int) {
-            guard start < end else { return }
-            if end - start > 600 {
-                splitByLength(start: start, end: end)
-            } else {
-                emitSegment(start: start, end: end)
-            }
-        }
-
-        func splitByDelimiters(start: Int, end: Int) -> Bool {
-            var produced = false
-            var pieceStart = start
-            var i = start
-            while i < end {
-                let ch = chars[i]
-                if delimiters.contains(ch) {
-                    var pieceEnd = i + 1
-                    while pieceEnd < end && isWhitespace(pieceEnd) { pieceEnd += 1 }
-                    emitOrSplit(start: pieceStart, end: pieceEnd)
-                    pieceStart = pieceEnd
-                    produced = true
+        func findBreakPoint(in range: Range<Int>, upperBound: Int) -> Int? {
+            guard range.lowerBound < range.upperBound else { return nil }
+            var i = range.upperBound
+            while i > range.lowerBound {
+                let ch = chars[i - 1]
+                if sentenceTerminators.contains(ch) || hardDelimiters.contains(ch) {
+                    var next = i
+                    while next < upperBound && isWhitespace(next) { next += 1 }
+                    if next > range.lowerBound { return next }
                 }
-                i += 1
+                i -= 1
             }
-            if pieceStart < end {
-                emitOrSplit(start: pieceStart, end: end)
-                produced = true
-            }
-            return produced
+            return nil
         }
 
-        func appendRange(start: Int, end: Int) {
-            guard start < end else { return }
-            let clipEnd = min(end, start + 800)
-            if clipEnd - start > 600 {
-                if splitByDelimiters(start: start, end: clipEnd) {
-                    return
+        func findWhitespaceBreak(in range: Range<Int>, upperBound: Int) -> Int? {
+            guard range.lowerBound < range.upperBound else { return nil }
+            var i = range.upperBound
+            while i > range.lowerBound {
+                if isWhitespace(i - 1) {
+                    var next = i
+                    while next < upperBound && isWhitespace(next) { next += 1 }
+                    if next > range.lowerBound { return next }
                 }
-                splitByLength(start: start, end: clipEnd)
-                return
+                i -= 1
             }
-            emitSegment(start: start, end: clipEnd)
+            return nil
         }
 
-        func processParagraph(start: Int, end: Int) {
-            var s = start
-            var e = end
-            while s < e && isWhitespace(s) { s += 1 }
-            while e > s && isWhitespace(e - 1) { e -= 1 }
-            guard s < e else { return }
-
-            var sentenceStart = s
-            var i = s
-            while i < e {
-                let ch = chars[i]
-                if isSentenceTerminator(ch) {
-                    var next = i + 1
-                    var hasWhitespace = false
-                    while next < e && isWhitespace(next) {
-                        hasWhitespace = true
-                        next += 1
-                    }
-                    if hasWhitespace {
-                        appendRange(start: sentenceStart, end: next)
-                        sentenceStart = next
-                        i = next
-                        continue
-                    }
+        func appendParagraph(start: Int, end: Int) {
+            guard let (trimmedStart, trimmedEnd) = trimmedRange(start: start, end: end) else { return }
+            var cursor = trimmedStart
+            while cursor < trimmedEnd {
+                let remaining = trimmedEnd - cursor
+                if remaining <= maxLength {
+                    emitSegment(start: cursor, end: trimmedEnd)
+                    break
                 }
-                i += 1
-            }
-            if sentenceStart < e {
-                appendRange(start: sentenceStart, end: e)
+
+                let softLimit = min(trimmedEnd, cursor + preferredLength)
+                let hardLimit = min(trimmedEnd, cursor + maxLength)
+
+                let searchLower = max(cursor + 1, softLimit)
+                let searchRange = searchLower..<hardLimit
+                let boundary = findBreakPoint(in: searchRange, upperBound: trimmedEnd)
+                    ?? findWhitespaceBreak(in: searchRange, upperBound: trimmedEnd)
+                    ?? hardLimit
+
+                emitSegment(start: cursor, end: boundary)
+                cursor = boundary
             }
         }
 
         var cursor = 0
         while cursor < count {
-            var paraEnd = cursor
-            while paraEnd < count && chars[paraEnd] != "\n" { paraEnd += 1 }
-            processParagraph(start: cursor, end: paraEnd)
-            cursor = paraEnd + 1
+            var paragraphEnd = cursor
+            while paragraphEnd < count && chars[paragraphEnd] != "\n" { paragraphEnd += 1 }
+            appendParagraph(start: cursor, end: paragraphEnd)
+            cursor = paragraphEnd + 1
         }
 
         return slices

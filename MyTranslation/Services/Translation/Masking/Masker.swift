@@ -74,8 +74,11 @@ public final class TermMasker {
         var singleSourcesByPid: [String: Set<String>] = [:]
         for e in sorted where e.category == .person {
             guard let pid = e.personId, !pid.isEmpty else { continue }
-            if e.source.count >= 2 { fullSourcesByPid[pid, default: []].insert(e.source) }
-            else { singleSourcesByPid[pid, default: []].insert(e.source) }
+            let sources = e.sourceForms.isEmpty ? [e.source] : e.sourceForms
+            for src in sources {
+                if src.count >= 2 { fullSourcesByPid[pid, default: []].insert(src) }
+                else { singleSourcesByPid[pid, default: []].insert(src) }
+            }
         }
         var lastMentionIndexByPid: [String: Int] = [:]
 
@@ -374,6 +377,48 @@ public final class TermMasker {
     struct NameGlossary {
         let target: String
         let variants: [String]
+    }
+
+    /// 원문에 등장한 인물 용어만 선별하여 정규화용 이름 정보를 생성한다.
+    /// - Parameters:
+    ///   - original: 용어 검사를 수행할 원문 텍스트
+    ///   - entries: 용어집 엔트리 목록
+    /// - Returns: 원문에 등장한 인물 용어의 target/variants 정보 배열
+    func makeNameGlossaries(forOriginalText original: String, entries: [GlossaryEntry]) -> [NameGlossary] {
+        guard !original.isEmpty else { return [] }
+
+        let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
+
+        var variantsByTarget: [String: [String]] = [:]
+        var seenVariantKeysByTarget: [String: Set<String>] = [:]
+
+        for entry in entries where entry.category == .person {
+            guard !entry.target.isEmpty else { continue }
+            let sourceForms = entry.sourceForms.isEmpty ? [entry.source] : entry.sourceForms
+            let normalizedSources = sourceForms.map { $0.precomposedStringWithCompatibilityMapping.lowercased() }
+            guard normalizedSources.contains(where: { !$0.isEmpty && normalizedOriginal.contains($0) }) else { continue }
+
+            if !entry.variants.isEmpty {
+                var bucket = variantsByTarget[entry.target, default: []]
+                var seen = seenVariantKeysByTarget[entry.target, default: []]
+                for variant in entry.variants where !variant.isEmpty {
+                    let key = normKey(variant)
+                    if seen.insert(key).inserted {
+                        bucket.append(variant)
+                    }
+                }
+                variantsByTarget[entry.target] = bucket
+                seenVariantKeysByTarget[entry.target] = seen
+            } else if variantsByTarget[entry.target] == nil {
+                variantsByTarget[entry.target] = []
+            }
+        }
+
+        guard variantsByTarget.isEmpty == false else { return [] }
+
+        return variantsByTarget.map { target, variants in
+            NameGlossary(target: target, variants: variants)
+        }
     }
     
     struct JosaPair {

@@ -69,6 +69,27 @@ struct MyTranslationTests {
     }
 
     @Test @MainActor
+    func extractorKeepsMultiSentenceParagraphAsSingleSegment() async throws {
+        let snapshot = """
+        [
+          {
+            "text": "첫 번째 문장입니다. 두 번째 문장도 이어지고 있습니다. 마지막 문장까지 하나의 단락으로 유지됩니다.",
+            "map": [
+              { "token": "n2", "start": 0, "end": 54 }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
+        let extractor = WKContentExtractor()
+        let url = URL(string: "https://example.com/paragraph")!
+        let segments = try await extractor.extract(using: executor, url: url)
+
+        #expect(segments.count == 1)
+        #expect(segments.first?.originalText.contains("두 번째 문장") == true)
+    }
+
+    @Test @MainActor
     func extractorSplitsVeryLongParagraphIntoMultipleSegments() async throws {
         let longSentence = String(repeating: "a", count: 700) + "?" + String(repeating: "b", count: 650)
         let snapshot = """
@@ -88,6 +109,53 @@ struct MyTranslationTests {
 
         #expect(segments.count > 1)
         #expect(segments.map { $0.indexInPage } == Array(0..<segments.count))
+    }
+
+    @Test @MainActor
+    func extractorPreservesEntireBlockWhenChunking() async throws {
+        let block = String(repeating: "가", count: 500)
+            + String(repeating: "나", count: 500)
+            + String(repeating: "다", count: 500)
+        let snapshot = """
+        [
+          {
+            "text": "\(block)",
+            "map": [
+              { "token": "n0", "start": 0, "end": \(block.count) }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
+        let extractor = WKContentExtractor()
+        let url = URL(string: "https://example.com/full")!
+        let segments = try await extractor.extract(using: executor, url: url)
+
+        let combined = segments.map { $0.originalText }.joined()
+        #expect(combined == block)
+        #expect(segments.count >= 2)
+    }
+
+    @Test @MainActor
+    func extractorDoesNotSplitSegmentsByCommaWhenChunking() async throws {
+        let repeated = Array(repeating: "이 문장은 쉼표를 포함하고, 여전히 하나의 의미를 가지고, 사용자에게 보여집니다, ", count: 90).joined()
+        let snapshot = """
+        [
+          {
+            "text": "\(repeated)",
+            "map": [
+              { "token": "nComma", "start": 0, "end": \(repeated.count) }
+            ]
+          }
+        ]
+        """
+        let executor = StubWebViewExecutor(result: snapshot)
+        let extractor = WKContentExtractor()
+        let url = URL(string: "https://example.com/comma")!
+        let segments = try await extractor.extract(using: executor, url: url)
+
+        #expect(segments.count < 20)
+        #expect(segments.contains { $0.originalText.components(separatedBy: ",").count > 3 })
     }
 
     @Test

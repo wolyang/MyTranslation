@@ -31,12 +31,24 @@ public enum TermCategory: String, Codable, Sendable {
 
 public struct GlossaryEntry: Sendable {
     public let source: String
+    public let sourceForms: [String]
     public let target: String
     public let variants: [String]
     public let category: TermCategory
     public let personId: String?
-    public init(source: String, target: String, variants: [String] = [], category: TermCategory, personId: String? = nil) {
+    public init(source: String,
+                target: String,
+                variants: [String] = [],
+                category: TermCategory,
+                personId: String? = nil,
+                sourceForms: [String]? = nil) {
         self.source = source
+        let trimmed = sourceForms?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? []
+        if trimmed.isEmpty {
+            self.sourceForms = [source]
+        } else {
+            self.sourceForms = trimmed
+        }
         self.target = target
         self.variants = variants
         self.category = category
