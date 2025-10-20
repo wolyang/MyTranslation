@@ -174,21 +174,18 @@ final class SelectionBridge: NSObject {
             return walk(frag);
         }
 
-          function collectBlocks() {
+        const BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div';
+
+        function collectBlocks() {
             // body 내부의 텍스트 블록만 대상으로 제한 (head/title 제외)
             const root = document.body || document.documentElement;
             if (!root) return [];
-            const nodes = Array.from(
-              root.querySelectorAll('p,li,article,section,blockquote,main,aside,header,footer,div')
-            );
-            // 너무 짧거나 display:none/visibility:hidden 대강 거르기
-            return nodes.filter(el => {
-              // const tn = el.tagName?.toLowerCase() || '';
-              // if (!tn) return false;
-              // if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') return false;
+            const nodes = Array.from(root.querySelectorAll(BLOCK_QUERY));
+            const candidates = nodes.filter(el => {
               const txt = (el.innerText || '').trim();
               return txt.length >= 6;
             });
+            return candidates.filter(el => !candidates.some(other => other !== el && el.contains(other)));
           }
 
           function buildIndex(block) {
