@@ -17,7 +17,7 @@ final class BrowserViewModel: ObservableObject {
     }
 
     @Published var request: URLRequest? = nil
-    @Published private(set) var currentPageURLString: String = ""
+    @Published var currentPageURLString: String = ""
     @Published var pendingAutoTranslateID: UUID? = nil
     @Published var overlayState: OverlayState?
     @Published var fmPanel: FMAnswer?
@@ -55,10 +55,11 @@ final class BrowserViewModel: ObservableObject {
         replacer: InlineReplacer,
 //        fmQuery: FMQueryService,
         settings: UserSettings,
-        presetLinks: [PresetLink] = BrowserViewModel.defaultPresetLinks
+        presetLinks: [PresetLink]? = nil
     ) {
-        self.presetLinks = presetLinks
-        self._urlString = Published(initialValue: presetLinks.first?.url ?? "")
+        let resolvedPresetLinks = presetLinks ?? Self.defaultPresetLinks
+        self.presetLinks = resolvedPresetLinks
+        self._urlString = Published(initialValue: resolvedPresetLinks.first?.url ?? "")
         self.extractor = extractor
         self.router = router
         self.replacer = replacer
@@ -105,7 +106,7 @@ extension BrowserViewModel {
         var id: String { url }
     }
 
-    nonisolated(unsafe) static let defaultPresetLinks: [PresetLink] = [
+    static let defaultPresetLinks: [PresetLink] = [
         .init(
             title: "AO3 – 특정 작품",
             url: "https://archiveofourown.org/works/71109986?view_adult=true"
