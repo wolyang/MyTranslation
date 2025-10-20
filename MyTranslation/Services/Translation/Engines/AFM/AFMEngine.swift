@@ -5,10 +5,12 @@ import Foundation
 // - 실제 구현체는 사용 중인 Foundation Models 호출 래퍼에 맞춰 Adapter를 만드세요.
 // - 기대 동작: inputs.count == outputs.count, 순서 보존
 public protocol AFMClient {
-    /// Returns translated strings in the same order as inputs
-    func translateBatch(texts: [String],
-                        style: TranslationStyle,
-                        preserveFormatting: Bool) async throws -> [String]
+    /// Returns a stream of translated strings tagged by segment id.
+    func translateBatch(
+        segments: [Segment],
+        style: TranslationStyle,
+        preserveFormatting: Bool
+    ) async throws -> AsyncThrowingStream<(segmentID: String, translatedText: String), Error>
 }
 
 // 2) TranslationEngine 구현
@@ -22,53 +24,53 @@ public struct AFMEngine: TranslationEngine {
     }
 
     public func translate(_ segments: [Segment],
-                          options: TranslationOptions) async throws -> [TranslationResult] {
-        guard !segments.isEmpty else { return [] }
-
-        // 안전한 배치 크기(필요시 조정)
-        let batchSize = 50
-        var results: [TranslationResult] = []
-        results.reserveCapacity(segments.count)
-        let now = Date()
-
-        var i = 0
-        while i < segments.count {
-            let end = min(i + batchSize, segments.count)
-            let slice = Array(segments[i..<end])
-            let texts = slice.map { $0.originalText }
-
-            let sliceLens = slice.map { $0.originalText.count }
-            let batchChars = sliceLens.reduce(0,+)
-            let maxInBatch = sliceLens.max() ?? 0
-//            print("[AFMEngine] batch i=\(i) count=\(slice.count) chars=\(batchChars) maxLen=\(maxInBatch)")
-            
-            let outs = try await client.translateBatch(
-                texts: texts,
-                style: options.style,
-                preserveFormatting: options.preserveFormatting
-            )
-
-            // 길이 불일치 방어
-            if outs.count != slice.count {
-                throw NSError(domain: "AFMEngine",
-                              code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "AFMClient returned \(outs.count) results for \(slice.count) inputs"])
+                          options: TranslationOptions) async throws -> AsyncThrowingStream<TranslationResult, Error> {
+        guard segments.isEmpty == false else {
+            return AsyncThrowingStream { continuation in
+                continuation.finish()
             }
-
-            for (seg, out) in zip(slice, outs) {
-                results.append(
-                    TranslationResult(
-                        id: seg.id + ":afm",
-                        segmentID: seg.id,
-                        engine: .afm,
-                        text: out,
-                        residualSourceRatio: 0.0,     // 필요 시 후처리로 계산
-                        createdAt: now
-                    )
-                )
-            }
-            i = end
         }
-        return results
+
+        let batchSize = 50
+        let segmentMap = Dictionary(uniqueKeysWithValues: segments.map { ($0.id, $0) })
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var index = 0
+                    while index < segments.count {
+                        let end = min(index + batchSize, segments.count)
+                        let slice = Array(segments[index..<end])
+                        let stream = try await client.translateBatch(
+                            segments: slice,
+                            style: options.style,
+                            preserveFormatting: options.preserveFormatting
+                        )
+
+                        for try await item in stream {
+                            guard let segment = segmentMap[item.segmentID] else { continue }
+                            let result = TranslationResult(
+                                id: segment.id + ":afm",
+                                segmentID: segment.id,
+                                engine: .afm,
+                                text: item.translatedText,
+                                residualSourceRatio: 0.0,
+                                createdAt: Date()
+                            )
+                            continuation.yield(result)
+                        }
+
+                        index = end
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 }
