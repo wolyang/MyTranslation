@@ -1,0 +1,146 @@
+name: LLM PR Review (OpenAI, MVP)
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    # 필요 시 제외 경로
+    paths-ignore: ["**/*.md", "docs/**", "**/*.png", "**/*.jpg", "**/*.svg", "**/*.pdf", "**/*.json"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: LLM 총평 코멘트 달기
+        uses: actions/github-script@v7
+        env:
+          OPENAI_API_KEY: ${{ secrets.LLM_API_KEY }}
+          OPENAI_BASE_URL: https://api.openai.com/v1
+          OPENAI_MODEL: gpt-4o-mini
+        with:
+          script: |
+            const core = require('@actions/core');
+            const github = require('@actions/github');
+
+            if (!process.env.OPENAI_API_KEY) {
+              core.setFailed('OPENAI_API_KEY (LLM_API_KEY)가 설정되지 않았습니다.');
+              return;
+            }
+
+            const { owner, repo } = github.context.repo;
+            const prNumber = github.context.payload.pull_request.number;
+
+            // 1) PR 메타/파일/디프 수집
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: prNumber, per_page: 100
+            });
+
+            // 2) 디프 축약(토큰 방어)
+            const MAX_TOTAL_CHARS = 12000;
+            const MAX_PER_FILE = 1500;
+            const IMPORTANT_EXT = new Set(['.swift', '.kt', '.java', '.m', '.mm', '.cpp', '.cc', '.c', '.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.go', '.rs', '.php']);
+
+            const extOf = (p) => {
+              const i = p.lastIndexOf('.');
+              return i >= 0 ? p.slice(i).toLowerCase() : '';
+            };
+
+            const sorted = files.sort((a, b) => {
+              const ai = IMPORTANT_EXT.has(extOf(a.filename)) ? 0 : 1;
+              const bi = IMPORTANT_EXT.has(extOf(b.filename)) ? 0 : 1;
+              return ai - bi;
+            });
+
+            let used = 0;
+            const parts = [];
+            for (const f of sorted) {
+              const patch = f.patch || '';
+              const header = `\n\n### ${f.status.toUpperCase()} ${f.filename}\n`;
+              const budget = Math.max(0, MAX_PER_FILE - header.length);
+              const snippet = patch.length > budget ? patch.slice(0, budget) + '\n... (truncated)\n' : patch;
+
+              if (used + header.length + snippet.length > MAX_TOTAL_CHARS) break;
+              parts.push(header + '```diff\n' + snippet + '\n```');
+              used += header.length + snippet.length;
+            }
+
+            const skipped = files.length - parts.length;
+
+            // 3) 프롬프트
+            const systemPrompt = `
+You are a senior code reviewer.
+Follow strictly:
+- 근거 없는 추측 금지. 불확실하면 "확실하지 않음".
+- 간결/실행가능한 제안 위주.
+- 파일/라인 힌트 가능하면 포함.
+- 한국어로 답변.`;
+
+            const userPrompt = `
+[PR]
+- 제목: ${pr.data.title}
+- 작성자: ${pr.data.user?.login}
+- 타겟 브랜치: ${pr.data.base?.ref}
+- 설명:
+${pr.data.body || '(설명 없음)'}
+
+[변경 요약]
+- 총 파일 수: ${files.length}
+- 분석 대상 파일 수: ${parts.length}${skipped > 0 ? ` (추가 ${skipped}개 생략됨)` : ''}
+
+[디프(일부)]
+${parts.join('\n')}
+
+[요구사항]
+아래 섹션을 순서대로 한국어로 작성:
+1) 핵심 이슈 요약 (3~6줄)
+2) 위험/버그 가능성
+3) 성능·메모리·동시성 유의점
+4) 보안/비밀정보 노출 가능성
+5) 테스트 보강 제안
+6) 스타일/일관성(사소한 사항은 간결히)
+7) 머지 전 확인 체크리스트 (불확실한 항목은 "확실하지 않음")`;
+
+            // 4) OpenAI 호출
+            const payload = {
+              model: process.env.OPENAI_MODEL,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              temperature: 0.2,
+              max_tokens: 1200
+            };
+
+            const resp = await fetch(`${process.env.OPENAI_BASE_URL}/chat/completions`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(payload)
+            });
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              core.setFailed(`OpenAI 호출 실패: ${resp.status} ${text}`);
+              return;
+            }
+
+            const data = await resp.json();
+            const content = data.choices?.[0]?.message?.content?.trim() || '(응답 없음)';
+
+            const footer = `
+---
+_자동 생성: LLM PR Review (OpenAI · MVP)_
+- 입력 길이 제한으로 일부 파일/디프가 생략될 수 있습니다.
+- 근거가 약한 항목은 "확실하지 않음"으로 표시됩니다.`;
+
+            // 5) PR에 단일 코멘트 게시
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: prNumber,
+              body: `${content}${footer}`
+            });

@@ -503,8 +503,8 @@ public final class TermMasker {
             .map(esc)
             .joined(separator: "|")
 
-        // 경계에 쓸 “단어/한중일” 집합 (대괄호 없이 바디만)
-        let cjkBody = "\\p{Han}\\p{Hiragana}\\p{Katakana}ァ-ン一-龥ぁ-んA-Za-z0-9_"
+        // 유니코드 '단어' 경계 집합: 모든 Letter/Number + '_'. (이전엔 Hangul 누락)
+        let cjkBody = "\\p{L}\\p{N}_"
         let ws = "(?:\\s|\\u00A0)*"
 
         // --- [1] 1패스: [조사 O] 패턴 (조사 ‘뒤’에서 경계 검사) ---

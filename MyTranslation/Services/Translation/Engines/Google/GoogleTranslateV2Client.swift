@@ -58,6 +58,7 @@ final class GoogleTranslateV2Client {
             if (200..<300).contains(http.statusCode) {
                 do {
                     let decoded = try JSONDecoder().decode(SuccessEnvelope.self, from: data)
+                    print("[Google] query batch size: \(body.q.count)")
                     return decoded.data.translations.map {
                         GoogleV2Translation(
                             translatedText: $0.translatedText,
