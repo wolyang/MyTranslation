@@ -48,7 +48,7 @@ jobs:
             let prNumber =
               (isPR && context.payload.pull_request.number) ||
               (isIssueComment && context.payload.issue?.number) ||
-              (isManual && Number(core.getInput('pr_number'))) ||
+              (isManual && Number(context.payload.inputs?.pr_number)) ||
               0;
 
             if (!prNumber) {
