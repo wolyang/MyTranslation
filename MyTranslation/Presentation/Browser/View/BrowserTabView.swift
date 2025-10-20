@@ -13,7 +13,6 @@ struct BrowserTabView: View {
     init(container: AppContainer) {
         _vm = StateObject(
             wrappedValue: BrowserViewModel(
-                container: container,
                 extractor: WKContentExtractor(),
                 router: container.router,
                 replacer: WebViewInlineReplacer(),
