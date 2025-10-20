@@ -107,6 +107,7 @@ jobs:
               "7) 머지 전 확인 체크리스트 (불확실한 항목은 '확실하지 않음')";
 
             // --- OpenAI 호출
+            const token = process.env.OPENAI_API_KEY;
             const payload = {
               model: process.env.OPENAI_MODEL,
               messages: [
