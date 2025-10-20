@@ -4,7 +4,7 @@ import WebKit
 
 @MainActor
 final class BrowserViewModel: ObservableObject {
-    @Published var urlString: String = ""
+    @Published var urlString: String
     @Published var isTranslating: Bool = false
     @Published var showOriginal: Bool = false
     @Published var isEditingURL: Bool = false {
@@ -40,6 +40,8 @@ final class BrowserViewModel: ObservableObject {
     var pendingImproved: String?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
 
+    let presetLinks: [PresetLink]
+
     let extractor: ContentExtractor
     private let router: TranslationRouter
     let replacer: InlineReplacer
@@ -52,8 +54,11 @@ final class BrowserViewModel: ObservableObject {
         router: TranslationRouter,
         replacer: InlineReplacer,
 //        fmQuery: FMQueryService,
-        settings: UserSettings
+        settings: UserSettings,
+        presetLinks: [PresetLink] = BrowserViewModel.defaultPresetLinks
     ) {
+        self.presetLinks = presetLinks
+        self._urlString = Published(initialValue: presetLinks.first?.url ?? "")
         self.extractor = extractor
         self.router = router
         self.replacer = replacer
@@ -90,4 +95,28 @@ final class BrowserViewModel: ObservableObject {
     func attachWebView(_ webView: WKWebView) {
         attachedWebView = webView
     }
+}
+
+extension BrowserViewModel {
+    struct PresetLink: Identifiable, Equatable {
+        let title: String
+        let url: String
+
+        var id: String { url }
+    }
+
+    static let defaultPresetLinks: [PresetLink] = [
+        .init(
+            title: "AO3 – 특정 작품",
+            url: "https://archiveofourown.org/works/71109986?view_adult=true"
+        ),
+        .init(
+            title: "AO3 – Jugglus Juggler 태그",
+            url: "https://archiveofourown.org/tags/Jugglus%20Juggler%20%7C%20Hebikura%20Shota*s*Kurenai%20Gai/works"
+        ),
+        .init(
+            title: "나카자키 Lofter",
+            url: "https://nakazaki.lofter.com/post/1ea19791_2bfbab779?incantation=rzRAnYWzp157"
+        )
+    ]
 }

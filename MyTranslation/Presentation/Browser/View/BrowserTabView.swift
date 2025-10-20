@@ -26,6 +26,7 @@ struct BrowserTabView: View {
         VStack(spacing: 12) {
             URLBarView(
                 urlString: $vm.urlString,
+                presetURLs: vm.presetLinks,
                 selectedEngine: preferredEngineBinding,
                 showOriginal: $vm.showOriginal,
                 isEditing: $vm.isEditingURL,

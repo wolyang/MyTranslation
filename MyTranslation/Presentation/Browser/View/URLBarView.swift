@@ -3,6 +3,7 @@ import SwiftUI
 
 struct URLBarView: View {
     @Binding var urlString: String
+    var presetURLs: [BrowserViewModel.PresetLink] = []
     @Binding var selectedEngine: EngineTag
     @Binding var showOriginal: Bool
     @Binding var isEditing: Bool
@@ -163,6 +164,33 @@ struct URLBarView: View {
 
     private var controlGroup: some View {
         HStack(spacing: 4) {
+            if presetURLs.isEmpty == false {
+                Menu {
+                    Section("테스트 URL") {
+                        ForEach(presetURLs) { preset in
+                            Button(preset.title) {
+                                applyPreset(preset)
+                            }
+                        }
+                    }
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: "bookmark")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 20, height: 20)
+                            .foregroundStyle(Color.accentColor)
+                        Text("테스트")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .frame(width: 30)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+            }
+
             EnginePickerButton(
                 selectedEngine: $selectedEngine,
                 showOriginal: $showOriginal,
@@ -230,6 +258,15 @@ struct URLBarView: View {
 
     private func applySuggestion(_ url: String) {
         urlString = url
+        commitGo()
+    }
+
+    private func applyPreset(_ preset: BrowserViewModel.PresetLink) {
+        guard urlString != preset.url else {
+            commitGo()
+            return
+        }
+        urlString = preset.url
         commitGo()
     }
 
