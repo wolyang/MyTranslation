@@ -247,12 +247,18 @@ private extension String {
         return self.unicodeScalars.allSatisfy { punct.contains($0) }
     }
 
+    private static let asciiAlphaNumericSymbolic: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.formUnion(.symbols)
+        allowed.formUnion(.punctuationCharacters)
+        allowed.formUnion(.whitespacesAndNewlines)
+        return allowed
+    }()
+
     var isAlphaNumericSymbolic: Bool {
         guard isEmpty == false else { return false }
-        let allowed = CharacterSet.alphanumerics
-            .union(.symbols)
-            .union(.punctuationCharacters)
-            .union(.whitespacesAndNewlines)
-        return unicodeScalars.allSatisfy { allowed.contains($0) }
+        return unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && Self.asciiAlphaNumericSymbolic.contains(scalar)
+        }
     }
 }
