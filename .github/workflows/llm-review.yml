@@ -36,9 +36,6 @@ jobs:
           OPENAI_MODEL: gpt-4o-mini
         with:
           script: |
-            const core = require('@actions/core');
-            const github = require('@actions/github');
-
             if (!process.env.OPENAI_API_KEY) {
               core.setFailed('OPENAI_API_KEY (LLM_API_KEY) 누락');
               return;
