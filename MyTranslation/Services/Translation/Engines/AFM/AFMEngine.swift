@@ -5,17 +5,12 @@ import Foundation
 // - 실제 구현체는 사용 중인 Foundation Models 호출 래퍼에 맞춰 Adapter를 만드세요.
 // - 기대 동작: inputs.count == outputs.count, 순서 보존
 public protocol AFMClient {
-    struct StreamItem: Sendable {
-        let segmentID: String
-        let translatedText: String
-    }
-
     /// Returns a stream of translated strings tagged by segment id.
     func translateBatch(
         segments: [Segment],
         style: TranslationStyle,
         preserveFormatting: Bool
-    ) async throws -> AsyncThrowingStream<StreamItem, Error>
+    ) async throws -> AsyncThrowingStream<(segmentID: String, translatedText: String), Error>
 }
 
 // 2) TranslationEngine 구현

@@ -213,6 +213,11 @@ final class DefaultTranslationRouter: TranslationRouter {
                 if remainingIDs.isEmpty == false {
                     throw EngineStreamError.missingIDs(remainingIDs)
                 }
+
+                if remainingIDs.isEmpty == false {
+                    struct EngineCountMismatch: Error {}
+                    throw EngineCountMismatch()
+                }
             } catch is CancellationError {
                 throw CancellationError()
             } catch let streamError as EngineStreamError {
