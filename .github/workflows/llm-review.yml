@@ -41,11 +41,18 @@ jobs:
               return;
             }
 
-            // PR 번호: PR 이벤트면 payload에서, 수동실행이면 입력에서
-            const prNumberInput = core.getInput('pr_number');
-            const prNumber = context.payload.pull_request?.number || Number(prNumberInput);
+            const isPR = !!context.payload.pull_request;
+            const isIssueComment = context.eventName === 'issue_comment';
+            const isManual = context.eventName === 'workflow_dispatch';
+
+            let prNumber =
+              (isPR && context.payload.pull_request.number) ||
+              (isIssueComment && context.payload.issue?.number) ||
+              (isManual && Number(core.getInput('pr_number'))) ||
+              0;
+
             if (!prNumber) {
-              core.setFailed('PR 번호를 찾을 수 없음. (pull_request 이벤트 또는 pr_number 입력 필요)');
+              core.setFailed('PR 번호를 찾을 수 없습니다. (pull_request/issue_comment 이벤트거나, workflow_dispatch면 pr_number 입력 필요)');
               return;
             }
 
