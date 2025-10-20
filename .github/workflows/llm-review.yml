@@ -5,13 +5,26 @@ on:
     types: [opened, reopened, synchronize]
     # 필요 시 제외 경로
     paths-ignore: ["**/*.md", "docs/**", "**/*.png", "**/*.jpg", "**/*.svg", "**/*.pdf", "**/*.json"]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: '리뷰할 PR 번호'
+        required: true
 
 permissions:
   contents: read
   pull-requests: write
+  issues: read
 
 jobs:
   review:
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/llm review'))
     runs-on: ubuntu-latest
     steps:
       - name: LLM 총평 코멘트 달기
@@ -26,7 +39,15 @@ jobs:
             const github = require('@actions/github');
 
             if (!process.env.OPENAI_API_KEY) {
-              core.setFailed('OPENAI_API_KEY (LLM_API_KEY)가 설정되지 않았습니다.');
+              core.setFailed('OPENAI_API_KEY (LLM_API_KEY) 누락');
+              return;
+            }
+
+            // PR 번호: PR 이벤트면 payload에서, 수동실행이면 입력에서
+            const prNumberInput = core.getInput('pr_number');
+            const prNumber = github.context.payload.pull_request?.number || Number(prNumberInput);
+            if (!prNumber) {
+              core.setFailed('PR 번호를 찾을 수 없음. (pull_request 이벤트 또는 pr_number 입력 필요)');
               return;
             }
 
