@@ -479,75 +479,115 @@ public final class TermMasker {
         mode: EntityMode = .both
     ) -> String {
 
-        // 1) 패턴 준비
-        let tokenAlts: String? = {
-            guard mode != .namesOnly, !locksByToken.isEmpty else { return nil }
-            return locksByToken.keys
-                .map { NSRegularExpression.escapedPattern(for: $0) }
-                .sorted { $0.count > $1.count }
-                .joined(separator: "|")
-        }()
+        // --- [0] 준비: 소스 정규화 & 엔터티/조사 alternation 구성 ---
+        let textNFC = text.precomposedStringWithCompatibilityMapping
+        func esc(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
 
-        let nameAlts: String? = {
-            guard mode != .tokensOnly, !names.isEmpty else { return nil }
-            let alts = names.flatMap { $0.variants + [$0.target] }
-                .map { NSRegularExpression.escapedPattern(for: $0) }
-            return alts.sorted { $0.count > $1.count }.joined(separator: "|")
-        }()
+        // 엔터티 후보 (토큰 + 이름 variants/canonical), 모드에 따라 선택
+        let tokenAlts: [String] = (mode == .namesOnly) ? [] :
+            locksByToken.keys.map(esc)
 
-        // (토큰|이름) + 선택적 공백 + 선택적 조사
-        let entityAlt = [tokenAlts, nameAlts].compactMap { $0 }.joined(separator: "|")
-        if entityAlt.isEmpty { return text }
+        let nameAlts: [String] = (mode == .tokensOnly) ? [] :
+            names.flatMap { [$0.target] + $0.variants }.map(esc)
 
-        let pattern = """
-        (?<!\(cjkOrWord)) # 앞 경계
-        (
-          \(entityAlt)
+        let entityAlts = (tokenAlts + nameAlts)
+            .sorted { $0.count > $1.count }          // ★ 긴 것 우선
+            .joined(separator: "|")
+
+        // 엔터티가 없으면 조기 종료
+        if entityAlts.isEmpty { return text }
+
+        // 조사 alternation (긴 것 우선, 중복 제거)
+        let josaAlt = Set(josaPairs.flatMap { [$0.noBatchim, $0.withBatchim] })
+            .sorted { $0.count > $1.count }
+            .map(esc)
+            .joined(separator: "|")
+
+        // 경계에 쓸 “단어/한중일” 집합 (대괄호 없이 바디만)
+        let cjkBody = "\\p{Han}\\p{Hiragana}\\p{Katakana}ァ-ン一-龥ぁ-んA-Za-z0-9_"
+        let ws = "(?:\\s|\\u00A0)*"
+
+        // --- [1] 1패스: [조사 O] 패턴 (조사 ‘뒤’에서 경계 검사) ---
+        let patWithJosa =
+        "(^|[^" + cjkBody + "])" +                // grp1 prefix
+        "(" + entityAlts + ")" +                  // grp2 entity
+        ws +
+        "(" + josaAlt + ")" +                     // grp3 josa
+        "($|[^" + cjkBody + "])"                  // grp4 suffix
+        let rxWithJosa = try! NSRegularExpression(
+            pattern: patWithJosa,           // 주석 없는 버전
+            options: [.caseInsensitive]
         )
-        \(wsClass)
-        (\(josaAlternation))?
-        (?!\(cjkOrWord))  # 뒤 경계
-        """
-        let rx = try! NSRegularExpression(pattern: pattern, options: [.allowCommentsAndWhitespace, .caseInsensitive])
 
-        // 2) 매칭-치환
-        let ns = text as NSString
-        var out = ""
-        var last = 0
-
-        rx.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+        var out = textNFC
+        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange, g4:NSRange)] = []
+        let ns1 = out as NSString
+        rxWithJosa.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns1.length)) { m, _, _ in
             guard let m = m else { return }
-            let whole = m.range(at: 0)
-            let nameRange = m.range(at: 1)
-            let afterNameLoc = NSMaxRange(nameRange)
-            let josaLen = NSMaxRange(whole) - afterNameLoc
-            let candidateJosa = josaLen > 0 ? ns.substring(with: NSRange(location: afterNameLoc, length: josaLen)) : nil
-
-            let matched = ns.substring(with: nameRange)
-
-            // 분기: 토큰인가? 이름인가?
-            if mode != .namesOnly, let info = locksByToken[matched] {
-                // 토큰은 그대로 두고 조사만 교정
-                let chosen = chooseJosa(for: candidateJosa,
-                                        baseHasBatchim: info.endsWithBatchim,
-                                        baseIsRieul: info.endsWithRieul)
-                out += ns.substring(with: NSRange(location: last, length: nameRange.location - last))
-                out += matched + chosen
-                last = NSMaxRange(whole)
-            } else if mode != .tokensOnly {
-                // 이름: canonical로 통일 + canonical 기준으로 조사 재계산
-                let canon = canonicalFor(matched, entries: names)
-                let (has, rieul) = hangulFinalJongInfo(canon)
-                let chosen = chooseJosa(for: candidateJosa, baseHasBatchim: has, baseIsRieul: rieul)
-                out += ns.substring(with: NSRange(location: last, length: nameRange.location - last))
-                out += canon + chosen
-                last = NSMaxRange(whole)
-            } else {
-                // 여기로 올 일 거의 없음(방어)
-            }
+            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3), m.range(at: 4)))
         }
-        out += ns.substring(from: last)
+
+        for m in matches1.reversed() {
+            let ns = out as NSString
+            let prefix = ns.substring(with: m.g1)
+            let name   = ns.substring(with: m.g2)
+            let josa   = ns.substring(with: m.g3)
+            let suffix = ns.substring(with: m.g4)
+
+            let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: josa,
+                                                       locksByToken: locksByToken, names: names, mode: mode)
+            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen + suffix)
+        }
+
+        // --- [2] 2패스: [조사 X] 패턴 (엔터티 ‘바로 뒤’에서 경계 검사) ---
+        let patBare =
+        "(^|[^" + cjkBody + "])" +                // grp1 prefix
+        "(" + entityAlts + ")" +                  // grp2 entity
+        "($|[^" + cjkBody + "])"                  // grp3 suffix
+        let rxBare = try! NSRegularExpression(
+            pattern: patBare,               // 주석 없는 버전
+            options: [.caseInsensitive]
+        )
+
+        var matches2: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange)] = []
+        let ns2 = out as NSString
+        rxBare.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns2.length)) { m, _, _ in
+            guard let m = m else { return }
+            matches2.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3)))
+        }
+
+        for m in matches2.reversed() {
+            let ns = out as NSString
+            let prefix = ns.substring(with: m.g1)
+            let name   = ns.substring(with: m.g2)
+            let suffix = ns.substring(with: m.g3)
+
+            let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: nil,
+                                                       locksByToken: locksByToken, names: names, mode: mode)
+            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen + suffix)
+        }
+
         return out
+    }
+    
+    private func resolveEntityAndJosa(
+        nameText: String,
+        josaCandidate: String?,
+        locksByToken: [String: LockInfo],
+        names: [NameGlossary],
+        mode: EntityMode
+    ) -> (canon: String, josa: String) {
+        if mode != .namesOnly, let info = locksByToken[nameText] {
+            // 토큰: 표기는 그대로, 조사만 LockInfo 기준 재계산
+            let j = chooseJosa(for: josaCandidate, baseHasBatchim: info.endsWithBatchim, baseIsRieul: info.endsWithRieul)
+            return (nameText, j)
+        } else {
+            // 이름: canonical 통일 + canonical 받침 기준으로 조사 재계산
+            let canon = canonicalFor(nameText, entries: names)
+            let (has, rieul) = hangulFinalJongInfo(canon)
+            let j = chooseJosa(for: josaCandidate, baseHasBatchim: has, baseIsRieul: rieul)
+            return (canon, j)
+        }
     }
 
     // 이름 매핑
