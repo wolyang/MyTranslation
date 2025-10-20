@@ -3,7 +3,7 @@ import WebKit
 
 @MainActor
 extension BrowserViewModel {
-    /// WebContainerView.onSelectSegment 에서 호출된다.
+    /// 선택된 세그먼트에 대한 오버레이를 구성하고 필요한 번역 작업을 시작한다.
     func onSegmentSelected(id: String, anchor: CGRect) async {
         print("[onSegmentSelected] id: \(id)")
         guard let webView = attachedWebView else {
@@ -55,6 +55,7 @@ extension BrowserViewModel {
         }
     }
 
+    /// AFM 기반 개선 번역을 재활용할 때 사용할 예정인 AI 요청 진입점이다.
     func askAIForSelected() async {
 //        guard settings.useFM else { return }
 //        guard let seg = selectedSegment else { return }
@@ -76,6 +77,7 @@ extension BrowserViewModel {
 //        }
     }
 
+    /// AI가 제안한 개선 번역을 현재 페이지와 오버레이 상태에 반영한다.
     func applyAIImproved() {
         guard let segment = selectedSegment,
               let improved = pendingImproved,
@@ -118,6 +120,7 @@ extension BrowserViewModel {
         }
     }
 
+    /// 오버레이와 관련된 모든 상태와 비동기 작업을 정리하고 화면을 닫는다.
     func closeOverlay() {
         cancelOverlayTranslationTasks()
         overlayState = nil
@@ -126,6 +129,7 @@ extension BrowserViewModel {
         clearSelectionHighlight()
     }
 
+    /// 하이라이트 스크립트를 호출해 웹뷰의 선택 영역 표시를 제거한다.
     func clearSelectionHighlight() {
         guard let webView = attachedWebView else { return }
         Task { @MainActor in
@@ -137,6 +141,7 @@ extension BrowserViewModel {
 
 @MainActor
 private extension BrowserViewModel {
+    /// 오버레이에서 비교용으로 사용할 번역 엔진 목록을 계산한다.
     func overlayTargetEngines(for showOriginal: Bool, selectedEngine: EngineTag) -> [EngineTag] {
         if showOriginal {
             return [.afm, .google]
@@ -145,6 +150,7 @@ private extension BrowserViewModel {
         return [alternate]
     }
 
+    /// 선택된 엔진과 비교할 대체 엔진을 결정한다.
     func overlayAlternateEngine(for engine: EngineTag) -> EngineTag? {
         switch engine {
         case .afm, .afmMask:
@@ -156,6 +162,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 오버레이 엔진 섹션에 표시할 제목을 반환한다.
     func overlaySectionTitle(for engine: EngineTag) -> String {
         switch engine {
         case .afm, .afmMask:
@@ -169,16 +176,19 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 현재 페이지 캐시에 저장된 세그먼트 번역을 조회한다.
     func cachedTranslation(for segmentID: String, engineID: TranslationEngineID) -> String? {
         guard let state = currentPageTranslation,
               let buffer = state.buffersByEngine[engineID] else { return nil }
         return buffer.ordered.first(where: { $0.segmentID == segmentID })?.translatedText
     }
 
+    /// 오버레이 번역 Task 저장에 사용할 고유 키를 생성한다.
     func overlayTaskKey(segmentID: String, engineID: TranslationEngineID) -> String {
         "\(segmentID)|\(engineID)"
     }
 
+    /// 진행 중인 모든 오버레이 번역 Task 를 취소하고 비운다.
     func cancelOverlayTranslationTasks() {
         for task in overlayTranslationTasks.values {
             task.cancel()
@@ -186,6 +196,7 @@ private extension BrowserViewModel {
         overlayTranslationTasks.removeAll()
     }
 
+    /// 지정된 엔진으로 오버레이 번역 스트림을 시작하고 결과를 상태에 반영한다.
     func startOverlayTranslation(for engine: EngineTag, segment: Segment) {
         let key = overlayTaskKey(segmentID: segment.id, engineID: engine.rawValue)
         overlayTranslationTasks[key]?.cancel()
@@ -224,6 +235,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 오버레이 스트림 이벤트를 수신해 해당 엔진 섹션을 갱신한다.
     func handleOverlayTranslationEvent(
         _ event: TranslationStreamEvent,
         segmentID: String,
@@ -263,6 +275,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 오버레이 상태에서 특정 엔진 항목의 텍스트와 오류를 갱신한다.
     func updateOverlayTranslation(
         segmentID: String,
         engineID: TranslationEngineID,
@@ -277,6 +290,7 @@ private extension BrowserViewModel {
         overlayState = state
     }
 
+    /// 오버레이 번역 결과를 페이지 단위 캐시에 반영해 재사용 가능하게 만든다.
     func storeOverlayTranslationPayload(_ payload: TranslationStreamPayload) {
         guard var state = currentPageTranslation,
               let webView = attachedWebView,

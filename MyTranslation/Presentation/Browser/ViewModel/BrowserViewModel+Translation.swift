@@ -3,6 +3,7 @@ import WebKit
 
 @MainActor
 extension BrowserViewModel {
+    /// 페이지 로딩이 끝났을 때 주소 표시줄과 번역 상태를 초기화한다.
     func onWebViewDidFinishLoad(_ webView: WKWebView, url: URL) {
         normalizePageScale(webView)
 
@@ -23,6 +24,7 @@ extension BrowserViewModel {
         }
     }
 
+    /// 현재 페이지 전체를 번역하도록 비동기 작업을 예약한다.
     func requestTranslation(on webView: WKWebView) {
         translationTask?.cancel()
         let requestID = UUID()
@@ -40,6 +42,7 @@ extension BrowserViewModel {
         }
     }
 
+    /// 지정된 세그먼트들만 재번역하도록 부분 번역 작업을 예약한다.
     func requestTranslation(
         for segmentIDs: [String],
         engine: EngineTag,
@@ -78,6 +81,7 @@ extension BrowserViewModel {
         }
     }
 
+    /// 원문 보기 토글에 맞춰 번역 적용 또는 취소 흐름을 제어한다.
     func onShowOriginalChanged(_ showOriginal: Bool) {
         guard let webView = attachedWebView else { return }
         let executor = WKWebViewScriptAdapter(webView: webView)
@@ -96,6 +100,7 @@ extension BrowserViewModel {
         }
     }
 
+    /// 페이지 이동 직전에 번역 상태와 하이라이트를 정리한다.
     func willNavigate() {
         guard let webView = attachedWebView else { return }
         cancelActiveTranslation()
@@ -115,6 +120,7 @@ extension BrowserViewModel {
         translationProgress = 0
     }
 
+    /// 번역 엔진 변경 시 캐시 재적용 여부를 판단하고 필요한 번역을 재요청한다.
     func onEngineSelected(_ engine: EngineTag, wasShowingOriginal: Bool) {
         settings.preferredEngine = engine
         guard let webView = attachedWebView else { return }
@@ -131,6 +137,7 @@ extension BrowserViewModel {
 
 @MainActor
 private extension BrowserViewModel {
+    /// 진행 중인 번역 Task 를 중단하고 관련 상태를 초기화한다.
     func cancelActiveTranslation() {
         translationTask?.cancel()
         translationTask = nil
@@ -141,6 +148,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 번역 Task 생성이 실패했을 때 상태를 정리하고 원인을 로깅한다.
     func handleFailedTranslationStart(reason: String, requestID: UUID) {
         if activeTranslationID == requestID {
             activeTranslationID = nil
@@ -150,6 +158,7 @@ private extension BrowserViewModel {
         print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
 
+    /// 전체 페이지 번역 스트림을 시작하고 스트림 이벤트를 처리한다.
     func startTranslate(on webView: WKWebView, requestID: UUID) async {
         guard let url = webView.url else { return }
         guard activeTranslationID == requestID else { return }
@@ -241,6 +250,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 선택된 세그먼트만 번역하는 부분 번역 스트림을 실행한다.
     func startPartialTranslation(
         segments: [Segment],
         engine: EngineTag,
@@ -308,6 +318,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 번역 스트림 이벤트를 분기 처리해 상태와 UI를 최신으로 유지한다.
     func handleStreamEvent(
         _ event: TranslationStreamEvent,
         url: URL,
@@ -355,6 +366,7 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 스트림으로 전달된 번역 결과를 캐시에 반영하고 웹뷰에 적용한다.
     func applyStreamPayload(
         _ payload: TranslationStreamPayload,
         engineID: TranslationEngineID,
@@ -396,6 +408,7 @@ private extension BrowserViewModel {
         )
     }
 
+    /// 번역 완료·실패 수치를 기반으로 진행률을 계산한다.
     func updateProgress(for engineID: TranslationEngineID) {
         guard let state = currentPageTranslation else {
             translationProgress = 0
@@ -411,6 +424,7 @@ private extension BrowserViewModel {
         translationProgress = Double(min(finalized + failed, total)) / Double(total)
     }
 
+    /// 번역 적용 여부와 상관없이 페이지 확대 비율을 초기화한다.
     func normalizePageScale(_ webView: WKWebView) {
         if webView.responds(to: #selector(getter: WKWebView.pageZoom)) {
             webView.pageZoom = 1.0
@@ -418,6 +432,7 @@ private extension BrowserViewModel {
         webView.scrollView.setZoomScale(1.0, animated: false)
     }
 
+    /// 캐시에 저장된 번역을 재적용하고 남은 세그먼트 목록을 반환한다.
     @discardableResult
     func applyCachedTranslationIfAvailable(for engine: EngineTag, on webView: WKWebView) -> CacheApplyResult {
         guard let url = webView.url,
