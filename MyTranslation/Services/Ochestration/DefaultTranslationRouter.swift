@@ -5,6 +5,11 @@ enum TranslationRouterError: Error {
     case noAvailableEngine
 }
 
+private enum EngineStreamError: Error {
+    case unexpectedID(String)
+    case missingIDs(Set<String>)
+}
+
 final class DefaultTranslationRouter: TranslationRouter {
     private let afm: TranslationEngine
     private let deepl: TranslationEngine
@@ -129,14 +134,21 @@ final class DefaultTranslationRouter: TranslationRouter {
 
             let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
             var remainingIDs = Set(pendingSegments.map { $0.id })
+            var unexpectedIDs: Set<String> = []
 
             do {
                 let stream = try await engine.translate(maskedSegments, options: options)
 
                 for try await batch in stream {
                     for result in batch {
-                        guard let index = indexByID[result.segmentID] else { continue }
-                        guard remainingIDs.remove(result.segmentID) != nil else { continue }
+                        guard let index = indexByID[result.segmentID] else {
+                            unexpectedIDs.insert(result.segmentID)
+                            continue
+                        }
+                        guard remainingIDs.remove(result.segmentID) != nil else {
+                            unexpectedIDs.insert(result.segmentID)
+                            continue
+                        }
 
                         let pack = maskedPacks[index]
                         let originalSegment = pendingSegments[index]
@@ -195,12 +207,40 @@ final class DefaultTranslationRouter: TranslationRouter {
                     }
                 }
 
+                if let unexpected = unexpectedIDs.first {
+                    throw EngineStreamError.unexpectedID(unexpected)
+                }
                 if remainingIDs.isEmpty == false {
-                    struct EngineCountMismatch: Error {}
-                    throw EngineCountMismatch()
+                    throw EngineStreamError.missingIDs(remainingIDs)
                 }
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let streamError as EngineStreamError {
+                let failingIDs: Set<String>
+                switch streamError {
+                case .unexpectedID(let id):
+                    print("[Router][ERR] unexpected result id=\(id)")
+                    failingIDs = remainingIDs
+                case .missingIDs(let ids):
+                    print("[Router][ERR] missing ids=\(ids)")
+                    failingIDs = ids
+                }
+
+                for segmentID in failingIDs where failedIDs.contains(segmentID) == false {
+                    failedIDs.insert(segmentID)
+                    progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
+                    await Task.yield()
+                }
+
+                let summary = TranslationStreamSummary(
+                    totalCount: segments.count,
+                    succeededCount: succeededIDs.count,
+                    failedCount: failedIDs.count,
+                    cachedCount: cachedCount
+                )
+                progress(.init(kind: .completed, timestamp: Date()))
+                await Task.yield()
+                return summary
             } catch {
                 for segmentID in remainingIDs where failedIDs.contains(segmentID) == false {
                     failedIDs.insert(segmentID)

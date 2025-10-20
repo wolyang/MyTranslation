@@ -21,9 +21,7 @@ final class AFMTranslationService: AFMClient {
         preserveFormatting: Bool
     ) async throws -> AsyncThrowingStream<AFMClient.StreamItem, Error> {
         guard segments.isEmpty == false else {
-            return AsyncThrowingStream { continuation in
-                continuation.finish()
-            }
+            throw TranslationEngineError.emptySegments
         }
 
         guard let session else {

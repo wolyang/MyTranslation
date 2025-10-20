@@ -10,3 +10,7 @@ protocol TranslationEngine {
     func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error>
     var maskPerson: Bool { get }
 }
+
+enum TranslationEngineError: Error {
+    case emptySegments
+}
