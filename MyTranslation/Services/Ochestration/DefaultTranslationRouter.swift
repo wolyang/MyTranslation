@@ -5,6 +5,11 @@ enum TranslationRouterError: Error {
     case noAvailableEngine
 }
 
+private enum EngineStreamError: Error {
+    case unexpectedID(String)
+    case missingIDs(Set<String>)
+}
+
 final class DefaultTranslationRouter: TranslationRouter {
     private let afm: TranslationEngine
     private let deepl: TranslationEngine
@@ -129,68 +134,84 @@ final class DefaultTranslationRouter: TranslationRouter {
 
             let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
             var remainingIDs = Set(pendingSegments.map { $0.id })
+            var unexpectedIDs: Set<String> = []
 
             do {
                 let stream = try await engine.translate(maskedSegments, options: options)
 
-                for try await result in stream {
-                    guard let index = indexByID[result.segmentID] else { continue }
-                    guard remainingIDs.remove(result.segmentID) != nil else { continue }
-
-                    let pack = maskedPacks[index]
-                    let originalSegment = pendingSegments[index]
-
-                    var output = result.text
-                    output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: pack.locks, names: [], mode: .tokensOnly)
-                    output = termMasker.unlockTermsSafely(
-                        output,
-                        locks: pack.locks
-                    )
-
-                    if !engine.maskPerson {
-                        let names = nameGlossariesPerSegment[index]
-                        if names.isEmpty == false {
-                            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
-                            output = termMasker.normalizeEntitiesAndParticles(
-                                in: output,
-                                locksByToken: [:],
-                                names: names,
-                                mode: .namesOnly
-                            )
+                for try await batch in stream {
+                    for result in batch {
+                        guard let index = indexByID[result.segmentID] else {
+                            unexpectedIDs.insert(result.segmentID)
+                            continue
                         }
+                        guard remainingIDs.remove(result.segmentID) != nil else {
+                            unexpectedIDs.insert(result.segmentID)
+                            continue
+                        }
+
+                        let pack = maskedPacks[index]
+                        let originalSegment = pendingSegments[index]
+
+                        var output = result.text
+                        output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: pack.locks, names: [], mode: .tokensOnly)
+                        output = termMasker.unlockTermsSafely(
+                            output,
+                            locks: pack.locks
+                        )
+
+                        if !engine.maskPerson {
+                            let names = nameGlossariesPerSegment[index]
+                            if names.isEmpty == false {
+                                // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
+                                output = termMasker.normalizeEntitiesAndParticles(
+                                    in: output,
+                                    locksByToken: [:],
+                                    names: names,
+                                    mode: .namesOnly
+                                )
+                            }
+                        }
+
+                        if pack.locks.values.count == 1,
+                           let target = pack.locks.values.first?.target
+                        {
+                            output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
+                        }
+
+                        let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                        let residual = Double(hanCount) / Double(max(output.count, 1))
+                        let finalResult = TranslationResult(
+                            id: result.id,
+                            segmentID: result.segmentID,
+                            engine: result.engine,
+                            text: output,
+                            residualSourceRatio: residual,
+                            createdAt: result.createdAt
+                        )
+
+                        let payload = TranslationStreamPayload(
+                            segmentID: originalSegment.id,
+                            originalText: originalSegment.originalText,
+                            translatedText: finalResult.text,
+                            engineID: finalResult.engine.rawValue,
+                            sequence: sequence
+                        )
+                        sequence += 1
+                        progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                        await Task.yield()
+                        succeededIDs.append(originalSegment.id)
+
+                        let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
+                        cache.save(result: finalResult, forKey: cacheKey)
                     }
+                }
 
-                    if pack.locks.values.count == 1,
-                       let target = pack.locks.values.first?.target
-                    {
-                        output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
-                    }
-
-                    let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                    let residual = Double(hanCount) / Double(max(output.count, 1))
-                    let finalResult = TranslationResult(
-                        id: result.id,
-                        segmentID: result.segmentID,
-                        engine: result.engine,
-                        text: output,
-                        residualSourceRatio: residual,
-                        createdAt: result.createdAt
-                    )
-
-                    let payload = TranslationStreamPayload(
-                        segmentID: originalSegment.id,
-                        originalText: originalSegment.originalText,
-                        translatedText: finalResult.text,
-                        engineID: finalResult.engine.rawValue,
-                        sequence: sequence
-                    )
-                    sequence += 1
-                    progress(.init(kind: .final(segment: payload), timestamp: Date()))
-                    await Task.yield()
-                    succeededIDs.append(originalSegment.id)
-
-                    let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
-                    cache.save(result: finalResult, forKey: cacheKey)
+                if let unexpected = unexpectedIDs.first {
+                    throw EngineStreamError.unexpectedID(unexpected)
+                }
+                if remainingIDs.isEmpty == false {
+                    throw EngineStreamError.missingIDs(remainingIDs)
                 }
 
                 if remainingIDs.isEmpty == false {
@@ -199,6 +220,32 @@ final class DefaultTranslationRouter: TranslationRouter {
                 }
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let streamError as EngineStreamError {
+                let failingIDs: Set<String>
+                switch streamError {
+                case .unexpectedID(let id):
+                    print("[Router][ERR] unexpected result id=\(id)")
+                    failingIDs = remainingIDs
+                case .missingIDs(let ids):
+                    print("[Router][ERR] missing ids=\(ids)")
+                    failingIDs = ids
+                }
+
+                for segmentID in failingIDs where failedIDs.contains(segmentID) == false {
+                    failedIDs.insert(segmentID)
+                    progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
+                    await Task.yield()
+                }
+
+                let summary = TranslationStreamSummary(
+                    totalCount: segments.count,
+                    succeededCount: succeededIDs.count,
+                    failedCount: failedIDs.count,
+                    cachedCount: cachedCount
+                )
+                progress(.init(kind: .completed, timestamp: Date()))
+                await Task.yield()
+                return summary
             } catch {
                 for segmentID in remainingIDs where failedIDs.contains(segmentID) == false {
                     failedIDs.insert(segmentID)
@@ -236,8 +283,8 @@ final class DefaultTranslationRouter: TranslationRouter {
         let engine = engine(for: preferredEngine)
         let stream = try await engine.translate(segments, options: options)
         var results: [TranslationResult] = []
-        for try await result in stream {
-            results.append(result)
+        for try await batch in stream {
+            results.append(contentsOf: batch)
         }
         return results
     }

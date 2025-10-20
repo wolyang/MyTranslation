@@ -9,22 +9,20 @@ final class GoogleEngine: TranslationEngine {
         self.client = client
     }
 
-    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<TranslationResult, Error> {
+    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error> {
         guard segments.isEmpty == false else {
-            return AsyncThrowingStream { continuation in
-                continuation.finish()
-            }
+            throw TranslationEngineError.emptySegments
         }
-
-        let batchSize = 100 // v2는 q 최대 128개
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    let batchSize = 100
                     var index = 0
+
                     while index < segments.count {
                         let end = min(index + batchSize, segments.count)
-                        let slice = Array(segments[index ..< end])
+                        let slice = Array(segments[index..<end])
                         let texts = slice.map { $0.originalText }
 
                         let translations = try await client.translate(
@@ -42,18 +40,19 @@ final class GoogleEngine: TranslationEngine {
                             )
                         }
 
-                        for (seg, trans) in zip(slice, translations) {
-                            let result = TranslationResult(
+                        let timestamp = Date()
+                        let batch = zip(slice, translations).map { seg, trans in
+                            TranslationResult(
                                 id: seg.id + ":google",
                                 segmentID: seg.id,
                                 engine: .google,
                                 text: trans.translatedText.htmlUnescaped,
                                 residualSourceRatio: 0.0,
-                                createdAt: Date()
+                                createdAt: timestamp
                             )
-                            continuation.yield(result)
                         }
 
+                        continuation.yield(batch)
                         index = end
                     }
                     continuation.finish()

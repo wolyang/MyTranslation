@@ -24,11 +24,9 @@ public struct AFMEngine: TranslationEngine {
     }
 
     public func translate(_ segments: [Segment],
-                          options: TranslationOptions) async throws -> AsyncThrowingStream<TranslationResult, Error> {
+                          options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error> {
         guard segments.isEmpty == false else {
-            return AsyncThrowingStream { continuation in
-                continuation.finish()
-            }
+            throw TranslationEngineError.emptySegments
         }
 
         let batchSize = 50
@@ -57,7 +55,7 @@ public struct AFMEngine: TranslationEngine {
                                 residualSourceRatio: 0.0,
                                 createdAt: Date()
                             )
-                            continuation.yield(result)
+                            continuation.yield([result])
                         }
 
                         index = end
