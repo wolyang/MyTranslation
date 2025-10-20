@@ -16,10 +16,16 @@ final class AFMTranslationService: AFMClient {
 
     @MainActor
     func translateBatch(
-        texts: [String],
+        segments: [Segment],
         style: TranslationStyle,
         preserveFormatting: Bool
-    ) async throws -> [String] {
+    ) async throws -> AsyncThrowingStream<AFMClient.StreamItem, Error> {
+        guard segments.isEmpty == false else {
+            return AsyncThrowingStream { continuation in
+                continuation.finish()
+            }
+        }
+
         guard let session else {
             throw NSError(
                 domain: "AFMTranslationService",
@@ -37,22 +43,37 @@ final class AFMTranslationService: AFMClient {
                 throw error
             }
         }
-        
-        var out: [String] = []
-        out.reserveCapacity(texts.count)
-        for (idx, text) in texts.enumerated() {
-            let len = text.count
-            do {
-                let response = try await session.translate(text)
-                print("[AFM] \(text) => \(response)")
-                out.append(response.targetText)
-            } catch {
-                // 내부 에러/언어 인식 실패 케이스 로그 강화
-                let ns = error as NSError
-                print("[AFM][ERR] idx=\(idx) len=\(len) domain=\(ns.domain) code=\(ns.code) msg=\(ns.localizedDescription)")
-                throw error
+
+        let requests: [TranslationSession.Request] = segments.map { segment in
+            TranslationSession.Request(
+                text: segment.originalText,
+                clientIdentifier: segment.id
+            )
+        }
+
+        let batch = try session.translate(batch: requests)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task { @MainActor in
+                var iterator = batch.makeAsyncIterator()
+                do {
+                    while let response = try await iterator.next() {
+                        guard let identifier = response.clientIdentifier else { continue }
+                        let translated = response.targetText
+                        print("[AFM][stream] id=\(identifier) => \(translated)")
+                        continuation.yield(.init(segmentID: identifier, translatedText: translated))
+                    }
+                    continuation.finish()
+                } catch {
+                    let ns = error as NSError
+                    print("[AFM][ERR][stream] domain=\(ns.domain) code=\(ns.code) msg=\(ns.localizedDescription)")
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
-        return out
     }
 }

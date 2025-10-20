@@ -9,55 +9,63 @@ final class GoogleEngine: TranslationEngine {
         self.client = client
     }
 
-    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult] {
-        guard !segments.isEmpty else { return [] }
-
-        let batchSize = 100 // v2는 q 최대 128개
-        var results: [TranslationResult] = []
-        results.reserveCapacity(segments.count)
-        let now = Date()
-
-        var i = 0
-        while i < segments.count {
-            let end = min(i + batchSize, segments.count)
-            let slice = Array(segments[i ..< end])
-            let texts = slice.map { $0.originalText }
-
-//            print("[GoogleEngine] batch i=\(i) count=\(slice.count)")
-
-            // 실제 API 호출
-            let translations = try await client.translate(
-                texts: texts,
-                target: "ko",
-                source: "zh-CN",
-                format: "html"
-            )
-
-            // 개수 불일치 방어
-            guard translations.count == slice.count else {
-                throw NSError(
-                    domain: "GoogleEngine",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "Google returned \(translations.count) results for \(slice.count) inputs"]
-                )
+    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<TranslationResult, Error> {
+        guard segments.isEmpty == false else {
+            return AsyncThrowingStream { continuation in
+                continuation.finish()
             }
-
-            for (seg, trans) in zip(slice, translations) {
-                results.append(
-                    TranslationResult(
-                        id: seg.id + ":google",
-                        segmentID: seg.id,
-                        engine: .google,
-                        text: trans.translatedText.htmlUnescaped,
-                        residualSourceRatio: 0.0, // 필요시 후처리로 계산
-                        createdAt: now
-                    )
-                )
-            }
-            i = end
         }
 
-        return results
+        let batchSize = 100 // v2는 q 최대 128개
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var index = 0
+                    while index < segments.count {
+                        let end = min(index + batchSize, segments.count)
+                        let slice = Array(segments[index ..< end])
+                        let texts = slice.map { $0.originalText }
+
+                        let translations = try await client.translate(
+                            texts: texts,
+                            target: "ko",
+                            source: "zh-CN",
+                            format: "html"
+                        )
+
+                        guard translations.count == slice.count else {
+                            throw NSError(
+                                domain: "GoogleEngine",
+                                code: -1,
+                                userInfo: [NSLocalizedDescriptionKey: "Google returned \(translations.count) results for \(slice.count) inputs"]
+                            )
+                        }
+
+                        for (seg, trans) in zip(slice, translations) {
+                            let result = TranslationResult(
+                                id: seg.id + ":google",
+                                segmentID: seg.id,
+                                engine: .google,
+                                text: trans.translatedText.htmlUnescaped,
+                                residualSourceRatio: 0.0,
+                                createdAt: Date()
+                            )
+                            continuation.yield(result)
+                        }
+
+                        index = end
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 }
 

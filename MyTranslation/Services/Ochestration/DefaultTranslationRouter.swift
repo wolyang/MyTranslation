@@ -127,15 +127,16 @@ final class DefaultTranslationRouter: TranslationRouter {
                 await Task.yield()
             }
 
-            do {
-                let engineResults = try await engine.translate(maskedSegments, options: options)
-                guard engineResults.count == maskedSegments.count else {
-                    struct EngineCountMismatch: Error {}
-                    throw EngineCountMismatch()
-                }
+            let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
+            var remainingIDs = Set(pendingSegments.map { $0.id })
 
-                for index in maskedPacks.indices {
-                    let result = engineResults[index]
+            do {
+                let stream = try await engine.translate(maskedSegments, options: options)
+
+                for try await result in stream {
+                    guard let index = indexByID[result.segmentID] else { continue }
+                    guard remainingIDs.remove(result.segmentID) != nil else { continue }
+
                     let pack = maskedPacks[index]
                     let originalSegment = pendingSegments[index]
 
@@ -191,12 +192,17 @@ final class DefaultTranslationRouter: TranslationRouter {
                     let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
                     cache.save(result: finalResult, forKey: cacheKey)
                 }
+
+                if remainingIDs.isEmpty == false {
+                    struct EngineCountMismatch: Error {}
+                    throw EngineCountMismatch()
+                }
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                for segment in pendingSegments where failedIDs.contains(segment.id) == false {
-                    failedIDs.insert(segment.id)
-                    progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
+                for segmentID in remainingIDs where failedIDs.contains(segmentID) == false {
+                    failedIDs.insert(segmentID)
+                    progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
                     await Task.yield()
                 }
                 let summary = TranslationStreamSummary(
@@ -228,7 +234,12 @@ final class DefaultTranslationRouter: TranslationRouter {
         preferredEngine: EngineTag
     ) async throws -> [TranslationResult] {
         let engine = engine(for: preferredEngine)
-        return try await engine.translate(segments, options: options)
+        let stream = try await engine.translate(segments, options: options)
+        var results: [TranslationResult] = []
+        for try await result in stream {
+            results.append(result)
+        }
+        return results
     }
 
     private func engine(for tag: EngineTag) -> TranslationEngine {

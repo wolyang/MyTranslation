@@ -6,5 +6,9 @@ final class DeepLEngine: TranslationEngine {
     public let maskPerson: Bool = true
     struct Config { var apiKey: String? = nil }
     init(config: Config = .init()) { }
-    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> [TranslationResult] { [] }
+    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<TranslationResult, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
 }
