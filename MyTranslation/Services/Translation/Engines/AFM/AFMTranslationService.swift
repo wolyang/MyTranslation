@@ -19,7 +19,7 @@ final class AFMTranslationService: AFMClient {
         segments: [Segment],
         style: TranslationStyle,
         preserveFormatting: Bool
-    ) async throws -> AsyncThrowingStream<AFMClient.StreamItem, Error> {
+    ) async throws -> AsyncThrowingStream<(segmentID: String, translatedText: String), Error> {
         guard segments.isEmpty == false else {
             return AsyncThrowingStream { continuation in
                 continuation.finish()
@@ -46,7 +46,7 @@ final class AFMTranslationService: AFMClient {
 
         let requests: [TranslationSession.Request] = segments.map { segment in
             TranslationSession.Request(
-                text: segment.originalText,
+                sourceText: segment.originalText,
                 clientIdentifier: segment.id
             )
         }
@@ -61,7 +61,7 @@ final class AFMTranslationService: AFMClient {
                         guard let identifier = response.clientIdentifier else { continue }
                         let translated = response.targetText
                         print("[AFM][stream] id=\(identifier) => \(translated)")
-                        continuation.yield(.init(segmentID: identifier, translatedText: translated))
+                        continuation.yield((segmentID: identifier, translatedText: translated))
                     }
                     continuation.finish()
                 } catch {
