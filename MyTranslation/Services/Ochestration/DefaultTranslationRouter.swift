@@ -43,6 +43,8 @@ final class DefaultTranslationRouter: TranslationRouter {
         preferredEngine: TranslationEngineID?,
         progress: @escaping (TranslationStreamEvent) -> Void
     ) async throws -> TranslationStreamSummary {
+        print("[Router] Start translateStream")
+        
         let glossaryEntries: [GlossaryEntry]
         if options.applyGlossary {
             glossaryEntries = await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
