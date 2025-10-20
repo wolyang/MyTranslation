@@ -28,8 +28,15 @@ extension BrowserViewModel {
         let requestID = UUID()
         activeTranslationID = requestID
         translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self, let webView else { return }
+            guard let self else { return }
+            guard let webView else {
+                self.handleFailedTranslationStart(reason: "webView released before translation", requestID: requestID)
+                return
+            }
             await self.startTranslate(on: webView, requestID: requestID)
+        }
+        if translationTask == nil {
+            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
         }
     }
 
@@ -54,13 +61,20 @@ extension BrowserViewModel {
         let requestID = UUID()
         activeTranslationID = requestID
         translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self, let webView else { return }
+            guard let self else { return }
+            guard let webView else {
+                self.handleFailedTranslationStart(reason: "webView released before partial translation", requestID: requestID)
+                return
+            }
             await self.startPartialTranslation(
                 segments: segments,
                 engine: engine,
                 on: webView,
                 requestID: requestID
             )
+        }
+        if translationTask == nil {
+            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
         }
     }
 
@@ -125,6 +139,15 @@ private extension BrowserViewModel {
         if let webView = attachedWebView {
             normalizePageScale(webView)
         }
+    }
+
+    func handleFailedTranslationStart(reason: String, requestID: UUID) {
+        if activeTranslationID == requestID {
+            activeTranslationID = nil
+        }
+        translationTask = nil
+        isTranslating = false
+        print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
 
     func startTranslate(on webView: WKWebView, requestID: UUID) async {

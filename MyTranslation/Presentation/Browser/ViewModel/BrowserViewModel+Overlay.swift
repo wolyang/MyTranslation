@@ -6,8 +6,11 @@ extension BrowserViewModel {
     /// WebContainerView.onSelectSegment 에서 호출된다.
     func onSegmentSelected(id: String, anchor: CGRect) async {
         print("[onSegmentSelected] id: \(id)")
-        guard let webView = attachedWebView,
-              let segment = lastSegments.first(where: { $0.id == id }) else { return }
+        guard let webView = attachedWebView else {
+            print("[BrowserViewModel] attachedWebView is nil. Cannot present overlay for segment: \(id)")
+            return
+        }
+        guard let segment = lastSegments.first(where: { $0.id == id }) else { return }
 
         cancelOverlayTranslationTasks()
         selectedSegment = segment
