@@ -13,7 +13,6 @@ struct BrowserTabView: View {
     init(container: AppContainer) {
         _vm = StateObject(
             wrappedValue: BrowserViewModel(
-                container: container,
                 extractor: WKContentExtractor(),
                 router: container.router,
                 replacer: WebViewInlineReplacer(),
@@ -27,6 +26,7 @@ struct BrowserTabView: View {
         VStack(spacing: 12) {
             URLBarView(
                 urlString: $vm.urlString,
+                presetURLs: vm.presetLinks,
                 selectedEngine: preferredEngineBinding,
                 showOriginal: $vm.showOriginal,
                 isEditing: $vm.isEditingURL,
