@@ -49,7 +49,7 @@ final class WKContentExtractor: ContentExtractor {
                 let endIdx = block.text.index(block.text.startIndex, offsetBy: slice.end)
                 let rawSubstring = block.text[startIdx..<endIdx]
                 let raw = String(rawSubstring)
-                guard raw.count >= 2 else { continue }
+                if raw.count < 2 && raw.isAlphaNumericSymbolic { continue }
                 guard raw.isPunctOnly == false else { continue }
 
                 let normalized = normalizeForID(raw)
@@ -245,5 +245,14 @@ private extension String {
             .union(.symbols)
             .union(.whitespacesAndNewlines)
         return self.unicodeScalars.allSatisfy { punct.contains($0) }
+    }
+
+    var isAlphaNumericSymbolic: Bool {
+        guard isEmpty == false else { return false }
+        let allowed = CharacterSet.alphanumerics
+            .union(.symbols)
+            .union(.punctuationCharacters)
+            .union(.whitespacesAndNewlines)
+        return unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 }
