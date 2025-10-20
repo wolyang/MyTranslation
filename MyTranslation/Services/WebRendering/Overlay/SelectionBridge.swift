@@ -181,11 +181,11 @@ final class SelectionBridge: NSObject {
             const root = document.body || document.documentElement;
             if (!root) return [];
             const nodes = Array.from(root.querySelectorAll(BLOCK_QUERY));
-            const candidates = nodes.filter(el => {
+            const leaves = nodes.filter(el => !nodes.some(other => other !== el && el.contains(other)));
+            return leaves.filter(el => {
               const txt = (el.innerText || '').trim();
               return txt.length >= 6;
             });
-            return candidates.filter(el => !candidates.some(other => other !== el && el.contains(other)));
           }
 
           function buildIndex(block) {
