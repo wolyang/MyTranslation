@@ -127,76 +127,84 @@ final class DefaultTranslationRouter: TranslationRouter {
                 await Task.yield()
             }
 
+            let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
+            var remainingIDs = Set(pendingSegments.map { $0.id })
+
             do {
-                let engineResults = try await engine.translate(maskedSegments, options: options)
-                guard engineResults.count == maskedSegments.count else {
-                    struct EngineCountMismatch: Error {}
-                    throw EngineCountMismatch()
+                let stream = try await engine.translate(maskedSegments, options: options)
+
+                for try await batch in stream {
+                    for result in batch {
+                        guard let index = indexByID[result.segmentID] else { continue }
+                        guard remainingIDs.remove(result.segmentID) != nil else { continue }
+
+                        let pack = maskedPacks[index]
+                        let originalSegment = pendingSegments[index]
+
+                        var output = result.text
+                        output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: pack.locks, names: [], mode: .tokensOnly)
+                        output = termMasker.unlockTermsSafely(
+                            output,
+                            locks: pack.locks
+                        )
+
+                        if !engine.maskPerson {
+                            let names = nameGlossariesPerSegment[index]
+                            if names.isEmpty == false {
+                                // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
+                                output = termMasker.normalizeEntitiesAndParticles(
+                                    in: output,
+                                    locksByToken: [:],
+                                    names: names,
+                                    mode: .namesOnly
+                                )
+                            }
+                        }
+
+                        if pack.locks.values.count == 1,
+                           let target = pack.locks.values.first?.target
+                        {
+                            output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
+                        }
+
+                        let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                        let residual = Double(hanCount) / Double(max(output.count, 1))
+                        let finalResult = TranslationResult(
+                            id: result.id,
+                            segmentID: result.segmentID,
+                            engine: result.engine,
+                            text: output,
+                            residualSourceRatio: residual,
+                            createdAt: result.createdAt
+                        )
+
+                        let payload = TranslationStreamPayload(
+                            segmentID: originalSegment.id,
+                            originalText: originalSegment.originalText,
+                            translatedText: finalResult.text,
+                            engineID: finalResult.engine.rawValue,
+                            sequence: sequence
+                        )
+                        sequence += 1
+                        progress(.init(kind: .final(segment: payload), timestamp: Date()))
+                        await Task.yield()
+                        succeededIDs.append(originalSegment.id)
+
+                        let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
+                        cache.save(result: finalResult, forKey: cacheKey)
+                    }
                 }
 
-                for index in maskedPacks.indices {
-                    let result = engineResults[index]
-                    let pack = maskedPacks[index]
-                    let originalSegment = pendingSegments[index]
-
-                    var output = result.text
-                    output = termMasker.normalizeEntitiesAndParticles(in: output, locksByToken: pack.locks, names: [], mode: .tokensOnly)
-                    output = termMasker.unlockTermsSafely(
-                        output,
-                        locks: pack.locks
-                    )
-
-                    if !engine.maskPerson {
-                        let names = nameGlossariesPerSegment[index]
-                        if names.isEmpty == false {
-                            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
-                            output = termMasker.normalizeEntitiesAndParticles(
-                                in: output,
-                                locksByToken: [:],
-                                names: names,
-                                mode: .namesOnly
-                            )
-                        }
-                    }
-
-                    if pack.locks.values.count == 1,
-                       let target = pack.locks.values.first?.target
-                    {
-                        output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
-                    }
-
-                    let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                    let residual = Double(hanCount) / Double(max(output.count, 1))
-                    let finalResult = TranslationResult(
-                        id: result.id,
-                        segmentID: result.segmentID,
-                        engine: result.engine,
-                        text: output,
-                        residualSourceRatio: residual,
-                        createdAt: result.createdAt
-                    )
-
-                    let payload = TranslationStreamPayload(
-                        segmentID: originalSegment.id,
-                        originalText: originalSegment.originalText,
-                        translatedText: finalResult.text,
-                        engineID: finalResult.engine.rawValue,
-                        sequence: sequence
-                    )
-                    sequence += 1
-                    progress(.init(kind: .final(segment: payload), timestamp: Date()))
-                    await Task.yield()
-                    succeededIDs.append(originalSegment.id)
-
-                    let cacheKey = cacheKey(for: pack.seg, options: options, engine: engine.tag)
-                    cache.save(result: finalResult, forKey: cacheKey)
+                if remainingIDs.isEmpty == false {
+                    struct EngineCountMismatch: Error {}
+                    throw EngineCountMismatch()
                 }
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                for segment in pendingSegments where failedIDs.contains(segment.id) == false {
-                    failedIDs.insert(segment.id)
-                    progress(.init(kind: .failed(segmentID: segment.id, error: .engineFailure(code: nil)), timestamp: Date()))
+                for segmentID in remainingIDs where failedIDs.contains(segmentID) == false {
+                    failedIDs.insert(segmentID)
+                    progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
                     await Task.yield()
                 }
                 let summary = TranslationStreamSummary(
@@ -228,7 +236,12 @@ final class DefaultTranslationRouter: TranslationRouter {
         preferredEngine: EngineTag
     ) async throws -> [TranslationResult] {
         let engine = engine(for: preferredEngine)
-        return try await engine.translate(segments, options: options)
+        let stream = try await engine.translate(segments, options: options)
+        var results: [TranslationResult] = []
+        for try await batch in stream {
+            results.append(contentsOf: batch)
+        }
+        return results
     }
 
     private func engine(for tag: EngineTag) -> TranslationEngine {
