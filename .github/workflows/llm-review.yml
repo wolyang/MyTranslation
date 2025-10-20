@@ -50,8 +50,6 @@ jobs:
             }
 
             const { owner, repo } = github.context.repo;
-            const prNumber = github.context.payload.pull_request.number;
-            if (!prNumber) { core.setFailed('pr_number 입력이 필요합니다.'); return; }
 
             // 1) PR 메타/파일/디프 수집
             const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
