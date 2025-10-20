@@ -43,13 +43,13 @@ jobs:
 
             // PR 번호: PR 이벤트면 payload에서, 수동실행이면 입력에서
             const prNumberInput = core.getInput('pr_number');
-            const prNumber = github.context.payload.pull_request?.number || Number(prNumberInput);
+            const prNumber = context.payload.pull_request?.number || Number(prNumberInput);
             if (!prNumber) {
               core.setFailed('PR 번호를 찾을 수 없음. (pull_request 이벤트 또는 pr_number 입력 필요)');
               return;
             }
 
-            const { owner, repo } = github.context.repo;
+            const { owner, repo } = context.repo;
 
             // 1) PR 메타/파일/디프 수집
             const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
