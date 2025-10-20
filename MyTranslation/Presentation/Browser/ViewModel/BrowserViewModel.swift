@@ -28,8 +28,8 @@ final class BrowserViewModel: ObservableObject {
     weak var attachedWebView: WKWebView?
     var currentURL: URL? { URL(string: urlString) }
 
-    private(set) var lastSegments: [Segment] = []
-    private(set) var lastStreamPayloads: [TranslationStreamPayload] = []
+    var lastSegments: [Segment] = []
+    var lastStreamPayloads: [TranslationStreamPayload] = []
 
     var pendingURLAfterEditing: String?
     var currentPageTranslation: PageTranslationState?
@@ -43,7 +43,7 @@ final class BrowserViewModel: ObservableObject {
     let presetLinks: [PresetLink]
 
     let extractor: ContentExtractor
-    private let router: TranslationRouter
+    let router: TranslationRouter
     let replacer: InlineReplacer
     let settings: UserSettings
 //    let overlay: OverlayRenderer
@@ -105,7 +105,7 @@ extension BrowserViewModel {
         var id: String { url }
     }
 
-    static let defaultPresetLinks: [PresetLink] = [
+    nonisolated(unsafe) static let defaultPresetLinks: [PresetLink] = [
         .init(
             title: "AO3 – 특정 작품",
             url: "https://archiveofourown.org/works/71109986?view_adult=true"
