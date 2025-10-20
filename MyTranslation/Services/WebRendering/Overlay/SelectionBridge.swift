@@ -184,7 +184,12 @@ final class SelectionBridge: NSObject {
             const leaves = nodes.filter(el => !nodes.some(other => other !== el && el.contains(other)));
             return leaves.filter(el => {
               const txt = (el.innerText || '').trim();
-              return txt.length >= 6;
+              if (!txt) return false;
+              if (txt.length >= 6) return true;
+              for (let i = 0; i < txt.length; i++) {
+                if (txt.charCodeAt(i) > 0x7f) return true;
+              }
+              return false;
             });
           }
 
