@@ -133,6 +133,22 @@ extension BrowserViewModel {
             requestTranslation(for: cacheResult.remainingSegmentIDs, engine: engine, on: webView)
         }
     }
+    
+    /// 번역 완료·실패 수치를 기반으로 진행률을 계산한다.
+    func updateProgress(for engineID: TranslationEngineID) {
+        guard let state = currentPageTranslation else {
+            translationProgress = 0
+            return
+        }
+        if state.totalSegments == 0 {
+            translationProgress = 1.0
+            return
+        }
+        let total = state.totalSegments
+        let finalized = state.finalizedSegmentIDs.count
+        let failed = state.failedSegmentIDs.count
+        translationProgress = Double(min(finalized + failed, total)) / Double(total)
+    }
 }
 
 @MainActor
@@ -406,22 +422,6 @@ private extension BrowserViewModel {
             applyImmediately: true,
             highlight: highlight
         )
-    }
-
-    /// 번역 완료·실패 수치를 기반으로 진행률을 계산한다.
-    func updateProgress(for engineID: TranslationEngineID) {
-        guard let state = currentPageTranslation else {
-            translationProgress = 0
-            return
-        }
-        if state.totalSegments == 0 {
-            translationProgress = 1.0
-            return
-        }
-        let total = state.totalSegments
-        let finalized = state.finalizedSegmentIDs.count
-        let failed = state.failedSegmentIDs.count
-        translationProgress = Double(min(finalized + failed, total)) / Double(total)
     }
 
     /// 번역 적용 여부와 상관없이 페이지 확대 비율을 초기화한다.
