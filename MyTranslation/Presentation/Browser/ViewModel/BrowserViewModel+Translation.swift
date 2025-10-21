@@ -7,23 +7,28 @@ extension BrowserViewModel {
     func onWebViewDidFinishLoad(_ webView: WKWebView, url: URL) {
         normalizePageScale(webView)
 
+        let urlString = url.absoluteString
+        let isNewPage = currentPageURLString != urlString
+
         request = nil
-        pendingURLAfterEditing = url.absoluteString
+        pendingURLAfterEditing = urlString
         if isEditingURL == false {
-            urlString = url.absoluteString
+            self.urlString = urlString
             pendingURLAfterEditing = nil
         }
 
         if currentPageTranslation?.url != url {
             currentPageTranslation = nil
         }
-        currentPageURLString = url.absoluteString
 
-        // 주소창 이동이나 히스토리 내비게이션처럼 onNavigate 콜백이 생략된 경우에도
-        // 새 페이지에 대한 자동 번역이 다시 시도되도록 상태를 초기화한다.
-        hasAttemptedTranslationForCurrentPage = false
+        if isNewPage {
+            // 주소창 이동이나 히스토리 내비게이션처럼 onNavigate 콜백이 생략된 경우에도
+            // 새 페이지로 판별되면 자동 번역 시도 여부를 초기화한다.
+            hasAttemptedTranslationForCurrentPage = false
+        }
+        currentPageURLString = urlString
 
-        if hasAttemptedTranslationForCurrentPage == false {
+        if isNewPage, hasAttemptedTranslationForCurrentPage == false {
             pendingAutoTranslateID = UUID()
         }
     }

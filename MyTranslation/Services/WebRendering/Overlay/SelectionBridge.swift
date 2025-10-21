@@ -145,6 +145,10 @@ final class SelectionBridge: NSObject {
         
           // ====== 마킹 (블록 단위 + Range 래핑: 노드 경계도 매칭) ======
         const BLOCK_ANCHOR_SEL = 'p, li, blockquote, h1, h2, h3, h4, h5, h6';
+
+        const BASE_BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div';
+        const HEADING_QUERY = 'h1,h2,h3,h4,h5,h6';
+        const BLOCK_QUERY = BASE_BLOCK_QUERY + ',' + HEADING_QUERY;
         
         function fragContainsBlock(frag) {
           // 블록/컨테이너/버튼류 태그 집합
@@ -174,14 +178,19 @@ final class SelectionBridge: NSObject {
             return walk(frag);
         }
 
-        const BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div,h1,h2,h3,h4,h5,h6';
-
         function collectBlocks() {
             // body 내부의 텍스트 블록만 대상으로 제한 (head/title 제외)
             const root = document.body || document.documentElement;
             if (!root) return [];
             const nodes = Array.from(root.querySelectorAll(BLOCK_QUERY));
-            const leaves = nodes.filter(el => !nodes.some(other => other !== el && el.contains(other)));
+            const leaves = nodes.filter(el => {
+              return !nodes.some(other => {
+                if (other === el) return false;
+                if (!el.contains(other)) return false;
+                if (!el.matches(HEADING_QUERY) && other.matches(HEADING_QUERY)) return false;
+                return true;
+              });
+            });
             return leaves.filter(el => {
               const txt = (el.innerText || '').trim();
               if (!txt) return false;
@@ -208,7 +217,14 @@ final class SelectionBridge: NSObject {
               }
             });
             let node;
+            const isHeadingBlock = block.matches(HEADING_QUERY);
             while ((node = walker.nextNode())) {
+              if (!isHeadingBlock) {
+                const hostHeading = node.parentElement && node.parentElement.closest ? node.parentElement.closest(HEADING_QUERY) : null;
+                if (hostHeading && hostHeading !== block) {
+                  continue;
+                }
+              }
               const start = acc.length;
               acc += node.nodeValue;
               const token = ensureNodeToken(node);
