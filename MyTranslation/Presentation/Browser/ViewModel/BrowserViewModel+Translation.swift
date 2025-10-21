@@ -39,8 +39,11 @@ extension BrowserViewModel {
     /// 현재 페이지 전체를 번역하도록 비동기 작업을 예약한다.
     func requestTranslation(on webView: WKWebView) {
         translationTask?.cancel()
+        translationTask = nil
+        pendingAutoTranslateID = nil
         let requestID = UUID()
         activeTranslationID = requestID
+        hasAttemptedTranslationForCurrentPage = true
         translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
                 await MainActor.run {
@@ -75,8 +78,11 @@ extension BrowserViewModel {
         guard segments.isEmpty == false else { return }
 
         translationTask?.cancel()
+        translationTask = nil
+        pendingAutoTranslateID = nil
         let requestID = UUID()
         activeTranslationID = requestID
+        hasAttemptedTranslationForCurrentPage = true
         translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
                 await MainActor.run {
@@ -191,6 +197,7 @@ private extension BrowserViewModel {
         }
         translationTask = nil
         isTranslating = false
+        hasAttemptedTranslationForCurrentPage = false
         print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
 
