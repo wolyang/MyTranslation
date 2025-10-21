@@ -39,16 +39,15 @@ extension BrowserViewModel {
         translationTask?.cancel()
         let requestID = UUID()
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
+        translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
-                self.handleFailedTranslationStart(reason: "webView released before translation", requestID: requestID)
+                await self?.handleFailedTranslationStart(
+                    reason: "webView released before translation",
+                    requestID: requestID
+                )
                 return
             }
-            await self.startTranslate(on: webView, requestID: requestID)
-        }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
+            await self?.startTranslate(on: webView, requestID: requestID)
         }
     }
 
@@ -73,21 +72,20 @@ extension BrowserViewModel {
         translationTask?.cancel()
         let requestID = UUID()
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
+        translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
-                self.handleFailedTranslationStart(reason: "webView released before partial translation", requestID: requestID)
+                await self?.handleFailedTranslationStart(
+                    reason: "webView released before partial translation",
+                    requestID: requestID
+                )
                 return
             }
-            await self.startPartialTranslation(
+            await self?.startPartialTranslation(
                 segments: segments,
                 engine: engine,
                 on: webView,
                 requestID: requestID
             )
-        }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
         }
     }
 
