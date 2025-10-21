@@ -146,36 +146,23 @@ final class DefaultTranslationRouter: TranslationRouter {
                     failingIDs = ids
                 }
 
-                for segmentID in failingIDs where failedIDs.contains(segmentID) == false {
-                    failedIDs.insert(segmentID)
-                    progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
-                    await Task.yield()
-                }
-
-                let summary = TranslationStreamSummary(
-                    totalCount: segments.count,
-                    succeededCount: succeededIDs.count,
-                    failedCount: failedIDs.count,
-                    cachedCount: cachedCount
+                failedIDs = await markFailedSegments(
+                    failingIDs,
+                    existingFailed: failedIDs,
+                    progress: progress
                 )
                 progress(.init(kind: .completed, timestamp: Date()))
                 await Task.yield()
-                return summary
+                throw TranslationRouterError.noAvailableEngine
             } catch {
-                for segmentID in streamState.remainingIDs where failedIDs.contains(segmentID) == false {
-                    failedIDs.insert(segmentID)
-                    progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
-                    await Task.yield()
-                }
-                let summary = TranslationStreamSummary(
-                    totalCount: segments.count,
-                    succeededCount: succeededIDs.count,
-                    failedCount: failedIDs.count,
-                    cachedCount: cachedCount
+                failedIDs = await markFailedSegments(
+                    streamState.remainingIDs,
+                    existingFailed: failedIDs,
+                    progress: progress
                 )
                 progress(.init(kind: .completed, timestamp: Date()))
                 await Task.yield()
-                return summary
+                throw TranslationRouterError.noAvailableEngine
             }
         }
 
@@ -355,6 +342,21 @@ final class DefaultTranslationRouter: TranslationRouter {
         if state.remainingIDs.isEmpty == false {
             throw EngineStreamError.missingIDs(state.remainingIDs)
         }
+    }
+
+    /// 실패한 세그먼트에 대한 이벤트를 발행하고 실패 목록을 갱신한다.
+    private func markFailedSegments(
+        _ ids: Set<String>,
+        existingFailed: Set<String>,
+        progress: @escaping (TranslationStreamEvent) -> Void
+    ) async -> Set<String> {
+        var updated = existingFailed
+        for segmentID in ids where updated.contains(segmentID) == false {
+            updated.insert(segmentID)
+            progress(.init(kind: .failed(segmentID: segmentID, error: .engineFailure(code: nil)), timestamp: Date()))
+            await Task.yield()
+        }
+        return updated
     }
 
     /// 마스킹 해제 및 정규화를 수행해 최종 출력 문자열을 만든다.
