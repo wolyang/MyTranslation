@@ -81,12 +81,6 @@ struct BrowserTabView: View {
             let engine = EngineTag(rawValue: newValue) ?? .afm
             vm.settings.preferredEngine = engine
         }
-        // WebView 로드 이후 자동 번역
-        .task(id: vm.pendingAutoTranslateID) {
-            if vm.pendingAutoTranslateID != nil {
-                vm.onShowOriginalChanged(vm.showOriginal)
-            }
-        }
         // TranslationSession을 컨테이너 서비스에 연결
         .translationTask(trConfig) { session in
             // (선택) 사전 준비: 모델 다운로드/권한 UX 향상

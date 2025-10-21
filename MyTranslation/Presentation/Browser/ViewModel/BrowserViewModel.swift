@@ -18,7 +18,6 @@ final class BrowserViewModel: ObservableObject {
 
     @Published var request: URLRequest? = nil
     @Published var currentPageURLString: String = ""
-    @Published var pendingAutoTranslateID: UUID? = nil
     @Published var overlayState: OverlayState?
     @Published var fmPanel: FMAnswer?
     @Published var translateRunID: String = ""
@@ -37,6 +36,7 @@ final class BrowserViewModel: ObservableObject {
     var activeTranslationID: UUID?
     var hasAttemptedTranslationForCurrentPage = false
     var noBodyTextRetryCount = 0
+    var autoTranslateTask: Task<Void, Never>? = nil
     var selectedSegment: Segment?
     var pendingImproved: String?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
@@ -91,6 +91,8 @@ final class BrowserViewModel: ObservableObject {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
         hasAttemptedTranslationForCurrentPage = false
+        autoTranslateTask?.cancel()
+        autoTranslateTask = nil
         pendingURLAfterEditing = nil
     }
 
