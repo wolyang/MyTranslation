@@ -7,20 +7,32 @@ extension BrowserViewModel {
     func onWebViewDidFinishLoad(_ webView: WKWebView, url: URL) {
         normalizePageScale(webView)
 
+        let urlString = url.absoluteString
+        let isNewPage = currentPageURLString != urlString
+
         request = nil
-        pendingURLAfterEditing = url.absoluteString
+        pendingURLAfterEditing = urlString
         if isEditingURL == false {
-            urlString = url.absoluteString
+            self.urlString = urlString
             pendingURLAfterEditing = nil
         }
 
         if currentPageTranslation?.url != url {
             currentPageTranslation = nil
         }
-        currentPageURLString = url.absoluteString
+
+        if isNewPage {
+            // 주소창 이동이나 히스토리 내비게이션처럼 onNavigate 콜백이 생략된 경우에도
+            // 새 페이지로 판별되면 자동 번역 시도 여부를 초기화한다.
+            hasAttemptedTranslationForCurrentPage = false
+            noBodyTextRetryCount = 0
+            pendingAutoTranslateID = nil
+        }
+
+        currentPageURLString = urlString
 
         if hasAttemptedTranslationForCurrentPage == false {
-            pendingAutoTranslateID = UUID()
+            scheduleAutoTranslate()
         }
     }
 
@@ -29,16 +41,18 @@ extension BrowserViewModel {
         translationTask?.cancel()
         let requestID = UUID()
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
+        translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
-                self.handleFailedTranslationStart(reason: "webView released before translation", requestID: requestID)
+                await MainActor.run {
+                    self?.handleFailedTranslationStart(
+                        reason: "webView released before translation",
+                        requestID: requestID
+                    )
+                }
                 return
             }
-            await self.startTranslate(on: webView, requestID: requestID)
-        }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
+            guard let strongSelf = await MainActor.run(body: { self }) else { return }
+            await strongSelf.startTranslate(on: webView, requestID: requestID)
         }
     }
 
@@ -63,21 +77,23 @@ extension BrowserViewModel {
         translationTask?.cancel()
         let requestID = UUID()
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
+        translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
-                self.handleFailedTranslationStart(reason: "webView released before partial translation", requestID: requestID)
+                await MainActor.run {
+                    self?.handleFailedTranslationStart(
+                        reason: "webView released before partial translation",
+                        requestID: requestID
+                    )
+                }
                 return
             }
-            await self.startPartialTranslation(
+            guard let strongSelf = await MainActor.run(body: { self }) else { return }
+            await strongSelf.startPartialTranslation(
                 segments: segments,
                 engine: engine,
                 on: webView,
                 requestID: requestID
             )
-        }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
         }
     }
 
@@ -111,6 +127,10 @@ extension BrowserViewModel {
         }
         request = nil
         hasAttemptedTranslationForCurrentPage = false
+        autoTranslateTask?.cancel()
+        autoTranslateTask = nil
+        pendingAutoTranslateID = nil
+        noBodyTextRetryCount = 0
         closeOverlay()
         pendingURLAfterEditing = nil
         currentPageTranslation = nil
@@ -174,6 +194,35 @@ private extension BrowserViewModel {
         print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
 
+    func scheduleAutoTranslateRetry(after delay: UInt64 = 300_000_000) {
+        scheduleAutoTranslate(after: delay)
+    }
+
+    func scheduleAutoTranslate(after delay: UInt64 = 0) {
+        autoTranslateTask?.cancel()
+        autoTranslateTask = nil
+        let targetURL = currentPageURLString
+        autoTranslateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if delay > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: delay)
+                } catch {
+                    return
+                }
+            }
+            guard Task.isCancelled == false else { return }
+            guard self.currentPageURLString == targetURL else { return }
+            guard self.hasAttemptedTranslationForCurrentPage == false else { return }
+            guard self.isTranslating == false else { return }
+            guard self.showOriginal == false else { return }
+            self.pendingAutoTranslateID = UUID()
+            if self.autoTranslateTask?.isCancelled == false {
+                self.autoTranslateTask = nil
+            }
+        }
+    }
+
     /// 전체 페이지 번역 스트림을 시작하고 스트림 이벤트를 처리한다.
     func startTranslate(on webView: WKWebView, requestID: UUID) async {
         guard let url = webView.url else { return }
@@ -203,6 +252,7 @@ private extension BrowserViewModel {
             } else {
                 segments = try await extractor.extract(using: executor, url: url)
             }
+            noBodyTextRetryCount = 0
 
             try Task.checkCancellation()
             guard activeTranslationID == requestID else { return }
@@ -263,6 +313,14 @@ private extension BrowserViewModel {
             let executor = WKWebViewScriptAdapter(webView: webView)
             replacer.restore(using: executor)
             _ = try? await executor.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
+
+            if let extractorError = error as? ExtractorError, extractorError == .noBodyText {
+                noBodyTextRetryCount += 1
+                if noBodyTextRetryCount <= 1 {
+                    hasAttemptedTranslationForCurrentPage = false
+                    scheduleAutoTranslateRetry()
+                }
+            }
         }
     }
 
