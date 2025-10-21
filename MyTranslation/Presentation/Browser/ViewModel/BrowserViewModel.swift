@@ -18,6 +18,7 @@ final class BrowserViewModel: ObservableObject {
 
     @Published var request: URLRequest? = nil
     @Published var currentPageURLString: String = ""
+    @Published var pendingAutoTranslateID: UUID? = nil
     @Published var overlayState: OverlayState?
     @Published var fmPanel: FMAnswer?
     @Published var translateRunID: String = ""
@@ -91,6 +92,7 @@ final class BrowserViewModel: ObservableObject {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
         hasAttemptedTranslationForCurrentPage = false
+        pendingAutoTranslateID = nil
         autoTranslateTask?.cancel()
         autoTranslateTask = nil
         pendingURLAfterEditing = nil

@@ -26,12 +26,12 @@ extension BrowserViewModel {
             // 새 페이지로 판별되면 자동 번역 시도 여부를 초기화한다.
             hasAttemptedTranslationForCurrentPage = false
             noBodyTextRetryCount = 0
-            autoTranslateTask?.cancel()
-            autoTranslateTask = nil
+            pendingAutoTranslateID = nil
         }
+
         currentPageURLString = urlString
 
-        if isNewPage {
+        if hasAttemptedTranslationForCurrentPage == false {
             scheduleAutoTranslate()
         }
     }
@@ -41,15 +41,17 @@ extension BrowserViewModel {
         translationTask?.cancel()
         let requestID = UUID()
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
+        translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
-                self.handleFailedTranslationStart(
-                    reason: "webView released before translation",
-                    requestID: requestID
-                )
+                await MainActor.run {
+                    self?.handleFailedTranslationStart(
+                        reason: "webView released before translation",
+                        requestID: requestID
+                    )
+                }
                 return
             }
+            guard let self else { return }
             await self.startTranslate(on: webView, requestID: requestID)
         }
         if translationTask == nil {
@@ -78,15 +80,17 @@ extension BrowserViewModel {
         translationTask?.cancel()
         let requestID = UUID()
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
+        translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
             guard let webView else {
-                self.handleFailedTranslationStart(
-                    reason: "webView released before partial translation",
-                    requestID: requestID
-                )
+                await MainActor.run {
+                    self?.handleFailedTranslationStart(
+                        reason: "webView released before partial translation",
+                        requestID: requestID
+                    )
+                }
                 return
             }
+            guard let self else { return }
             await self.startPartialTranslation(
                 segments: segments,
                 engine: engine,
@@ -131,6 +135,7 @@ extension BrowserViewModel {
         hasAttemptedTranslationForCurrentPage = false
         autoTranslateTask?.cancel()
         autoTranslateTask = nil
+        pendingAutoTranslateID = nil
         noBodyTextRetryCount = 0
         closeOverlay()
         pendingURLAfterEditing = nil
@@ -214,10 +219,10 @@ private extension BrowserViewModel {
             }
             guard Task.isCancelled == false else { return }
             guard self.currentPageURLString == targetURL else { return }
-            guard self.showOriginal == false else { return }
             guard self.hasAttemptedTranslationForCurrentPage == false else { return }
             guard self.isTranslating == false else { return }
-            self.onShowOriginalChanged(false)
+            guard self.showOriginal == false else { return }
+            self.pendingAutoTranslateID = UUID()
             if self.autoTranslateTask?.isCancelled == false {
                 self.autoTranslateTask = nil
             }
