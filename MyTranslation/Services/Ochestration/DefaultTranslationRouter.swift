@@ -66,7 +66,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         var sequence = 0
 
         for segment in segments {
-            try Task.checkCancellation()
             if let cacheHit = cacheHitPayload(
                 for: segment,
                 options: options,
@@ -97,7 +96,6 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
 
             for index in maskingContext.maskedPacks.indices {
-                try Task.checkCancellation()
                 let originalSegment = pendingSegments[index]
 
                 let scheduledPayload = TranslationStreamPayload(
@@ -112,6 +110,8 @@ final class DefaultTranslationRouter: TranslationRouter {
                 await Task.yield()
             }
 
+            try Task.checkCancellation()
+
             let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
             var streamState = StreamProcessingState(
                 remainingIDs: Set(pendingSegments.map { $0.id }),
@@ -120,6 +120,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
 
             do {
+                try Task.checkCancellation()
                 try await processStream(
                     engine: engine,
                     maskedSegments: maskingContext.maskedSegments,
@@ -288,6 +289,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         let stream = try await engine.translate(maskedSegments, options: options)
 
         for try await batch in stream {
+            try Task.checkCancellation()
             for result in batch {
                 guard let index = indexByID[result.segmentID] else {
                     state.unexpectedIDs.insert(result.segmentID)

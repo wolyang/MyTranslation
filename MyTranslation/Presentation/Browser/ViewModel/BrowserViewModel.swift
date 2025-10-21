@@ -41,6 +41,7 @@ final class BrowserViewModel: ObservableObject {
     var selectedSegment: Segment?
     var pendingImproved: String?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
+    var isStartingTranslation = false
 
     let presetLinks: [PresetLink]
 

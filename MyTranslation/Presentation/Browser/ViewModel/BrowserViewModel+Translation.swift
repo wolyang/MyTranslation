@@ -38,6 +38,10 @@ extension BrowserViewModel {
 
     /// 현재 페이지 전체를 번역하도록 비동기 작업을 예약한다.
     func requestTranslation(on webView: WKWebView) {
+        guard isStartingTranslation == false else { return }
+        isStartingTranslation = true
+        defer { isStartingTranslation = false }
+
         translationTask?.cancel()
         translationTask = nil
         pendingAutoTranslateID = nil
@@ -76,6 +80,10 @@ extension BrowserViewModel {
         let identifierSet = Set(segmentIDs)
         let segments = state.segments.filter { identifierSet.contains($0.id) }
         guard segments.isEmpty == false else { return }
+
+        guard isStartingTranslation == false else { return }
+        isStartingTranslation = true
+        defer { isStartingTranslation = false }
 
         translationTask?.cancel()
         translationTask = nil
@@ -326,9 +334,8 @@ private extension BrowserViewModel {
                 preferredEngine: engineID
             ) { [weak self, weak webView] event in
                 guard let self else { return }
-                Task { @MainActor [weak self] in
+                Task.detached(priority: .userInitiated) { @MainActor [weak self] in
                     guard let self, let webView = webView else { return }
-                    if Task.isCancelled { return }
                     await self.handleStreamEvent(
                         event,
                         url: url,
@@ -405,9 +412,8 @@ private extension BrowserViewModel {
                 preferredEngine: engine.rawValue
             ) { [weak self, weak webView] event in
                 guard let self else { return }
-                Task { @MainActor [weak self] in
+                Task.detached(priority: .userInitiated) { @MainActor [weak self] in
                     guard let self, let webView = webView else { return }
-                    if Task.isCancelled { return }
                     await self.handleStreamEvent(
                         event,
                         url: url,
@@ -436,7 +442,6 @@ private extension BrowserViewModel {
         executor: WebViewScriptExecutor,
         requestID: UUID
     ) async {
-        if Task.isCancelled { return }
         guard activeTranslationID == requestID else { return }
 
         switch event.kind {
