@@ -174,4 +174,34 @@ struct MyTranslationTests {
         #expect(script.contains("MT_COLLECT_BLOCK_SNAPSHOTS"))
         #expect(script.contains("startToken"))
     }
+
+    @Test
+    func chooseJosaResolvesCompositeParticles() {
+        let masker = TermMasker()
+
+        #expect(masker.chooseJosa(for: "만가", baseHasBatchim: false, baseIsRieul: false) == "만이")
+        #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 은")
+        #expect(masker.chooseJosa(for: "만로", baseHasBatchim: true, baseIsRieul: true) == "만으로")
+        #expect(masker.chooseJosa(for: "에게만", baseHasBatchim: true, baseIsRieul: false) == "에게만")
+    }
+
+    @Test
+    func normalizeEntitiesHandlesAuxiliarySequences() {
+        let masker = TermMasker()
+        let names = [
+            TermMasker.NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"]),
+            TermMasker.NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"])
+        ]
+
+        let text = "가구라만이가 나타났고 홍카이만에게 경고했다."
+        let normalized = masker.normalizeEntitiesAndParticles(
+            in: text,
+            locksByToken: [:],
+            names: names,
+            mode: .namesOnly
+        )
+
+        #expect(normalized.contains("쟈그라만이"))
+        #expect(normalized.contains("쿠레나이 가이만에게"))
+    }
 }

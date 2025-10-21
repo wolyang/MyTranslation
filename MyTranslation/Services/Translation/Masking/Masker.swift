@@ -488,7 +488,13 @@ public final class TermMasker {
 
     private let cjkOrWord = "[\\p{Han}\\p{Hiragana}\\p{Katakana}ァ-ン一-龥ぁ-んA-Za-z0-9_]"
     
-    private func chooseJosa(for candidate: String?, baseHasBatchim: Bool, baseIsRieul: Bool) -> String {
+    /// 주어진 조사 문자열에서 보조사·격조사 조합을 분해해 대상 명사의 받침 정보를 반영한 최종 조사 표기를 결정한다.
+    /// - Parameters:
+    ///   - candidate: 원문에서 추출한 조사 문자열(공백 포함 가능)
+    ///   - baseHasBatchim: 기준 명사의 종성이 존재하는지 여부
+    ///   - baseIsRieul: 기준 명사가 ㄹ 받침인지 여부
+    /// - Returns: 종성 규칙과 보조사 결합 규칙을 반영해 선택된 조사 문자열
+    func chooseJosa(for candidate: String?, baseHasBatchim: Bool, baseIsRieul: Bool) -> String {
         guard let cand = candidate, !cand.isEmpty else { return "" }
 
         let ns = cand as NSString
@@ -600,10 +606,10 @@ public final class TermMasker {
     
     enum EntityMode { case tokensOnly, namesOnly, both }
     
-    /// 토큰/이름을 한 번에 처리.
+    /// 번역 결과에 남은 토큰과 인명 변형을 canonical 표기와 맞는 조사로 치환한다.
     /// - Parameters:
-    ///   - text: 번역 텍스트
-    ///   - locksByToken: 토큰 문자열 → LockInfo (언마스킹 전에도 후에도 사용 가능)
+    ///   - text: 정규화를 수행할 번역 텍스트
+    ///   - locksByToken: 토큰 문자열 → LockInfo (토큰 복원 및 조사 재계산 시 사용)
     ///   - names: NameGlossary 배열 (언마스킹 후 이름 표기 통일용)
     ///   - mode: 처리 모드(토큰만/이름만/둘다)
     func normalizeEntitiesAndParticles(
