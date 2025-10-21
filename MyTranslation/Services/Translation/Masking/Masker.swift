@@ -425,39 +425,179 @@ public final class TermMasker {
         let noBatchim: String
         let withBatchim: String
         let rieulException: Bool     // (으)로 계열 특례
+        let prefersWithBatchimWhenAuxAttached: Bool
     }
 
     // 최소 세트 (필요 시 확장)
     let josaPairs: [JosaPair] = [
-        .init(noBatchim: "는",   withBatchim: "은",   rieulException: false),
-        .init(noBatchim: "가",   withBatchim: "이",   rieulException: false),
-        .init(noBatchim: "를",   withBatchim: "을",   rieulException: false),
-        .init(noBatchim: "와",   withBatchim: "과",   rieulException: false),
-        .init(noBatchim: "랑",   withBatchim: "이랑", rieulException: false),
-        .init(noBatchim: "로",   withBatchim: "으로", rieulException: true),
-        .init(noBatchim: "라",   withBatchim: "이라", rieulException: false),
-        .init(noBatchim: "라고", withBatchim: "이라고", rieulException: false),
-        .init(noBatchim: "라서", withBatchim: "이라서", rieulException: false),
-        .init(noBatchim: "라면", withBatchim: "이라면", rieulException: false),
-        .init(noBatchim: "라니", withBatchim: "이라니", rieulException: false),
-        .init(noBatchim: "라도", withBatchim: "이라도", rieulException: false),
+        .init(noBatchim: "는",   withBatchim: "은",   rieulException: false, prefersWithBatchimWhenAuxAttached: true),
+        .init(noBatchim: "가",   withBatchim: "이",   rieulException: false, prefersWithBatchimWhenAuxAttached: true),
+        .init(noBatchim: "를",   withBatchim: "을",   rieulException: false, prefersWithBatchimWhenAuxAttached: true),
+        .init(noBatchim: "와",   withBatchim: "과",   rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "랑",   withBatchim: "이랑", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "로",   withBatchim: "으로", rieulException: true,  prefersWithBatchimWhenAuxAttached: true),
+        .init(noBatchim: "라",   withBatchim: "이라", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "라고", withBatchim: "이라고", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "라서", withBatchim: "이라서", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "라면", withBatchim: "이라면", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "라니", withBatchim: "이라니", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "라도", withBatchim: "이라도", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "의",   withBatchim: "의",   rieulException: false, prefersWithBatchimWhenAuxAttached: false),
     ]
-    
-    private let cjkOrWord = "[\\p{Han}\\p{Hiragana}\\p{Katakana}ァ-ン一-龥ぁ-んA-Za-z0-9_]"
-    private lazy var josaAlternation: String = {
-        let all = Set(josaPairs.flatMap { [$0.noBatchim, $0.withBatchim] })
+
+    private let caseSingleParticles: Set<String> = [
+        "에", "에서", "에게", "에게서", "와", "과", "랑", "하고",
+        "께", "께서", "보다", "처럼", "같이", "로서", "으로서",
+        "로써", "으로써", "의"
+    ]
+
+    private let auxiliaryParticles: Set<String> = [
+        "만", "도", "까지", "부터", "조차", "마저", "밖에", "뿐",
+        "나", "이나", "나마", "이나마"
+    ]
+
+    private lazy var pairFormsByString: [String: (index: Int, isWithBatchim: Bool)] = {
+        var dict: [String: (Int, Bool)] = [:]
+        for (idx, pair) in josaPairs.enumerated() {
+            dict[pair.noBatchim] = (idx, false)
+            dict[pair.withBatchim] = (idx, true)
+        }
+        return dict
+    }()
+
+    private lazy var particleTokenAlternation: String = {
+        var all = Set<String>()
+        for pair in josaPairs {
+            all.insert(pair.noBatchim)
+            all.insert(pair.withBatchim)
+        }
+        all.formUnion(caseSingleParticles)
+        all.formUnion(auxiliaryParticles)
         return all.sorted { $0.count > $1.count }
             .map { NSRegularExpression.escapedPattern(for: $0) }
             .joined(separator: "|")
     }()
+
+    private lazy var particleTokenRegex: NSRegularExpression = {
+        try! NSRegularExpression(pattern: particleTokenAlternation, options: [])
+    }()
+
+    private lazy var particleWhitespaceRegex: NSRegularExpression = {
+        try! NSRegularExpression(pattern: "(?:\\s|\\u00A0)+", options: [])
+    }()
+
+    private let cjkOrWord = "[\\p{Han}\\p{Hiragana}\\p{Katakana}ァ-ン一-龥ぁ-んA-Za-z0-9_]"
     
-    private func chooseJosa(for candidate: String?, baseHasBatchim: Bool, baseIsRieul: Bool) -> String {
+    /// 주어진 조사 문자열에서 보조사·격조사 조합을 분해해 대상 명사의 받침 정보를 반영한 최종 조사 표기를 결정한다.
+    /// - Parameters:
+    ///   - candidate: 원문에서 추출한 조사 문자열(공백 포함 가능)
+    ///   - baseHasBatchim: 기준 명사의 종성이 존재하는지 여부
+    ///   - baseIsRieul: 기준 명사가 ㄹ 받침인지 여부
+    /// - Returns: 종성 규칙과 보조사 결합 규칙을 반영해 선택된 조사 문자열
+    func chooseJosa(for candidate: String?, baseHasBatchim: Bool, baseIsRieul: Bool) -> String {
         guard let cand = candidate, !cand.isEmpty else { return "" }
-        if let pair = josaPairs.first(where: { $0.noBatchim == cand || $0.withBatchim == cand }) {
-            if pair.rieulException && baseIsRieul { return pair.noBatchim } // ㄹ받침 → '로'
-            return baseHasBatchim ? pair.withBatchim : pair.noBatchim
+
+        let ns = cand as NSString
+        var segments: [String] = []
+        var isWhitespace: [Bool] = []
+        var location = 0
+
+        while location < ns.length {
+            let remaining = NSRange(location: location, length: ns.length - location)
+            if let wsMatch = particleWhitespaceRegex.firstMatch(in: cand, options: [.anchored], range: remaining) {
+                segments.append(ns.substring(with: wsMatch.range))
+                isWhitespace.append(true)
+                location += wsMatch.range.length
+                continue
+            }
+
+            if let tokenMatch = particleTokenRegex.firstMatch(in: cand, options: [.anchored], range: remaining) {
+                segments.append(ns.substring(with: tokenMatch.range))
+                isWhitespace.append(false)
+                location += tokenMatch.range.length
+                continue
+            }
+
+            let range = ns.rangeOfComposedCharacterSequence(at: location)
+            segments.append(ns.substring(with: range))
+            isWhitespace.append(false)
+            location += range.length
         }
-        return cand
+
+        guard !segments.isEmpty else { return "" }
+
+        struct TokenInfo {
+            enum Kind {
+                case pair(index: Int)
+                case single
+                case auxiliary
+                case unknown
+            }
+
+            let segmentIndex: Int
+            let kind: Kind
+        }
+
+        var tokens: [TokenInfo] = []
+        for (idx, segment) in segments.enumerated() where !isWhitespace[idx] {
+            if let form = pairFormsByString[segment] {
+                tokens.append(.init(segmentIndex: idx, kind: .pair(index: form.index)))
+            } else if caseSingleParticles.contains(segment) {
+                tokens.append(.init(segmentIndex: idx, kind: .single))
+            } else if auxiliaryParticles.contains(segment) {
+                tokens.append(.init(segmentIndex: idx, kind: .auxiliary))
+            } else {
+                tokens.append(.init(segmentIndex: idx, kind: .unknown))
+            }
+        }
+
+        guard !tokens.isEmpty else { return cand }
+
+        var resultSegments = segments
+        var changed = false
+
+        func hasAuxAdjacent(_ tokenIndex: Int) -> Bool {
+            if tokenIndex > 0 {
+                switch tokens[tokenIndex - 1].kind {
+                case .auxiliary:
+                    return true
+                default:
+                    break
+                }
+            }
+            if tokenIndex + 1 < tokens.count {
+                switch tokens[tokenIndex + 1].kind {
+                case .auxiliary:
+                    return true
+                default:
+                    break
+                }
+            }
+            return false
+        }
+
+        for (idx, token) in tokens.enumerated() {
+            guard case let .pair(pairIndex) = token.kind else { continue }
+            let pair = josaPairs[pairIndex]
+
+            let useWithBatchim: Bool
+            if hasAuxAdjacent(idx) && pair.prefersWithBatchimWhenAuxAttached {
+                useWithBatchim = true
+            } else if pair.rieulException && baseIsRieul {
+                useWithBatchim = false
+            } else {
+                useWithBatchim = baseHasBatchim
+            }
+
+            let replacement = useWithBatchim ? pair.withBatchim : pair.noBatchim
+            if resultSegments[token.segmentIndex] != replacement {
+                resultSegments[token.segmentIndex] = replacement
+                changed = true
+            }
+        }
+
+        if !changed { return cand }
+        return resultSegments.joined()
     }
     
     private func normKey(_ s: String) -> String {
@@ -466,10 +606,10 @@ public final class TermMasker {
     
     enum EntityMode { case tokensOnly, namesOnly, both }
     
-    /// 토큰/이름을 한 번에 처리.
+    /// 번역 결과에 남은 토큰과 인명 변형을 canonical 표기와 맞는 조사로 치환한다.
     /// - Parameters:
-    ///   - text: 번역 텍스트
-    ///   - locksByToken: 토큰 문자열 → LockInfo (언마스킹 전에도 후에도 사용 가능)
+    ///   - text: 정규화를 수행할 번역 텍스트
+    ///   - locksByToken: 토큰 문자열 → LockInfo (토큰 복원 및 조사 재계산 시 사용)
     ///   - names: NameGlossary 배열 (언마스킹 후 이름 표기 통일용)
     ///   - mode: 처리 모드(토큰만/이름만/둘다)
     func normalizeEntitiesAndParticles(
@@ -497,74 +637,71 @@ public final class TermMasker {
         // 엔터티가 없으면 조기 종료
         if entityAlts.isEmpty { return text }
 
-        // 조사 alternation (긴 것 우선, 중복 제거)
-        let josaAlt = Set(josaPairs.flatMap { [$0.noBatchim, $0.withBatchim] })
-            .sorted { $0.count > $1.count }
-            .map(esc)
-            .joined(separator: "|")
-
         // 유니코드 '단어' 경계 집합: 모든 Letter/Number + '_'. (이전엔 Hangul 누락)
         let cjkBody = "\\p{L}\\p{N}_"
         let ws = "(?:\\s|\\u00A0)*"
+
+        let particleTokenAlt = "(?:" + particleTokenAlternation + ")"
+        let josaSequence = particleTokenAlt + "(?:(?:" + ws + ")" + particleTokenAlt + ")*"
 
         // --- [1] 1패스: [조사 O] 패턴 (조사 ‘뒤’에서 경계 검사) ---
         let patWithJosa =
         "(^|[^" + cjkBody + "])" +                // grp1 prefix
         "(" + entityAlts + ")" +                  // grp2 entity
-        ws +
-        "(" + josaAlt + ")" +                     // grp3 josa
-        "($|[^" + cjkBody + "])"                  // grp4 suffix
+        "(" + ws + ")" +                          // grp3 ws between
+        "(" + josaSequence + ")" +                // grp4 josa sequence
+        "($|[^" + cjkBody + "])"                  // grp5 suffix
         let rxWithJosa = try! NSRegularExpression(
             pattern: patWithJosa,           // 주석 없는 버전
             options: [.caseInsensitive]
         )
 
         var out = textNFC
-        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange, g4:NSRange)] = []
+        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange, g4:NSRange, g5:NSRange)] = []
         let ns1 = out as NSString
         rxWithJosa.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns1.length)) { m, _, _ in
             guard let m = m else { return }
-            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3), m.range(at: 4)))
+            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3), m.range(at: 4), m.range(at: 5)))
         }
 
         for m in matches1.reversed() {
             let ns = out as NSString
             let prefix = ns.substring(with: m.g1)
             let name   = ns.substring(with: m.g2)
-            let josa   = ns.substring(with: m.g3)
-            let suffix = ns.substring(with: m.g4)
+            let spacing = ns.substring(with: m.g3)
+            let josa   = ns.substring(with: m.g4)
+            let suffix = ns.substring(with: m.g5)
 
             let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: josa,
                                                        locksByToken: locksByToken, names: names, mode: mode)
-            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen + suffix)
+            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + spacing + chosen + suffix)
         }
 
         // --- [2] 2패스: [조사 X] 패턴 (엔터티 ‘바로 뒤’에서 경계 검사) ---
         let patBare =
         "(^|[^" + cjkBody + "])" +                // grp1 prefix
         "(" + entityAlts + ")" +                  // grp2 entity
-        "($|[^" + cjkBody + "])"                  // grp3 suffix
+        "(?=$|[^" + cjkBody + "]|(?:" + ws + ")" + particleTokenAlt + ")"
         let rxBare = try! NSRegularExpression(
             pattern: patBare,               // 주석 없는 버전
             options: [.caseInsensitive]
         )
 
-        var matches2: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange)] = []
+        var matches2: [(whole:NSRange, g1:NSRange, g2:NSRange)] = []
         let ns2 = out as NSString
         rxBare.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns2.length)) { m, _, _ in
             guard let m = m else { return }
-            matches2.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3)))
+            matches2.append((m.range(at: 0), m.range(at: 1), m.range(at: 2)))
         }
 
         for m in matches2.reversed() {
             let ns = out as NSString
             let prefix = ns.substring(with: m.g1)
             let name   = ns.substring(with: m.g2)
-            let suffix = ns.substring(with: m.g3)
 
             let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: nil,
                                                        locksByToken: locksByToken, names: names, mode: mode)
-            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen + suffix)
+            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen)
         }
 
         return out
