@@ -174,7 +174,7 @@ final class SelectionBridge: NSObject {
             return walk(frag);
         }
 
-        const BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div';
+        const BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div,h1,h2,h3,h4,h5,h6';
 
         function collectBlocks() {
             // body 내부의 텍스트 블록만 대상으로 제한 (head/title 제외)
