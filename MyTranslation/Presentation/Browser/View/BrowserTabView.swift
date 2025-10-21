@@ -81,7 +81,6 @@ struct BrowserTabView: View {
             let engine = EngineTag(rawValue: newValue) ?? .afm
             vm.settings.preferredEngine = engine
         }
-        // WebView 로드 이후 자동 번역
         .task(id: vm.pendingAutoTranslateID) {
             if vm.pendingAutoTranslateID != nil {
                 vm.onShowOriginalChanged(vm.showOriginal)
