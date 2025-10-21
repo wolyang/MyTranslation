@@ -190,6 +190,38 @@ private extension BrowserViewModel {
         }
     }
 
+    func clearAutoTranslateRequest(for token: UUID) {
+        if pendingAutoTranslateID == token {
+            pendingAutoTranslateID = nil
+            if autoTranslateTask?.isCancelled ?? true {
+                autoTranslateTask = nil
+            }
+        }
+    }
+
+    func runAutoTranslateIfNeeded(targetURL: String, token: UUID) async {
+        guard pendingAutoTranslateID == token else {
+            if pendingAutoTranslateID == nil {
+                autoTranslateTask = nil
+            }
+            return
+        }
+        defer {
+            if pendingAutoTranslateID == token {
+                pendingAutoTranslateID = nil
+            }
+            if pendingAutoTranslateID == nil {
+                autoTranslateTask = nil
+            }
+        }
+        guard currentPageURLString == targetURL else { return }
+        guard hasAttemptedTranslationForCurrentPage == false else { return }
+        guard isTranslating == false else { return }
+        guard showOriginal == false else { return }
+        guard attachedWebView != nil else { return }
+        onShowOriginalChanged(false)
+    }
+
     /// 번역 Task 생성이 실패했을 때 상태를 정리하고 원인을 로깅한다.
     func handleFailedTranslationStart(reason: String, requestID: UUID) {
         if activeTranslationID == requestID {
@@ -207,26 +239,24 @@ private extension BrowserViewModel {
 
     func scheduleAutoTranslate(after delay: UInt64 = 0) {
         autoTranslateTask?.cancel()
-        autoTranslateTask = nil
         let targetURL = currentPageURLString
-        autoTranslateTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        let token = UUID()
+        pendingAutoTranslateID = token
+        autoTranslateTask = Task.detached(priority: .userInitiated) { [weak self] in
             if delay > 0 {
                 do {
                     try await Task.sleep(nanoseconds: delay)
                 } catch {
+                    await self?.clearAutoTranslateRequest(for: token)
                     return
                 }
             }
-            guard Task.isCancelled == false else { return }
-            guard self.currentPageURLString == targetURL else { return }
-            guard self.hasAttemptedTranslationForCurrentPage == false else { return }
-            guard self.isTranslating == false else { return }
-            guard self.showOriginal == false else { return }
-            self.pendingAutoTranslateID = UUID()
-            if self.autoTranslateTask?.isCancelled == false {
-                self.autoTranslateTask = nil
+            guard Task.isCancelled == false else {
+                await self?.clearAutoTranslateRequest(for: token)
+                return
             }
+            guard let self else { return }
+            await self.runAutoTranslateIfNeeded(targetURL: targetURL, token: token)
         }
     }
 
