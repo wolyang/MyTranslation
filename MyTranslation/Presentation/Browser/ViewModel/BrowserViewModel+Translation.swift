@@ -42,22 +42,17 @@ extension BrowserViewModel {
         let requestID = UUID()
         activeTranslationID = requestID
         translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
-            await MainActor.run {
-                guard let self else { return }
-                guard let webView else {
-                    self.handleFailedTranslationStart(
+            guard let webView else {
+                await MainActor.run {
+                    self?.handleFailedTranslationStart(
                         reason: "webView released before translation",
                         requestID: requestID
                     )
-                    return
                 }
-                Task { @MainActor [weak self] in
-                    await self?.startTranslate(on: webView, requestID: requestID)
-                }
+                return
             }
-        }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
+            guard let strongSelf = await MainActor.run(body: { self }) else { return }
+            await strongSelf.startTranslate(on: webView, requestID: requestID)
         }
     }
 
@@ -83,27 +78,22 @@ extension BrowserViewModel {
         let requestID = UUID()
         activeTranslationID = requestID
         translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
-            await MainActor.run {
-                guard let self else { return }
-                guard let webView else {
-                    self.handleFailedTranslationStart(
+            guard let webView else {
+                await MainActor.run {
+                    self?.handleFailedTranslationStart(
                         reason: "webView released before partial translation",
                         requestID: requestID
                     )
-                    return
                 }
-                Task { @MainActor [weak self] in
-                    await self?.startPartialTranslation(
-                        segments: segments,
-                        engine: engine,
-                        on: webView,
-                        requestID: requestID
-                    )
-                }
+                return
             }
-        }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
+            guard let strongSelf = await MainActor.run(body: { self }) else { return }
+            await strongSelf.startPartialTranslation(
+                segments: segments,
+                engine: engine,
+                on: webView,
+                requestID: requestID
+            )
         }
     }
 
