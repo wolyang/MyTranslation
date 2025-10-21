@@ -36,6 +36,7 @@ final class BrowserViewModel: ObservableObject {
     var translationTask: Task<Void, Never>? = nil
     var activeTranslationID: UUID?
     var hasAttemptedTranslationForCurrentPage = false
+    var noBodyTextRetryCount = 0
     var selectedSegment: Segment?
     var pendingImproved: String?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]

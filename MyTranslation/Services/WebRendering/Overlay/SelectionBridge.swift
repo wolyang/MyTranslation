@@ -150,6 +150,18 @@ final class SelectionBridge: NSObject {
         const HEADING_QUERY = 'h1,h2,h3,h4,h5,h6';
         const BLOCK_QUERY = BASE_BLOCK_QUERY + ',' + HEADING_QUERY;
         
+        function filterReadableBlocks(nodes) {
+            return nodes.filter(el => {
+              const txt = (el.innerText || '').trim();
+              if (!txt) return false;
+              if (txt.length >= 6) return true;
+              for (let i = 0; i < txt.length; i++) {
+                if (txt.charCodeAt(i) > 0x7f) return true;
+              }
+              return false;
+            });
+        }
+
         function fragContainsBlock(frag) {
           // 블록/컨테이너/버튼류 태그 집합
             const BAD = new Set([
@@ -191,15 +203,12 @@ final class SelectionBridge: NSObject {
                 return true;
               });
             });
-            return leaves.filter(el => {
-              const txt = (el.innerText || '').trim();
-              if (!txt) return false;
-              if (txt.length >= 6) return true;
-              for (let i = 0; i < txt.length; i++) {
-                if (txt.charCodeAt(i) > 0x7f) return true;
-              }
-              return false;
-            });
+            const refined = filterReadableBlocks(leaves);
+            if (refined.length) return refined;
+
+            const fallbackNodes = Array.from(root.querySelectorAll(BASE_BLOCK_QUERY));
+            const fallbackLeaves = fallbackNodes.filter(el => !fallbackNodes.some(other => other !== el && el.contains(other)));
+            return filterReadableBlocks(fallbackLeaves);
           }
 
           function buildIndex(block) {

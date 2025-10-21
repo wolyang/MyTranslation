@@ -25,6 +25,7 @@ extension BrowserViewModel {
             // 주소창 이동이나 히스토리 내비게이션처럼 onNavigate 콜백이 생략된 경우에도
             // 새 페이지로 판별되면 자동 번역 시도 여부를 초기화한다.
             hasAttemptedTranslationForCurrentPage = false
+            noBodyTextRetryCount = 0
         }
         currentPageURLString = urlString
 
@@ -120,6 +121,7 @@ extension BrowserViewModel {
         }
         request = nil
         hasAttemptedTranslationForCurrentPage = false
+        noBodyTextRetryCount = 0
         closeOverlay()
         pendingURLAfterEditing = nil
         currentPageTranslation = nil
@@ -183,6 +185,19 @@ private extension BrowserViewModel {
         print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
 
+    func scheduleAutoTranslateRetry(after delay: UInt64 = 300_000_000) {
+        let targetURL = currentPageURLString
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self else { return }
+            if self.currentPageURLString == targetURL,
+               self.hasAttemptedTranslationForCurrentPage == false,
+               self.isTranslating == false {
+                self.pendingAutoTranslateID = UUID()
+            }
+        }
+    }
+
     /// 전체 페이지 번역 스트림을 시작하고 스트림 이벤트를 처리한다.
     func startTranslate(on webView: WKWebView, requestID: UUID) async {
         guard let url = webView.url else { return }
@@ -212,6 +227,7 @@ private extension BrowserViewModel {
             } else {
                 segments = try await extractor.extract(using: executor, url: url)
             }
+            noBodyTextRetryCount = 0
 
             try Task.checkCancellation()
             guard activeTranslationID == requestID else { return }
@@ -272,6 +288,14 @@ private extension BrowserViewModel {
             let executor = WKWebViewScriptAdapter(webView: webView)
             replacer.restore(using: executor)
             _ = try? await executor.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
+
+            if let extractorError = error as? ExtractorError, extractorError == .noBodyText {
+                noBodyTextRetryCount += 1
+                if noBodyTextRetryCount <= 1 {
+                    hasAttemptedTranslationForCurrentPage = false
+                    scheduleAutoTranslateRetry()
+                }
+            }
         }
     }
 
