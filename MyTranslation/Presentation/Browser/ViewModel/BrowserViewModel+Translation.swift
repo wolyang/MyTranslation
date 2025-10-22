@@ -1,6 +1,9 @@
 import Foundation
 import WebKit
 
+private func _id(_ id: UUID?) -> String { id?.uuidString ?? "nil" }
+private func _url(_ url: URL?) -> String { url?.absoluteString ?? "nil" }
+
 @MainActor
 extension BrowserViewModel {
     /// 페이지 로딩이 끝났을 때 주소 표시줄과 번역 상태를 초기화한다.
@@ -9,6 +12,10 @@ extension BrowserViewModel {
 
         let urlString = url.absoluteString
         let isNewPage = currentPageURLString != urlString
+
+        print(
+            "[T] didFinish url=\(urlString) isNew=\(isNewPage) curPage(before)=\(currentPageURLString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
 
         request = nil
         pendingURLAfterEditing = urlString
@@ -38,6 +45,9 @@ extension BrowserViewModel {
 
     /// 현재 페이지 전체를 번역하도록 비동기 작업을 예약한다.
     func requestTranslation(on webView: WKWebView) {
+        print(
+            "[T] requestTranslation(on:) ENTER isTranslating=\(isTranslating) url=\(_url(webView.url)) curPage=\(currentPageURLString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) eng=\(settings.preferredEngine.rawValue)"
+        )
         guard isStartingTranslation == false else { return }
         isStartingTranslation = true
         defer { isStartingTranslation = false }
@@ -46,6 +56,9 @@ extension BrowserViewModel {
         translationTask = nil
         pendingAutoTranslateID = nil
         let requestID = UUID()
+        print(
+            "[T] requestTranslation(on:) assign activeTranslationID old=\(_id(activeTranslationID)) new=\(requestID.uuidString)"
+        )
         activeTranslationID = requestID
         hasAttemptedTranslationForCurrentPage = true
         translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
@@ -61,6 +74,9 @@ extension BrowserViewModel {
             guard let strongSelf = await MainActor.run(body: { self }) else { return }
             await strongSelf.startTranslate(on: webView, requestID: requestID)
         }
+        print(
+            "[T] requestTranslation(on:) SPAWN translationTask req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
     }
 
     /// 지정된 세그먼트들만 재번역하도록 부분 번역 작업을 예약한다.
@@ -69,6 +85,9 @@ extension BrowserViewModel {
         engine: EngineTag,
         on webView: WKWebView
     ) {
+        print(
+            "[T] requestTranslation(for:) ENTER segCount=\(segmentIDs.count) url=\(_url(webView.url)) curPage=\(currentPageURLString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) eng=\(engine.rawValue)"
+        )
         guard segmentIDs.isEmpty == false else { return }
         guard let url = webView.url,
               let state = currentPageTranslation,
@@ -89,6 +108,9 @@ extension BrowserViewModel {
         translationTask = nil
         pendingAutoTranslateID = nil
         let requestID = UUID()
+        print(
+            "[T] requestTranslation(for:) assign activeTranslationID old=\(_id(activeTranslationID)) new=\(requestID.uuidString)"
+        )
         activeTranslationID = requestID
         hasAttemptedTranslationForCurrentPage = true
         translationTask = Task.detached(priority: .userInitiated) { [weak self, weak webView] in
@@ -109,11 +131,17 @@ extension BrowserViewModel {
                 requestID: requestID
             )
         }
+        print(
+            "[T] requestTranslation(for:) SPAWN translationTask req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
     }
 
     /// 원문 보기 토글에 맞춰 번역 적용 또는 취소 흐름을 제어한다.
     func onShowOriginalChanged(_ showOriginal: Bool) {
         guard let webView = attachedWebView else { return }
+        print(
+            "[T] onShowOriginalChanged showOriginal=\(showOriginal) url=\(_url(webView.url)) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
         let executor = WKWebViewScriptAdapter(webView: webView)
         if showOriginal {
             cancelActiveTranslation()
@@ -122,6 +150,9 @@ extension BrowserViewModel {
         } else {
             let engine = settings.preferredEngine
             let cacheResult = applyCachedTranslationIfAvailable(for: engine, on: webView)
+            print(
+                "[T] onShowOriginalChanged path=\(cacheResult.applied ? \"applyCache\" : \"requestTranslation\") remaining=\(cacheResult.remainingSegmentIDs.count) url=\(_url(webView.url)) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) eng=\(engine.rawValue)"
+            )
             if cacheResult.applied == false {
                 requestTranslation(on: webView)
             } else if cacheResult.remainingSegmentIDs.isEmpty == false {
@@ -133,6 +164,9 @@ extension BrowserViewModel {
     /// 페이지 이동 직전에 번역 상태와 하이라이트를 정리한다.
     func willNavigate() {
         guard let webView = attachedWebView else { return }
+        print(
+            "[T] willNavigate url=\(_url(webView.url)) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
         cancelActiveTranslation()
         let executor = WKWebViewScriptAdapter(webView: webView)
         replacer.restore(using: executor)
@@ -185,10 +219,26 @@ extension BrowserViewModel {
     }
 }
 
+private extension TranslationStreamEvent.Kind {
+    var name: String {
+        switch self {
+        case .cachedHit: return "cachedHit"
+        case .requestScheduled: return "requestScheduled"
+        case .partial: return "partial"
+        case .final: return "final"
+        case .failed: return "failed"
+        case .completed: return "completed"
+        }
+    }
+}
+
 @MainActor
 private extension BrowserViewModel {
     /// 진행 중인 번역 Task 를 중단하고 관련 상태를 초기화한다.
     func cancelActiveTranslation() {
+        print(
+            "[T] cancelActiveTranslation act(before)=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
         translationTask?.cancel()
         translationTask = nil
         activeTranslationID = nil
@@ -199,6 +249,9 @@ private extension BrowserViewModel {
     }
 
     func clearAutoTranslateRequest(for token: UUID) {
+        print(
+            "[T] clearAutoTranslateRequest token=\(token.uuidString) pendAuto(before)=\(_id(pendingAutoTranslateID))"
+        )
         if pendingAutoTranslateID == token {
             pendingAutoTranslateID = nil
             if autoTranslateTask?.isCancelled ?? true {
@@ -208,6 +261,9 @@ private extension BrowserViewModel {
     }
 
     func runAutoTranslateIfNeeded(targetURL: String, token: UUID) async {
+        print(
+            "[T] runAutoTranslateIfNeeded token=\(token.uuidString) target=\(targetURL) curPage=\(currentPageURLString) isTranslating=\(isTranslating) hasAttempted=\(hasAttemptedTranslationForCurrentPage) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
         guard pendingAutoTranslateID == token else {
             if pendingAutoTranslateID == nil {
                 autoTranslateTask = nil
@@ -238,6 +294,9 @@ private extension BrowserViewModel {
         translationTask = nil
         isTranslating = false
         hasAttemptedTranslationForCurrentPage = false
+        print(
+            "[T] handleFailedTranslationStart reason=\(reason) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+        )
         print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
 
@@ -246,10 +305,14 @@ private extension BrowserViewModel {
     }
 
     func scheduleAutoTranslate(after delay: UInt64 = 0) {
+        print(
+            "[T] scheduleAutoTranslate delay=\(delay) target=\(currentPageURLString) pendAuto(old)=\(_id(pendingAutoTranslateID))"
+        )
         autoTranslateTask?.cancel()
         let targetURL = currentPageURLString
         let token = UUID()
         pendingAutoTranslateID = token
+        print("[T] scheduleAutoTranslate set pendAuto(new)=\(token.uuidString)")
         autoTranslateTask = Task.detached(priority: .userInitiated) { [weak self] in
             if delay > 0 {
                 do {
@@ -274,6 +337,10 @@ private extension BrowserViewModel {
         guard activeTranslationID == requestID else { return }
         translateRunID = requestID.uuidString
 
+        print(
+            "[T] startTranslate BEGIN req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) url=\(_url(webView.url)) state.url=\(_url(currentPageTranslation?.url)) eng=\(settings.preferredEngine.rawValue)"
+        )
+
         closeOverlay()
         hasAttemptedTranslationForCurrentPage = true
 
@@ -285,6 +352,9 @@ private extension BrowserViewModel {
                 self.translationTask = nil
                 self.activeTranslationID = nil
             }
+            print(
+                "[T] startTranslate END req=\(requestID.uuidString) act=\(_id(self.activeTranslationID)) pendAuto=\(_id(self.pendingAutoTranslateID)) url=\(_url(webView.url)) state.url=\(_url(self.currentPageTranslation?.url))"
+            )
         }
 
         do {
@@ -299,7 +369,14 @@ private extension BrowserViewModel {
             }
             noBodyTextRetryCount = 0
 
+            print(
+                "[T] startTranslate EXTRACTED segs=\(segments.count) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+            )
+
             try Task.checkCancellation()
+            print(
+                "[T] startTranslate post-cancel-check OK req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+            )
             guard activeTranslationID == requestID else { return }
 
             var state = currentPageTranslation ?? PageTranslationState(url: url, segments: [])
@@ -328,12 +405,29 @@ private extension BrowserViewModel {
             }
 
             let options = TranslationOptions()
+            print(
+                "[T] router.translateStream CALL segs=\(segments.count) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) eng=\(engineID)"
+            )
             let summary = try await router.translateStream(
                 segments: segments,
                 options: options,
                 preferredEngine: engineID
             ) { [weak self, weak webView] event in
                 guard let self else { return }
+                let segmentID: String
+                switch event.kind {
+                case let .partial(segment):
+                    segmentID = segment.segmentID
+                case let .final(segment):
+                    segmentID = segment.segmentID
+                case let .failed(segmentIDValue, _):
+                    segmentID = segmentIDValue
+                default:
+                    segmentID = "nil"
+                }
+                print(
+                    "[T] progress event=\(event.kind.name) req=\(requestID.uuidString) act=\(_id(self.activeTranslationID)) pendAuto=\(_id(self.pendingAutoTranslateID)) webUrl=\(_url(webView?.url)) snapUrl=\(_url(url)) state.url=\(_url(self.currentPageTranslation?.url)) eng=\(engineID) seg=\(segmentID)"
+                )
                 Task.detached(priority: .userInitiated) { @MainActor [weak self] in
                     guard let self, let webView = webView else { return }
                     await self.handleStreamEvent(
@@ -379,6 +473,10 @@ private extension BrowserViewModel {
         guard activeTranslationID == requestID else { return }
         translateRunID = requestID.uuidString
 
+        print(
+            "[T] startPartialTranslation BEGIN segCount=\(segments.count) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) url=\(_url(webView.url)) state.url=\(_url(currentPageTranslation?.url)) eng=\(engine.rawValue)"
+        )
+
         closeOverlay()
         isTranslating = true
         hasAttemptedTranslationForCurrentPage = true
@@ -389,11 +487,17 @@ private extension BrowserViewModel {
                 self.translationTask = nil
                 self.activeTranslationID = nil
             }
+            print(
+                "[T] startPartialTranslation END req=\(requestID.uuidString) act=\(_id(self.activeTranslationID)) pendAuto=\(_id(self.pendingAutoTranslateID)) url=\(_url(webView.url)) state.url=\(_url(self.currentPageTranslation?.url))"
+            )
         }
 
         do {
             let executor = WKWebViewScriptAdapter(webView: webView)
             try Task.checkCancellation()
+            print(
+                "[T] startPartialTranslation post-cancel-check OK req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+            )
             guard activeTranslationID == requestID else { return }
 
             guard var state = currentPageTranslation, state.url == url else { return }
@@ -406,12 +510,29 @@ private extension BrowserViewModel {
             updateProgress(for: engine.rawValue)
 
             let options = TranslationOptions()
+            print(
+                "[T] router.translateStream CALL segs=\(segments.count) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) eng=\(engine.rawValue)"
+            )
             let summary = try await router.translateStream(
                 segments: segments,
                 options: options,
                 preferredEngine: engine.rawValue
             ) { [weak self, weak webView] event in
                 guard let self else { return }
+                let segmentID: String
+                switch event.kind {
+                case let .partial(segment):
+                    segmentID = segment.segmentID
+                case let .final(segment):
+                    segmentID = segment.segmentID
+                case let .failed(segmentIDValue, _):
+                    segmentID = segmentIDValue
+                default:
+                    segmentID = "nil"
+                }
+                print(
+                    "[T] progress event=\(event.kind.name) req=\(requestID.uuidString) act=\(_id(self.activeTranslationID)) pendAuto=\(_id(self.pendingAutoTranslateID)) webUrl=\(_url(webView?.url)) snapUrl=\(_url(url)) state.url=\(_url(self.currentPageTranslation?.url)) eng=\(engine.rawValue) seg=\(segmentID)"
+                )
                 Task.detached(priority: .userInitiated) { @MainActor [weak self] in
                     guard let self, let webView = webView else { return }
                     await self.handleStreamEvent(
@@ -442,7 +563,15 @@ private extension BrowserViewModel {
         executor: WebViewScriptExecutor,
         requestID: UUID
     ) async {
-        guard activeTranslationID == requestID else { return }
+        print(
+            "[T] handleStreamEvent ENTER event=\(event.kind.name) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) webUrl=\(_url(attachedWebView?.url)) snapUrl=\(_url(url)) state.url=\(_url(currentPageTranslation?.url))"
+        )
+        if activeTranslationID != requestID {
+            print(
+                "[T] handleStreamEvent DROP reason=activeID-mismatch req=\(requestID.uuidString) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
+            )
+            return
+        }
 
         switch event.kind {
         case .cachedHit:
@@ -491,7 +620,15 @@ private extension BrowserViewModel {
         highlight: Bool,
         url: URL
     ) async {
-        guard var state = currentPageTranslation, state.url == url else { return }
+        print(
+            "[T] applyStreamPayload ENTER seg=\(payload.segmentID) final=\(isFinal) req-NA act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) webUrl=\(_url(attachedWebView?.url)) snapUrl=\(_url(url)) state.url=\(_url(currentPageTranslation?.url)) eng=\(engineID)"
+        )
+        guard var state = currentPageTranslation, state.url == url else {
+            print(
+                "[T] applyStreamPayload DROP reason=url-mismatch seg=\(payload.segmentID) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID)) webUrl=\(_url(attachedWebView?.url)) snapUrl=\(_url(url)) state.url=\(_url(currentPageTranslation?.url))"
+            )
+            return
+        }
         var buffer = state.buffersByEngine[engineID] ?? .init()
         buffer.upsert(payload)
         state.buffersByEngine[engineID] = buffer
@@ -515,6 +652,9 @@ private extension BrowserViewModel {
             translatedText: translated,
             engineID: payload.engineID,
             sequence: payload.sequence
+        )
+        print(
+            "[T] applyStreamPayload UPSERT seg=\(payload.segmentID) final=\(isFinal) eng=\(engineID) act=\(_id(activeTranslationID)) pendAuto=\(_id(pendingAutoTranslateID))"
         )
         replacer.upsert(
             payload: enrichedPayload,

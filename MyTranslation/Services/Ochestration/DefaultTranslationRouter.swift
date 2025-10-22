@@ -59,6 +59,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
         let engine = engine(for: engineTag)
+        print("[T] router.translateStream ENTER total=\(segments.count) engine=\(engine.tag.rawValue)")
         var succeededIDs: [String] = []
         var failedIDs: Set<String> = []
         var pendingSegments: [Segment] = []
@@ -84,6 +85,9 @@ final class DefaultTranslationRouter: TranslationRouter {
         }
 
         if pendingSegments.isEmpty == false {
+            print(
+                "[T] router.translateStream pending=\(pendingSegments.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
+            )
             progress(.init(kind: .requestScheduled, timestamp: Date()))
             await Task.yield()
 
@@ -175,6 +179,9 @@ final class DefaultTranslationRouter: TranslationRouter {
         )
         progress(.init(kind: .completed, timestamp: Date()))
         await Task.yield()
+        print(
+            "[T] router.translateStream EXIT succeeded=\(succeededIDs.count) failed=\(failedIDs.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
+        )
         return summary
     }
 
@@ -286,6 +293,15 @@ final class DefaultTranslationRouter: TranslationRouter {
         state: inout StreamProcessingState,
         progress: @escaping (TranslationStreamEvent) -> Void
     ) async throws {
+        print(
+            "[T] router.processStream ENTER masked=\(maskedSegments.count) engine=\(engine.tag.rawValue)"
+        )
+        var didLogFirstEmit = false
+        defer {
+            print(
+                "[T] router.processStream EXIT masked=\(maskedSegments.count) engine=\(engine.tag.rawValue) remaining=\(state.remainingIDs.count)"
+            )
+        }
         let stream = try await engine.translate(maskedSegments, options: options)
 
         for try await batch in stream {
@@ -328,6 +344,12 @@ final class DefaultTranslationRouter: TranslationRouter {
                     engineID: finalResult.engine.rawValue,
                     sequence: sequence
                 )
+                if didLogFirstEmit == false {
+                    print(
+                        "[T] router.processStream FIRST-EMIT seq=\(sequence) seg=\(originalSegment.id) engine=\(engine.tag.rawValue)"
+                    )
+                    didLogFirstEmit = true
+                }
                 sequence += 1
                 progress(.init(kind: .final(segment: payload), timestamp: Date()))
                 await Task.yield()
