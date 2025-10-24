@@ -59,6 +59,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
         let engine = engine(for: engineTag)
+        print("[T] router.translateStream ENTER total=\(segments.count) engine=\(engine.tag.rawValue)")
         var succeededIDs: [String] = []
         var failedIDs: Set<String> = []
         var pendingSegments: [Segment] = []
@@ -66,7 +67,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         var sequence = 0
 
         for segment in segments {
-            try Task.checkCancellation()
             if let cacheHit = cacheHitPayload(
                 for: segment,
                 options: options,
@@ -85,6 +85,9 @@ final class DefaultTranslationRouter: TranslationRouter {
         }
 
         if pendingSegments.isEmpty == false {
+            print(
+                "[T] router.translateStream pending=\(pendingSegments.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
+            )
             progress(.init(kind: .requestScheduled, timestamp: Date()))
             await Task.yield()
 
@@ -97,7 +100,6 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
 
             for index in maskingContext.maskedPacks.indices {
-                try Task.checkCancellation()
                 let originalSegment = pendingSegments[index]
 
                 let scheduledPayload = TranslationStreamPayload(
@@ -112,6 +114,8 @@ final class DefaultTranslationRouter: TranslationRouter {
                 await Task.yield()
             }
 
+            try Task.checkCancellation()
+
             let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
             var streamState = StreamProcessingState(
                 remainingIDs: Set(pendingSegments.map { $0.id }),
@@ -120,6 +124,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
 
             do {
+                try Task.checkCancellation()
                 try await processStream(
                     engine: engine,
                     maskedSegments: maskingContext.maskedSegments,
@@ -174,6 +179,9 @@ final class DefaultTranslationRouter: TranslationRouter {
         )
         progress(.init(kind: .completed, timestamp: Date()))
         await Task.yield()
+        print(
+            "[T] router.translateStream EXIT succeeded=\(succeededIDs.count) failed=\(failedIDs.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
+        )
         return summary
     }
 
@@ -285,9 +293,19 @@ final class DefaultTranslationRouter: TranslationRouter {
         state: inout StreamProcessingState,
         progress: @escaping (TranslationStreamEvent) -> Void
     ) async throws {
+        print(
+            "[T] router.processStream ENTER masked=\(maskedSegments.count) engine=\(engine.tag.rawValue)"
+        )
+        var didLogFirstEmit = false
+        defer {
+            print(
+                "[T] router.processStream EXIT masked=\(maskedSegments.count) engine=\(engine.tag.rawValue) remaining=\(state.remainingIDs.count)"
+            )
+        }
         let stream = try await engine.translate(maskedSegments, options: options)
 
         for try await batch in stream {
+            try Task.checkCancellation()
             for result in batch {
                 guard let index = indexByID[result.segmentID] else {
                     state.unexpectedIDs.insert(result.segmentID)
@@ -326,6 +344,12 @@ final class DefaultTranslationRouter: TranslationRouter {
                     engineID: finalResult.engine.rawValue,
                     sequence: sequence
                 )
+                if didLogFirstEmit == false {
+                    print(
+                        "[T] router.processStream FIRST-EMIT seq=\(sequence) seg=\(originalSegment.id) engine=\(engine.tag.rawValue)"
+                    )
+                    didLogFirstEmit = true
+                }
                 sequence += 1
                 progress(.init(kind: .final(segment: payload), timestamp: Date()))
                 await Task.yield()

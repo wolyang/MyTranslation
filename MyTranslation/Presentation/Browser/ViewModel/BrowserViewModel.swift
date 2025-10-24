@@ -36,9 +36,12 @@ final class BrowserViewModel: ObservableObject {
     var translationTask: Task<Void, Never>? = nil
     var activeTranslationID: UUID?
     var hasAttemptedTranslationForCurrentPage = false
+    var noBodyTextRetryCount = 0
+    var autoTranslateTask: Task<Void, Never>? = nil
     var selectedSegment: Segment?
     var pendingImproved: String?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
+    var isStartingTranslation = false
 
     let presetLinks: [PresetLink]
 
@@ -89,7 +92,9 @@ final class BrowserViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
-        hasAttemptedTranslationForCurrentPage = false
+        pendingAutoTranslateID = nil
+        autoTranslateTask?.cancel()
+        autoTranslateTask = nil
         pendingURLAfterEditing = nil
     }
 

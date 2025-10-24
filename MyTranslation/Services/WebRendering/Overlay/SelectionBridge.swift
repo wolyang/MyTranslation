@@ -145,7 +145,23 @@ final class SelectionBridge: NSObject {
         
           // ====== 마킹 (블록 단위 + Range 래핑: 노드 경계도 매칭) ======
         const BLOCK_ANCHOR_SEL = 'p, li, blockquote, h1, h2, h3, h4, h5, h6';
+
+        const BASE_BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div';
+        const HEADING_QUERY = 'h1,h2,h3,h4,h5,h6';
+        const BLOCK_QUERY = BASE_BLOCK_QUERY + ',' + HEADING_QUERY;
         
+        function filterReadableBlocks(nodes) {
+            return nodes.filter(el => {
+              const txt = (el.innerText || '').trim();
+              if (!txt) return false;
+              if (txt.length >= 6) return true;
+              for (let i = 0; i < txt.length; i++) {
+                if (txt.charCodeAt(i) > 0x7f) return true;
+              }
+              return false;
+            });
+        }
+
         function fragContainsBlock(frag) {
           // 블록/컨테이너/버튼류 태그 집합
             const BAD = new Set([
@@ -174,23 +190,25 @@ final class SelectionBridge: NSObject {
             return walk(frag);
         }
 
-        const BLOCK_QUERY = 'p,li,article,section,blockquote,main,aside,header,footer,div';
-
         function collectBlocks() {
             // body 내부의 텍스트 블록만 대상으로 제한 (head/title 제외)
             const root = document.body || document.documentElement;
             if (!root) return [];
             const nodes = Array.from(root.querySelectorAll(BLOCK_QUERY));
-            const leaves = nodes.filter(el => !nodes.some(other => other !== el && el.contains(other)));
-            return leaves.filter(el => {
-              const txt = (el.innerText || '').trim();
-              if (!txt) return false;
-              if (txt.length >= 6) return true;
-              for (let i = 0; i < txt.length; i++) {
-                if (txt.charCodeAt(i) > 0x7f) return true;
-              }
-              return false;
+            const leaves = nodes.filter(el => {
+              return !nodes.some(other => {
+                if (other === el) return false;
+                if (!el.contains(other)) return false;
+                if (!el.matches(HEADING_QUERY) && other.matches(HEADING_QUERY)) return false;
+                return true;
+              });
             });
+            const refined = filterReadableBlocks(leaves);
+            if (refined.length) return refined;
+
+            const fallbackNodes = Array.from(root.querySelectorAll(BASE_BLOCK_QUERY));
+            const fallbackLeaves = fallbackNodes.filter(el => !fallbackNodes.some(other => other !== el && el.contains(other)));
+            return filterReadableBlocks(fallbackLeaves);
           }
 
           function buildIndex(block) {
@@ -208,7 +226,14 @@ final class SelectionBridge: NSObject {
               }
             });
             let node;
+            const isHeadingBlock = block.matches(HEADING_QUERY);
             while ((node = walker.nextNode())) {
+              if (!isHeadingBlock) {
+                const hostHeading = node.parentElement && node.parentElement.closest ? node.parentElement.closest(HEADING_QUERY) : null;
+                if (hostHeading && hostHeading !== block) {
+                  continue;
+                }
+              }
               const start = acc.length;
               acc += node.nodeValue;
               const token = ensureNodeToken(node);
