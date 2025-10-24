@@ -174,7 +174,6 @@ extension BrowserViewModel {
             coordinator.resetMarks()
         }
         request = nil
-        hasAttemptedTranslationForCurrentPage = false
         autoTranslateTask?.cancel()
         autoTranslateTask = nil
         pendingAutoTranslateID = nil

@@ -92,7 +92,6 @@ final class BrowserViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
-        hasAttemptedTranslationForCurrentPage = false
         pendingAutoTranslateID = nil
         autoTranslateTask?.cancel()
         autoTranslateTask = nil
