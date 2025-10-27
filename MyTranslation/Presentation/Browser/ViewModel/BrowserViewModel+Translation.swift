@@ -103,12 +103,19 @@ extension BrowserViewModel {
                 return
             }
             
+            // 새 페이지 여부
+            let shouldWipe: Bool = {
+                guard let cur = webView.url else { return true }
+                return self.currentPageTranslation?.url != cur
+            }()
+            
             do {
                 guard let prep = try await self.prepareTranslationSession(
                     scope: .full,
                     on: webView,
                     requestID: requestID,
-                    engine: self.settings.preferredEngine
+                    engine: self.settings.preferredEngine,
+                    wipeExisting: shouldWipe
                 ) else { throw TranslationStreamError.prepareFailed }
                 
                 _ = try await self.runTranslationStream(
@@ -124,7 +131,6 @@ extension BrowserViewModel {
                 await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
             } catch {
                 print("[T] requestTranslation(on:) Error: \(error)")
-                await self.clearMT(on: webView)
                 await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
             }
         }
@@ -184,7 +190,8 @@ extension BrowserViewModel {
                     scope: .partial(segments),
                     on: webView,
                     requestID: requestID,
-                    engine: engine
+                    engine: engine,
+                    wipeExisting: false
                 ) else { throw TranslationStreamError.prepareFailed }
                 print("[T] prepareTranslationSession SUCCEED reqID: \(requestID.uuidString)")
                 _ = try await self.runTranslationStream(
@@ -233,8 +240,6 @@ extension BrowserViewModel {
             "[T] willNavigate url=\(_url(webView.url)) act=\(_id(activeTranslationID))"
         )
         cancelActiveTranslation()
-        let executor = WKWebViewScriptAdapter(webView: webView)
-        replacer.restore(using: executor)
         if let coordinator = webView.navigationDelegate as? WebContainerView.Coordinator {
             coordinator.resetMarks()
         }
@@ -330,7 +335,8 @@ private extension BrowserViewModel {
         scope: TranslationScop,
         on webView: WKWebView,
         requestID: UUID,
-        engine: EngineTag
+        engine: EngineTag,
+        wipeExisting: Bool
     ) async throws -> PreparedState? {
         print("[T] prepareTranslationSession START reqID: \(requestID.uuidString)")
         guard let url = webView.url, activeTranslationID == requestID else {
@@ -375,8 +381,10 @@ private extension BrowserViewModel {
             translationProgress = segments.isEmpty ? 1.0 : 0.0
             failedSegmentIDs = []
             
-            replacer.restore(using: executor)
-            replacer.setPairs([], using: executor, observer: .restart)
+            if wipeExisting {
+                replacer.restore(using: executor)
+                replacer.setPairs([], using: executor, observer: .restart)
+            }
             
             if let c = webView.navigationDelegate as? WebContainerView.Coordinator {
                 c.resetMarks()
@@ -397,8 +405,10 @@ private extension BrowserViewModel {
             failedSegmentIDs = state.failedSegmentIDs
             updateProgress(for: engineID)
             
-            replacer.restore(using: executor)
-            replacer.setPairs([], using: executor, observer: .restart)
+            if wipeExisting {
+                replacer.restore(using: executor)
+                replacer.setPairs([], using: executor, observer: .restart)
+            }
             
             if let c = webView.navigationDelegate as? WebContainerView.Coordinator {
                 c.resetMarks()
