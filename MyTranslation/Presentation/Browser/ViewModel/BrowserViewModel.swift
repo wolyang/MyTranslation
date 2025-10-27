@@ -4,11 +4,19 @@ import WebKit
 
 @MainActor
 final class BrowserViewModel: ObservableObject {
+    // 주소바에 표시되는 URL
     @Published var urlString: String
+    
+    // ProgressView 노출 여부
     @Published var isTranslating: Bool = false
+    
+    // 원문 보기 중인지 저장
     @Published var showOriginal: Bool = false
+    
+    // 사용자가 주소바의 URL을 편집중인지 여부
     @Published var isEditingURL: Bool = false {
         didSet {
+            // 편집 종료 시,만약 편집중에 새 웹페이지가 로딩되어 편집 종료 후 기존의 url이 아닌 새 url을 보여줘야 할 경우
             if isEditingURL == false, let pendingURLAfterEditing {
                 urlString = pendingURLAfterEditing
                 self.pendingURLAfterEditing = nil
@@ -17,10 +25,10 @@ final class BrowserViewModel: ObservableObject {
     }
 
     @Published var request: URLRequest? = nil
-    @Published var currentPageURLString: String = ""
-    @Published var pendingAutoTranslateID: UUID? = nil
+    var currentPageURLString: String {
+        currentPageTranslation?.url.absoluteString ?? attachedWebView?.url?.absoluteString ?? urlString
+    }
     @Published var overlayState: OverlayState?
-    @Published var fmPanel: FMAnswer?
     @Published var translateRunID: String = ""
     @Published var translationProgress: Double = 0
     @Published var failedSegmentIDs: Set<String> = []
@@ -30,18 +38,19 @@ final class BrowserViewModel: ObservableObject {
 
     var lastSegments: [Segment] = []
     var lastStreamPayloads: [TranslationStreamPayload] = []
-
+    
+    // 주소바 편집 중 새 페이지가 로딩된 경우, 이동 없이 편집 종료 시에 주소바에 노출되는 주소를 새 페이지의 url로 복구하기 위한 값
     var pendingURLAfterEditing: String?
+    
+    // 현재 페이지의 세그먼트 추출/번역 상태 저장 객체
     var currentPageTranslation: PageTranslationState?
+    
+    //
     var translationTask: Task<Void, Never>? = nil
     var activeTranslationID: UUID?
-    var hasAttemptedTranslationForCurrentPage = false
     var noBodyTextRetryCount = 0
-    var autoTranslateTask: Task<Void, Never>? = nil
     var selectedSegment: Segment?
-    var pendingImproved: String?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
-    var isStartingTranslation = false
 
     let presetLinks: [PresetLink]
 
@@ -92,9 +101,6 @@ final class BrowserViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
-        pendingAutoTranslateID = nil
-        autoTranslateTask?.cancel()
-        autoTranslateTask = nil
         pendingURLAfterEditing = nil
     }
 

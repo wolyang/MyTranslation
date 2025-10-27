@@ -9,18 +9,33 @@ final class GoogleEngine: TranslationEngine {
         self.client = client
     }
 
-    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error> {
+    func translate(runID: String, _ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error> {
         guard segments.isEmpty == false else {
             throw TranslationEngineError.emptySegments
         }
+        
+        let bag = RouterCancellationCenter.shared.bag(for: runID)
 
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            let lock = NSLock()
+            var finished = false
+            let finishOnce: (Result<Void, Error>) -> Void = { result in
+                lock.lock(); defer { lock.unlock() }
+                guard finished == false else { return }
+                finished = true
+                switch result {
+                case .success: continuation.finish()
+                case .failure(let error): continuation.finish(throwing: error)
+                }
+            }
+            let worker = Task {
                 do {
                     let batchSize = 100
                     var index = 0
 
                     while index < segments.count {
+                        try Task.checkCancellation()
+                        
                         let end = min(index + batchSize, segments.count)
                         let slice = Array(segments[index..<end])
                         let texts = slice.map { $0.originalText }
@@ -29,8 +44,13 @@ final class GoogleEngine: TranslationEngine {
                             texts: texts,
                             target: "ko",
                             source: "zh-CN",
-                            format: "html"
+                            format: "html",
+                            onTask: { task in
+                                bag.insert { task.cancel() }
+                            }
                         )
+                        
+                        try Task.checkCancellation()
 
                         guard translations.count == slice.count else {
                             throw NSError(
@@ -55,14 +75,18 @@ final class GoogleEngine: TranslationEngine {
                         continuation.yield(batch)
                         index = end
                     }
-                    continuation.finish()
+                    finishOnce(.success(()))
                 } catch {
-                    continuation.finish(throwing: error)
+                    finishOnce(.failure(error))
                 }
             }
 
+            // runID 취소 -> worker 취소
+            bag.insert {
+                worker.cancel()
+            }
             continuation.onTermination = { _ in
-                task.cancel()
+                worker.cancel()
             }
         }
     }

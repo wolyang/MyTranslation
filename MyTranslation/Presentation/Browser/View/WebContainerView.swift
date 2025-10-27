@@ -115,8 +115,6 @@ struct WebContainerView: UIViewRepresentable {
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            parent.onNavigate?()
-
             // ❗️요청별 once 보장: 전역 플래그를 쓰지 말고, 로컬 클로저로 가드
             var called = false
             let decideOnce: (WKNavigationActionPolicy) -> Void = { policy in

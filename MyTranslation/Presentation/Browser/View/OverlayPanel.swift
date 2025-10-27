@@ -11,14 +11,12 @@ import UIKit
 struct OverlayPanelContainer: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
-    let onApply: () -> Void
     let onClose: () -> Void
 
     var body: some View {
         OverlayPanelPositioner(
             state: state,
             onAsk: onAsk,
-            onApply: onApply,
             onClose: onClose
         )
     }
@@ -27,7 +25,6 @@ struct OverlayPanelContainer: View {
 private struct OverlayPanelPositioner: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
-    let onApply: () -> Void
     let onClose: () -> Void
 
     @State private var panelSize: CGSize = .zero
@@ -42,7 +39,6 @@ private struct OverlayPanelPositioner: View {
             OverlayPanelView(
                 state: state,
                 onAsk: onAsk,
-                onApply: onApply,
                 onClose: onClose
             )
             .frame(maxWidth: widthLimit, alignment: .leading)
@@ -81,7 +77,6 @@ private struct OverlayPanelPositioner: View {
 private struct OverlayPanelView: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
-    let onApply: () -> Void
     let onClose: () -> Void
 
     @State private var contentWidth: CGFloat = .zero
@@ -131,14 +126,6 @@ private struct OverlayPanelView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-
-                Button(action: onApply) {
-                    Text("적용")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(state.improvedText == nil)
 
                 Button(action: onClose) {
                     Text("닫기")

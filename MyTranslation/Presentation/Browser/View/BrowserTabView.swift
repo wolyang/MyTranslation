@@ -59,7 +59,6 @@ struct BrowserTabView: View {
                     OverlayPanelContainer(
                         state: overlayState,
                         onAsk: { Task { await vm.askAIForSelected() } },
-                        onApply: { vm.applyAIImproved() },
                         onClose: { vm.closeOverlay() }
                     )
                 }

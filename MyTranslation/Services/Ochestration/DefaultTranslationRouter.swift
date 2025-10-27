@@ -1,4 +1,5 @@
 // File: DefaultTranslationRouter.swift
+import Combine
 import Foundation
 
 /// 오류 내비게이션을 위한 라우터 공용 에러 정의.
@@ -48,12 +49,14 @@ final class DefaultTranslationRouter: TranslationRouter {
 
     /// 번역 스트림을 실행하고 이벤트를 순차적으로 방출한다.
     public func translateStream(
+        runID: String,
         segments: [Segment],
         options: TranslationOptions,
         preferredEngine: TranslationEngineID?,
         progress: @escaping (TranslationStreamEvent) -> Void
     ) async throws -> TranslationStreamSummary {
         print("[Router] Start translateStream")
+        let cancelBag = RouterCancellationCenter.shared.bag(for: runID)
 
         let glossaryEntries = await fetchGlossaryEntries(shouldApply: options.applyGlossary)
 
@@ -84,13 +87,27 @@ final class DefaultTranslationRouter: TranslationRouter {
             }
         }
 
-        if pendingSegments.isEmpty == false {
+        let summary: TranslationStreamSummary = try await {
+            // 아무 것도 번역할 것이 없으면 바로 요약 리턴
+            guard !pendingSegments.isEmpty else {
+                let s = TranslationStreamSummary(
+                    totalCount: segments.count,
+                    succeededCount: succeededIDs.count,
+                    failedCount: failedIDs.count,
+                    cachedCount: cachedCount
+                )
+                progress(.init(kind: .completed, timestamp: Date()))
+                await Task.yield()
+                print("[T] router.translateStream EXIT succeeded=\(succeededIDs.count) failed=\(failedIDs.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)")
+                return s
+            }
+            
             print(
                 "[T] router.translateStream pending=\(pendingSegments.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
             )
             progress(.init(kind: .requestScheduled, timestamp: Date()))
             await Task.yield()
-
+            
             let termMasker = TermMasker()
             let maskingContext = prepareMaskingContext(
                 from: pendingSegments,
@@ -98,10 +115,10 @@ final class DefaultTranslationRouter: TranslationRouter {
                 engine: engine,
                 termMasker: termMasker
             )
-
+            
             for index in maskingContext.maskedPacks.indices {
                 let originalSegment = pendingSegments[index]
-
+                
                 let scheduledPayload = TranslationStreamPayload(
                     segmentID: originalSegment.id,
                     originalText: originalSegment.originalText,
@@ -113,32 +130,45 @@ final class DefaultTranslationRouter: TranslationRouter {
                 progress(.init(kind: .partial(segment: scheduledPayload), timestamp: Date()))
                 await Task.yield()
             }
-
+            
             try Task.checkCancellation()
-
+            
             let indexByID = Dictionary(uniqueKeysWithValues: pendingSegments.enumerated().map { ($1.id, $0) })
             var streamState = StreamProcessingState(
                 remainingIDs: Set(pendingSegments.map { $0.id }),
                 unexpectedIDs: [],
                 succeededIDs: []
             )
-
+            
+            let reader = Task { [engine] in
+                do {
+                    try Task.checkCancellation()
+                    (sequence, streamState) = try await processStream(
+                        runID: runID,
+                        engine: engine,
+                        maskedSegments: maskingContext.maskedSegments,
+                        pendingSegments: pendingSegments,
+                        indexByID: indexByID,
+                        termMasker: termMasker,
+                        maskingContext: maskingContext,
+                        options: options,
+                        sequence: sequence,
+                        state: streamState,
+                        progress: progress
+                    )
+                } catch {
+                    throw error
+                }
+            }
+            
+            // 취소센터에 등록: router.cancel(runID:) -> reader.cancel()
+            cancelBag.insert { reader.cancel() }
+            
             do {
-                try Task.checkCancellation()
-                try await processStream(
-                    engine: engine,
-                    maskedSegments: maskingContext.maskedSegments,
-                    pendingSegments: pendingSegments,
-                    indexByID: indexByID,
-                    termMasker: termMasker,
-                    maskingContext: maskingContext,
-                    options: options,
-                    sequence: &sequence,
-                    state: &streamState,
-                    progress: progress
-                )
+                try await reader.value
                 succeededIDs.append(contentsOf: streamState.succeededIDs)
             } catch is CancellationError {
+                // 취소는 상위로 그대로 던져서 뷰모델 defer에서 정리되도록
                 throw CancellationError()
             } catch let streamError as EngineStreamError {
                 let failingIDs: Set<String>
@@ -150,7 +180,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     print("[Router][ERR] missing ids=\(ids)")
                     failingIDs = ids
                 }
-
+                
                 failedIDs = await markFailedSegments(
                     failingIDs,
                     existingFailed: failedIDs,
@@ -159,45 +189,24 @@ final class DefaultTranslationRouter: TranslationRouter {
                 progress(.init(kind: .completed, timestamp: Date()))
                 await Task.yield()
                 throw TranslationRouterError.noAvailableEngine
-            } catch {
-                failedIDs = await markFailedSegments(
-                    streamState.remainingIDs,
-                    existingFailed: failedIDs,
-                    progress: progress
-                )
-                progress(.init(kind: .completed, timestamp: Date()))
-                await Task.yield()
-                throw TranslationRouterError.noAvailableEngine
             }
-        }
-
-        let summary = TranslationStreamSummary(
-            totalCount: segments.count,
-            succeededCount: succeededIDs.count,
-            failedCount: failedIDs.count,
-            cachedCount: cachedCount
-        )
-        progress(.init(kind: .completed, timestamp: Date()))
-        await Task.yield()
-        print(
-            "[T] router.translateStream EXIT succeeded=\(succeededIDs.count) failed=\(failedIDs.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
-        )
+            
+            let s = TranslationStreamSummary(
+                totalCount: segments.count,
+                succeededCount: succeededIDs.count,
+                failedCount: failedIDs.count,
+                cachedCount: cachedCount
+            )
+            progress(.init(kind: .completed, timestamp: Date()))
+            await Task.yield()
+            print(
+                "[T] router.translateStream EXIT succeeded=\(succeededIDs.count) failed=\(failedIDs.count) cached=\(cachedCount) engine=\(engine.tag.rawValue)"
+            )
+            return s
+        }()
+        
+        RouterCancellationCenter.shared.remove(runID: runID)
         return summary
-    }
-
-    /// 단건 번역 요청을 스트리밍 없이 수행한다.
-    func translate(
-        segments: [Segment],
-        options: TranslationOptions,
-        preferredEngine: EngineTag
-    ) async throws -> [TranslationResult] {
-        let engine = engine(for: preferredEngine)
-        let stream = try await engine.translate(segments, options: options)
-        var results: [TranslationResult] = []
-        for try await batch in stream {
-            results.append(contentsOf: batch)
-        }
-        return results
     }
 
     /// 엔진 태그에 해당하는 실제 엔진 인스턴스를 반환한다.
@@ -282,6 +291,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
     /// 엔진 스트림을 소비하며 최종 이벤트를 생성한다.
     private func processStream(
+        runID: String,
         engine: TranslationEngine,
         maskedSegments: [Segment],
         pendingSegments: [Segment],
@@ -289,33 +299,57 @@ final class DefaultTranslationRouter: TranslationRouter {
         termMasker: TermMasker,
         maskingContext: MaskingContext,
         options: TranslationOptions,
-        sequence: inout Int,
-        state: inout StreamProcessingState,
+        sequence: Int,
+        state: StreamProcessingState,
         progress: @escaping (TranslationStreamEvent) -> Void
-    ) async throws {
+    ) async throws -> (newSequence: Int, newState: StreamProcessingState) {
         print(
             "[T] router.processStream ENTER masked=\(maskedSegments.count) engine=\(engine.tag.rawValue)"
         )
+        
         var didLogFirstEmit = false
+        
+        var seq = sequence
+        var st = state
+        
         defer {
             print(
-                "[T] router.processStream EXIT masked=\(maskedSegments.count) engine=\(engine.tag.rawValue) remaining=\(state.remainingIDs.count)"
+                "[T] router.processStream EXIT masked=\(maskedSegments.count) engine=\(engine.tag.rawValue) remaining=\(st.remainingIDs.count)"
             )
         }
-        let stream = try await engine.translate(maskedSegments, options: options)
-
+        
+        // 마스킹/원본 ID 일치 여부 체크 로그
+        if maskedSegments.count == pendingSegments.count {
+            for i in 0..<min(maskedSegments.count, 5) {
+                if maskedSegments[i].id != pendingSegments[i].id {
+                    print("[Router][WARN] masked vs pending ID mismatch at \(i): \(maskedSegments[i].id) vs \(pendingSegments[i].id)")
+                }
+            }
+        } else {
+            print("[Router][WARN] masked.count(\(maskedSegments.count)) != pending.count(\(pendingSegments.count))")
+        }
+            
+        // 스트림 생성도 Task 안에서 수행 → 취소 신속 반응
+        let stream = try await engine.translate(runID: runID, maskedSegments, options: options)
+            
+        var sawAnyBatch = false
         for try await batch in stream {
+            if sawAnyBatch == false {
+                    print("[T] router.processStream GOT-BATCH count=\(batch.count) engine=\(engine.tag.rawValue)")
+                    sawAnyBatch = true
+                }
             try Task.checkCancellation()
             for result in batch {
+                try Task.checkCancellation()
                 guard let index = indexByID[result.segmentID] else {
-                    state.unexpectedIDs.insert(result.segmentID)
+                    st.unexpectedIDs.insert(result.segmentID)
                     continue
                 }
-                guard state.remainingIDs.remove(result.segmentID) != nil else {
-                    state.unexpectedIDs.insert(result.segmentID)
+                guard st.remainingIDs.remove(result.segmentID) != nil else {
+                    st.unexpectedIDs.insert(result.segmentID)
                     continue
                 }
-
+                    
                 let pack = maskingContext.maskedPacks[index]
                 let originalSegment = pendingSegments[index]
                 let output = restoreOutput(
@@ -325,7 +359,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     nameGlossaries: maskingContext.nameGlossariesPerSegment[index],
                     shouldNormalizeNames: !engine.maskPerson
                 )
-
+                    
                 let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
                 let residual = Double(hanCount) / Double(max(output.count, 1))
                 let finalResult = TranslationResult(
@@ -336,36 +370,46 @@ final class DefaultTranslationRouter: TranslationRouter {
                     residualSourceRatio: residual,
                     createdAt: result.createdAt
                 )
-
+                print("[T] router.processStream FINAL RESULT: \(output)")
+                    
                 let payload = TranslationStreamPayload(
                     segmentID: originalSegment.id,
                     originalText: originalSegment.originalText,
                     translatedText: finalResult.text,
                     engineID: finalResult.engine.rawValue,
-                    sequence: sequence
+                    sequence: seq
                 )
                 if didLogFirstEmit == false {
-                    print(
-                        "[T] router.processStream FIRST-EMIT seq=\(sequence) seg=\(originalSegment.id) engine=\(engine.tag.rawValue)"
-                    )
+                    print("[T] router.processStream FIRST-EMIT seq=\(seq) seg=\(originalSegment.id) engine=\(engine.tag.rawValue)")
+
                     didLogFirstEmit = true
                 }
-                sequence += 1
+                seq += 1
                 progress(.init(kind: .final(segment: payload), timestamp: Date()))
                 await Task.yield()
-                state.succeededIDs.append(originalSegment.id)
-
+                    
+                st.succeededIDs.append(originalSegment.id)
+                    
                 let cacheKey = cacheKey(for: pack.seg, options: options, engine: maskingContext.engineTag)
                 cache.save(result: finalResult, forKey: cacheKey)
             }
         }
-
-        if let unexpected = state.unexpectedIDs.first {
+        if sawAnyBatch == false {
+            print("[T][WARN] processStream: stream completed with 0 batches (no results)")
+        }
+        
+        // 종료 검증
+        if Task.isCancelled {
+            throw CancellationError()
+        }
+        if let unexpected = st.unexpectedIDs.first {
             throw EngineStreamError.unexpectedID(unexpected)
         }
-        if state.remainingIDs.isEmpty == false {
-            throw EngineStreamError.missingIDs(state.remainingIDs)
+        if st.remainingIDs.isEmpty == false {
+            throw EngineStreamError.missingIDs(st.remainingIDs)
         }
+        
+        return (seq, st)
     }
 
     /// 실패한 세그먼트에 대한 이벤트를 발행하고 실패 목록을 갱신한다.
@@ -434,5 +478,11 @@ final class DefaultTranslationRouter: TranslationRouter {
         var remainingIDs: Set<String>
         var unexpectedIDs: Set<String>
         var succeededIDs: [String]
+    }
+    
+    // MARK: - 취소
+    
+    public func cancel(runID: String) {
+        RouterCancellationCenter.shared.cancel(runID: runID)
     }
 }
