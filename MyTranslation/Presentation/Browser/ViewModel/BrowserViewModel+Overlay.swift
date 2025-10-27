@@ -14,7 +14,6 @@ extension BrowserViewModel {
 
         cancelOverlayTranslationTasks()
         selectedSegment = segment
-        pendingImproved = nil
 
         let targetEngines = overlayTargetEngines(for: showOriginal, selectedEngine: settings.preferredEngine)
         var translations: [OverlayState.Translation] = []
@@ -77,55 +76,11 @@ extension BrowserViewModel {
 //        }
     }
 
-    /// AI가 제안한 개선 번역을 현재 페이지와 오버레이 상태에 반영한다.
-    func applyAIImproved() {
-        guard let segment = selectedSegment,
-              let improved = pendingImproved,
-              let webView = attachedWebView else { return }
-
-        let executor = WKWebViewScriptAdapter(webView: webView)
-        let engineID = lastStreamPayloads.first(where: { $0.segmentID == segment.id })?.engineID
-            ?? settings.preferredEngine.rawValue
-        let sequence = lastStreamPayloads.first(where: { $0.segmentID == segment.id })?.sequence
-            ?? (lastStreamPayloads.count + 1)
-        let payload = TranslationStreamPayload(
-            segmentID: segment.id,
-            originalText: segment.originalText,
-            translatedText: improved,
-            engineID: engineID,
-            sequence: sequence
-        )
-
-        replacer.upsert(payload: payload, using: executor, applyImmediately: true, highlight: false)
-
-        if var state = currentPageTranslation,
-           let currentURL = webView.url,
-           currentURL == state.url {
-            var buffer = state.buffersByEngine[engineID] ?? .init()
-            buffer.upsert(payload)
-            state.buffersByEngine[engineID] = buffer
-            state.lastEngineID = engineID
-            state.finalizedSegmentIDs.insert(segment.id)
-            state.failedSegmentIDs.remove(segment.id)
-            state.scheduledSegmentIDs.remove(segment.id)
-            currentPageTranslation = state
-            lastStreamPayloads = buffer.ordered
-            failedSegmentIDs = state.failedSegmentIDs
-            updateProgress(for: engineID)
-        }
-
-        if var state = overlayState, state.segmentID == segment.id {
-            state.improvedText = improved
-            overlayState = state
-        }
-    }
-
     /// 오버레이와 관련된 모든 상태와 비동기 작업을 정리하고 화면을 닫는다.
     func closeOverlay() {
         cancelOverlayTranslationTasks()
         overlayState = nil
         selectedSegment = nil
-        pendingImproved = nil
         clearSelectionHighlight()
     }
 
@@ -190,6 +145,9 @@ private extension BrowserViewModel {
 
     /// 진행 중인 모든 오버레이 번역 Task 를 취소하고 비운다.
     func cancelOverlayTranslationTasks() {
+        for runID in overlayTranslationTasks.keys {
+            RouterCancellationCenter.shared.cancel(runID: runID)
+        }
         for task in overlayTranslationTasks.values {
             task.cancel()
         }
@@ -200,12 +158,17 @@ private extension BrowserViewModel {
     func startOverlayTranslation(for engine: EngineTag, segment: Segment) {
         let key = overlayTaskKey(segmentID: segment.id, engineID: engine.rawValue)
         overlayTranslationTasks[key]?.cancel()
+        RouterCancellationCenter.shared.cancel(runID: key)
 
         let options = TranslationOptions()
-        overlayTranslationTasks[key] = Task(priority: .userInitiated) { @MainActor [weak self] in
+        let bag = RouterCancellationCenter.shared.bag(for: key)
+        
+        let worker = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
+            
             do {
-                try await router.translateStream(
+                _ = try await router.translateStream(
+                    runID: key,
                     segments: [segment],
                     options: options,
                     preferredEngine: engine.rawValue
@@ -223,16 +186,23 @@ private extension BrowserViewModel {
             } catch is CancellationError {
                 // 취소 시 별도 처리 없음
             } catch {
-                updateOverlayTranslation(
-                    segmentID: segment.id,
-                    engineID: engine.rawValue,
-                    text: nil,
-                    errorMessage: "번역을 가져오는 중 오류가 발생했습니다."
-                )
+                await MainActor.run { [weak self] in
+                    self?.updateOverlayTranslation(
+                        segmentID: segment.id,
+                        engineID: engine.rawValue,
+                        text: nil,
+                        errorMessage: "번역을 가져오는 중 오류가 발생했습니다."
+                    )
+                }
             }
 
-            overlayTranslationTasks.removeValue(forKey: key)
+            await MainActor.run { [weak self] in
+                self?.overlayTranslationTasks.removeValue(forKey: key)
+                RouterCancellationCenter.shared.remove(runID: key)
+            }
         }
+        bag.insert { worker.cancel() }
+        overlayTranslationTasks[key] = worker
     }
 
     /// 오버레이 스트림 이벤트를 수신해 해당 엔진 섹션을 갱신한다.

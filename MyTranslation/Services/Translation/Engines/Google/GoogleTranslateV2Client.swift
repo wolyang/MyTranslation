@@ -33,7 +33,8 @@ final class GoogleTranslateV2Client {
         target: String,
         source: String? = nil,
         format: String? = nil,
-        timeout: TimeInterval = 15
+        timeout: TimeInterval = 15,
+        onTask: ((URLSessionTask) -> Void)? = nil
     ) async throws -> [GoogleV2Translation] {
         var components = URLComponents(string: "https://translation.googleapis.com/language/translate/v2")!
         components.queryItems = [ URLQueryItem(name: "key", value: config.apiKey) ]
@@ -50,38 +51,59 @@ final class GoogleTranslateV2Client {
         )
         req.httpBody = try JSONEncoder().encode(body)
 
-        do {
-            let (data, resp) = try await session.data(for: req)
-            guard let http = resp as? HTTPURLResponse else {
-                throw GoogleV2Error.unknown(-1, "HTTP 응답이 아닙니다.")
-            }
-            if (200..<300).contains(http.statusCode) {
+        // dataTask 기반으로 직접 작성
+        return try await withCheckedThrowingContinuation { continuation in
+            let task = session.dataTask(with: req) { data, resp, error in
+                if let error {
+                    continuation.resume(throwing: GoogleV2Error.transport(error))
+                    return
+                }
+
+                guard let data, let resp = resp as? HTTPURLResponse else {
+                    continuation.resume(throwing: GoogleV2Error.unknown(-1, "HTTP 응답이 아닙니다."))
+                    return
+                }
+
+                guard (200..<300).contains(resp.statusCode) else {
+                    let err = try? JSONDecoder().decode(ErrorEnvelope.self, from: data)
+                    continuation.resume(throwing: Self.mapHTTPError(status: resp.statusCode, error: err))
+                    return
+                }
+
                 do {
                     let decoded = try JSONDecoder().decode(SuccessEnvelope.self, from: data)
                     print("[Google] query batch size: \(body.q.count)")
-                    return decoded.data.translations.map {
+                    let translations = decoded.data.translations.map {
                         GoogleV2Translation(
                             translatedText: $0.translatedText,
                             detectedSourceLanguage: $0.detectedSourceLanguage,
                             model: $0.model
                         )
                     }
+                    continuation.resume(returning: translations)
                 } catch {
-                    throw GoogleV2Error.decoding(error.localizedDescription)
+                    continuation.resume(throwing: GoogleV2Error.decoding(error.localizedDescription))
                 }
-            } else {
-                // 에러 바디 파싱해서 매핑
-                let err = try? JSONDecoder().decode(ErrorEnvelope.self, from: data)
-                throw mapHTTPError(status: http.statusCode, error: err)
             }
-        } catch {
-            throw GoogleV2Error.transport(error)
+            onTask?(task) // 엔진이 cancelBag에 태스크 등록
+
+            // 실제 네트워크 요청 시작
+            task.resume()
+
+            // 취소 지원
+            Task {
+                try? await Task.sleep(nanoseconds: 10_000_000) // 약간의 여유
+                if Task.isCancelled {
+                    task.cancel()
+                }
+            }
         }
     }
 
+
     // MARK: - Internal
 
-    private func mapHTTPError(status: Int, error: ErrorEnvelope?) -> GoogleV2Error {
+    private static func mapHTTPError(status: Int, error: ErrorEnvelope?) -> GoogleV2Error {
         let message = error?.error.message ?? "상세 메시지 없음"
         switch status {
         case 400: return .invalidArgument(message)

@@ -7,7 +7,7 @@
 
 protocol TranslationEngine {
     var tag: EngineTag { get }
-    func translate(_ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error>
+    func translate(runID: String, _ segments: [Segment], options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error>
     var maskPerson: Bool { get }
 }
 

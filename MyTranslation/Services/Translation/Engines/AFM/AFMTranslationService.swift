@@ -58,7 +58,7 @@ final class AFMTranslationService: AFMClient {
                     while let response = try await iterator.next() {
                         guard let identifier = response.clientIdentifier else { continue }
                         let translated = response.targetText
-                        print("[AFM][stream] id=\(identifier) => \(translated)")
+//                        print("[AFM][stream] id=\(identifier) => \(translated)")
                         continuation.yield((segmentID: identifier, translatedText: translated))
                     }
                     continuation.finish()

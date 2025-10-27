@@ -1,53 +1,154 @@
 import Foundation
 import WebKit
 
+private func _id(_ id: UUID?) -> String { id?.uuidString ?? "nil" }
+private func _url(_ url: URL?) -> String { url?.absoluteString ?? "nil" }
+
+// 전체/부분 번역 스코프
+enum TranslationScop: Sendable {
+    case full
+    case partial([Segment])
+}
+
 @MainActor
 extension BrowserViewModel {
     /// 페이지 로딩이 끝났을 때 주소 표시줄과 번역 상태를 초기화한다.
     func onWebViewDidFinishLoad(_ webView: WKWebView, url: URL) {
+        // 줌레벨 초기화
         normalizePageScale(webView)
 
+        // 로딩된 url의 주소
+        let prevEffectiveURL = currentPageURLString
+        let curURLString = url.absoluteString
+        let isNewPage = (prevEffectiveURL != curURLString)
+        
+        print("[T] didFinish url=\(curURLString) isNew=\(isNewPage) curPage(before)=\(prevEffectiveURL) act=\(_id(activeTranslationID))")
+
+        // 주소창 업데이트
         request = nil
-        pendingURLAfterEditing = url.absoluteString
         if isEditingURL == false {
-            urlString = url.absoluteString
-            pendingURLAfterEditing = nil
+            // 현재 주소바를 편집중이 아니라면 바로 주소바의 url을 업데이트
+            self.urlString = curURLString
+        } else {
+            // 현재 주소바를 편집중이라면 이동 없이 편집 종료되었을 때 복구할 주소바의 url을 예약
+            pendingURLAfterEditing = curURLString
         }
 
         if currentPageTranslation?.url != url {
             currentPageTranslation = nil
+            lastSegments = []
+            lastStreamPayloads = []
+            failedSegmentIDs = []
+            translationProgress = 0
         }
-        currentPageURLString = url.absoluteString
 
-        if hasAttemptedTranslationForCurrentPage == false {
-            pendingAutoTranslateID = UUID()
+        if !showOriginal {
+            ensureTranslatedIfVisible(on: webView)
+        }
+    }
+    
+    
+    
+    @MainActor
+    /// 캐시된 번역 적용, 필요시 전체/일부 번역 시작
+    private func ensureTranslatedIfVisible(on webView: WKWebView) {
+        // 원문 보기면 아무것도 하지 않음
+        guard showOriginal == false else { return }
+
+        // 진행 중이면 (같은 페이지) 추가로 건드리지 않음
+        if let act = activeTranslationID, isTranslating {
+            print("[T] ensureTranslatedIfVisible skip: in-flight act=\(act)")
+            return
+        }
+
+        let engine = settings.preferredEngine
+        let cache = applyCachedTranslationIfAvailable(for: engine, on: webView)
+        print("[T] ensureTranslatedIfVisible path=\(cache.applied ? "applyCache" : "requestTranslation") remaining=\(cache.remainingSegmentIDs.count)")
+
+        if cache.applied == false {
+            // 캐시가 없으면 전체 번역 시작
+            requestTranslation(on: webView)
+        } else if cache.remainingSegmentIDs.isEmpty == false {
+            // 일부만 남았으면 부분 번역
+            requestTranslation(for: cache.remainingSegmentIDs, engine: engine, on: webView)
         }
     }
 
-    /// 현재 페이지 전체를 번역하도록 비동기 작업을 예약한다.
+    /// 현재 페이지 전체를 번역하도록 비동기 작업을 시작한다.
     func requestTranslation(on webView: WKWebView) {
-        translationTask?.cancel()
+        print(
+            "[T] requestTranslation(on:) ENTER isTranslating=\(isTranslating) url=\(_url(webView.url)) curPage=\(currentPageURLString) act=\(_id(activeTranslationID)) eng=\(settings.preferredEngine.rawValue)"
+            )
+
+        // 기존 번역 태스크 취소
+        cancelActiveTranslation()
+        
         let requestID = UUID()
+        print(
+            "[T] requestTranslation(on:) assign activeTranslationID old=\(_id(activeTranslationID)) new=\(requestID.uuidString)"
+        )
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
-            guard let webView else {
-                self.handleFailedTranslationStart(reason: "webView released before translation", requestID: requestID)
+        
+        let bag = RouterCancellationCenter.shared.bag(for: requestID.uuidString)
+        var task: Task<Void, Never>? = nil
+        bag.insert { task?.cancel() }
+        
+        // 번역 태스크 생성
+        task = Task { [weak self, weak webView] in
+            guard let self, let webView else {
+                self?.handleFailedTranslationStart(
+                    reason: "webView released before translation",
+                    requestID: requestID
+                )
                 return
             }
-            await self.startTranslate(on: webView, requestID: requestID)
+            
+            // 새 페이지 여부
+            let shouldWipe: Bool = {
+                guard let cur = webView.url else { return true }
+                return self.currentPageTranslation?.url != cur
+            }()
+            
+            do {
+                guard let prep = try await self.prepareTranslationSession(
+                    scope: .full,
+                    on: webView,
+                    requestID: requestID,
+                    engine: self.settings.preferredEngine,
+                    wipeExisting: shouldWipe
+                ) else { throw TranslationStreamError.prepareFailed }
+                
+                _ = try await self.runTranslationStream(
+                    runID: requestID.uuidString,
+                    requestID: requestID,
+                    segments: prep.segments,
+                    engineID: prep.engineID,
+                    webView: webView
+                )
+                await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
+            } catch is CancellationError {
+                print("[T] requestTranslation(on:) CancellationError")
+                await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
+            } catch {
+                print("[T] requestTranslation(on:) Error: \(error)")
+                await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
+            }
         }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
-        }
+        translationTask = task
+        print(
+            "[T] requestTranslation(on:) SPAWN translationTask req=\(requestID.uuidString) act=\(_id(activeTranslationID))"
+        )
     }
 
-    /// 지정된 세그먼트들만 재번역하도록 부분 번역 작업을 예약한다.
+    /// 지정된 세그먼트들만 재번역하도록 부분 번역 작업을 시작한다.
     func requestTranslation(
         for segmentIDs: [String],
         engine: EngineTag,
         on webView: WKWebView
     ) {
+        print(
+            "[T] requestTranslation(for:) ENTER segCount=\(segmentIDs.count) url=\(_url(webView.url)) curPage=\(currentPageURLString) act=\(_id(activeTranslationID)) eng=\(engine.rawValue)"
+        )
         guard segmentIDs.isEmpty == false else { return }
         guard let url = webView.url,
               let state = currentPageTranslation,
@@ -60,57 +161,90 @@ extension BrowserViewModel {
         let segments = state.segments.filter { identifierSet.contains($0.id) }
         guard segments.isEmpty == false else { return }
 
-        translationTask?.cancel()
+        // 기존 번역 태스크 취소
+        cancelActiveTranslation()
+        
         let requestID = UUID()
+        print(
+            "[T] requestTranslation(for:) assign activeTranslationID old=\(_id(activeTranslationID)) new=\(requestID.uuidString)"
+        )
         activeTranslationID = requestID
-        translationTask = Task { @MainActor [weak self, weak webView] in
-            guard let self else { return }
-            guard let webView else {
-                self.handleFailedTranslationStart(reason: "webView released before partial translation", requestID: requestID)
+        
+        // runID 취소 연결 준비
+        let bag = RouterCancellationCenter.shared.bag(for: requestID.uuidString)
+        var task: Task<Void, Never>? = nil
+        bag.insert { task?.cancel() }
+        
+        // 번역 태스크 생성
+        task = Task { [weak self, weak webView] in
+            guard let self, let webView else {
+                self?.handleFailedTranslationStart(
+                    reason: "webView released before partial translation",
+                    requestID: requestID
+                )
                 return
             }
-            await self.startPartialTranslation(
-                segments: segments,
-                engine: engine,
-                on: webView,
-                requestID: requestID
-            )
+            
+            do {
+                guard let prep = try await self.prepareTranslationSession(
+                    scope: .partial(segments),
+                    on: webView,
+                    requestID: requestID,
+                    engine: engine,
+                    wipeExisting: false
+                ) else { throw TranslationStreamError.prepareFailed }
+                print("[T] prepareTranslationSession SUCCEED reqID: \(requestID.uuidString)")
+                _ = try await self.runTranslationStream(
+                    runID: requestID.uuidString,
+                    requestID: requestID,
+                    segments: prep.segments,
+                    engineID: prep.engineID,
+                    webView: webView
+                )
+                print("[T] runTranslationStream SUCCEED reqID: \(requestID.uuidString)")
+                await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
+            } catch is CancellationError {
+                await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
+            } catch {
+                await self.clearMT(on: webView)
+                await self.finalizeTranslationSessionIfCurrent(requestID, webView: webView)
+            }
         }
-        if translationTask == nil {
-            handleFailedTranslationStart(reason: "translationTask allocation failed", requestID: requestID)
-        }
+        translationTask = task
+        print(
+            "[T] requestTranslation(for:) SPAWN translationTask req=\(requestID.uuidString) act=\(_id(activeTranslationID))"
+        )
     }
 
     /// 원문 보기 토글에 맞춰 번역 적용 또는 취소 흐름을 제어한다.
     func onShowOriginalChanged(_ showOriginal: Bool) {
         guard let webView = attachedWebView else { return }
+        print("[T] onShowOriginalChanged showOriginal=\(showOriginal) url=\(_url(webView.url)) act=\(_id(activeTranslationID))")
+
         let executor = WKWebViewScriptAdapter(webView: webView)
         if showOriginal {
             cancelActiveTranslation()
             replacer.restore(using: executor)
             closeOverlay()
-        } else {
-            let engine = settings.preferredEngine
-            let cacheResult = applyCachedTranslationIfAvailable(for: engine, on: webView)
-            if cacheResult.applied == false {
-                requestTranslation(on: webView)
-            } else if cacheResult.remainingSegmentIDs.isEmpty == false {
-                requestTranslation(for: cacheResult.remainingSegmentIDs, engine: engine, on: webView)
-            }
+            return
         }
+
+        // 번역 모드면 공통 헬퍼만 호출
+        ensureTranslatedIfVisible(on: webView)
     }
 
-    /// 페이지 이동 직전에 번역 상태와 하이라이트를 정리한다.
+    /// 페이지 이동 전에 번역 상태와 하이라이트를 정리한다.
     func willNavigate() {
         guard let webView = attachedWebView else { return }
+        print(
+            "[T] willNavigate url=\(_url(webView.url)) act=\(_id(activeTranslationID))"
+        )
         cancelActiveTranslation()
-        let executor = WKWebViewScriptAdapter(webView: webView)
-        replacer.restore(using: executor)
         if let coordinator = webView.navigationDelegate as? WebContainerView.Coordinator {
             coordinator.resetMarks()
         }
         request = nil
-        hasAttemptedTranslationForCurrentPage = false
+        noBodyTextRetryCount = 0
         closeOverlay()
         pendingURLAfterEditing = nil
         currentPageTranslation = nil
@@ -151,62 +285,85 @@ extension BrowserViewModel {
     }
 }
 
+private extension TranslationStreamEvent.Kind {
+    var name: String {
+        switch self {
+        case .cachedHit: return "cachedHit"
+        case .requestScheduled: return "requestScheduled"
+        case .partial: return "partial"
+        case .final: return "final"
+        case .failed: return "failed"
+        case .completed: return "completed"
+        }
+    }
+}
+
 @MainActor
 private extension BrowserViewModel {
     /// 진행 중인 번역 Task 를 중단하고 관련 상태를 초기화한다.
     func cancelActiveTranslation() {
-        translationTask?.cancel()
+        print(
+            "[T] cancelActiveTranslation act(before)=\(_id(activeTranslationID))"
+        )
+        if let activeTranslationID {
+            RouterCancellationCenter.shared.cancel(runID: activeTranslationID.uuidString)
+            RouterCancellationCenter.shared.remove(runID: activeTranslationID.uuidString)
+        }
         translationTask = nil
         activeTranslationID = nil
         isTranslating = false
-        if let webView = attachedWebView {
-            normalizePageScale(webView)
-        }
+        
+//        if let webView = attachedWebView {
+//            normalizePageScale(webView)
+//        }
     }
 
     /// 번역 Task 생성이 실패했을 때 상태를 정리하고 원인을 로깅한다.
     func handleFailedTranslationStart(reason: String, requestID: UUID) {
+        print(
+            "[T] handleFailedTranslationStart reason=\(reason) req=\(requestID.uuidString) act=\(_id(activeTranslationID)) "
+        )
         if activeTranslationID == requestID {
-            activeTranslationID = nil
+            cancelActiveTranslation()
         }
-        translationTask = nil
-        isTranslating = false
         print("[BrowserViewModel] Failed to start translation: \(reason)")
     }
-
-    /// 전체 페이지 번역 스트림을 시작하고 스트림 이벤트를 처리한다.
-    func startTranslate(on webView: WKWebView, requestID: UUID) async {
-        guard let url = webView.url else { return }
-        guard activeTranslationID == requestID else { return }
-        translateRunID = requestID.uuidString
-
-        closeOverlay()
-        hasAttemptedTranslationForCurrentPage = true
-
-        isTranslating = true
-        defer {
-            if self.activeTranslationID == requestID {
-                self.normalizePageScale(webView)
-                self.isTranslating = false
-                self.translationTask = nil
-                self.activeTranslationID = nil
-            }
+    
+    /// 세션 준비(세그먼트, 상태 세팅 / 표시 초기화)
+    @MainActor
+    private func prepareTranslationSession(
+        scope: TranslationScop,
+        on webView: WKWebView,
+        requestID: UUID,
+        engine: EngineTag,
+        wipeExisting: Bool
+    ) async throws -> PreparedState? {
+        print("[T] prepareTranslationSession START reqID: \(requestID.uuidString)")
+        guard let url = webView.url, activeTranslationID == requestID else {
+            print("[T] prepareTranslationSession SYNC FAIL: url: \(webView.url), activeTranslationID: \(activeTranslationID?.uuidString)")
+            return nil
         }
-
-        do {
-            let executor = WKWebViewScriptAdapter(webView: webView)
-            let engineTag = settings.preferredEngine
-            let engineID = engineTag.rawValue
+        
+        closeOverlay()
+        isTranslating = true
+        
+        let executor = WKWebViewScriptAdapter(webView: webView)
+        let engineID = engine.rawValue
+        
+        switch scope {
+        case .full:
+            // URL 일치 + 세그먼트 보유 시 재사용, 아니면 추출
             let segments: [Segment]
-            if let state = currentPageTranslation, state.url == url, state.segments.isEmpty == false {
+            if let state = currentPageTranslation,
+               state.url == url,
+               !state.segments.isEmpty {
                 segments = state.segments
             } else {
                 segments = try await extractor.extract(using: executor, url: url)
             }
-
-            try Task.checkCancellation()
-            guard activeTranslationID == requestID else { return }
-
+            noBodyTextRetryCount = 0
+            
+            // 상태 초기화
             var state = currentPageTranslation ?? PageTranslationState(url: url, segments: [])
             state.url = url
             state.segments = segments
@@ -218,120 +375,86 @@ private extension BrowserViewModel {
             state.scheduledSegmentIDs.removeAll()
             state.summary = nil
             currentPageTranslation = state
-
+            
             lastSegments = segments
             lastStreamPayloads = []
             translationProgress = segments.isEmpty ? 1.0 : 0.0
             failedSegmentIDs = []
-
-            replacer.restore(using: executor)
-            replacer.setPairs([], using: executor, observer: .restart)
-
-            if let coordinator = webView.navigationDelegate as? WebContainerView.Coordinator {
-                coordinator.resetMarks()
-                await coordinator.markSegments(segments)
+            
+            if wipeExisting {
+                replacer.restore(using: executor)
+                replacer.setPairs([], using: executor, observer: .restart)
             }
-
-            let options = TranslationOptions()
-            let summary = try await router.translateStream(
-                segments: segments,
-                options: options,
-                preferredEngine: engineID
-            ) { [weak self, weak webView] event in
-                guard let self else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, let webView = webView else { return }
-                    if Task.isCancelled { return }
-                    await self.handleStreamEvent(
-                        event,
-                        url: url,
-                        executor: executor,
-                        requestID: requestID
-                    )
-                }
+            
+            if let c = webView.navigationDelegate as? WebContainerView.Coordinator {
+                c.resetMarks()
+                await c.markSegments(segments)
             }
-
-            if var updatedState = currentPageTranslation, updatedState.url == url {
-                updatedState.summary = summary
-                currentPageTranslation = updatedState
-                failedSegmentIDs = updatedState.failedSegmentIDs
-                updateProgress(for: engineID)
+            
+            return .init(url: url, engineID: engineID, segments: segments)
+        case .partial(let presetSegments):
+            // 부분 번역은 현재 페이지 상태가 같은 URL일 때만 진행. 아니면 중단.
+            guard var state = currentPageTranslation, state.url == url else {
+                return nil
             }
-        } catch {
-            if error is CancellationError { return }
-            print("translate error: \(error)")
-            let executor = WKWebViewScriptAdapter(webView: webView)
-            replacer.restore(using: executor)
-            _ = try? await executor.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
-        }
-    }
-
-    /// 선택된 세그먼트만 번역하는 부분 번역 스트림을 실행한다.
-    func startPartialTranslation(
-        segments: [Segment],
-        engine: EngineTag,
-        on webView: WKWebView,
-        requestID: UUID
-    ) async {
-        guard let url = webView.url else { return }
-        guard activeTranslationID == requestID else { return }
-        translateRunID = requestID.uuidString
-
-        closeOverlay()
-        isTranslating = true
-        hasAttemptedTranslationForCurrentPage = true
-        defer {
-            if self.activeTranslationID == requestID {
-                self.normalizePageScale(webView)
-                self.isTranslating = false
-                self.translationTask = nil
-                self.activeTranslationID = nil
-            }
-        }
-
-        do {
-            let executor = WKWebViewScriptAdapter(webView: webView)
-            try Task.checkCancellation()
-            guard activeTranslationID == requestID else { return }
-
-            guard var state = currentPageTranslation, state.url == url else { return }
-            state.buffersByEngine[engine.rawValue] = state.buffersByEngine[engine.rawValue] ?? .init()
-            state.lastEngineID = engine.rawValue
+            state.buffersByEngine[engineID] = state.buffersByEngine[engineID] ?? .init()
+            state.lastEngineID = engineID
             state.failedSegmentIDs.removeAll()
             state.scheduledSegmentIDs.removeAll()
             currentPageTranslation = state
             failedSegmentIDs = state.failedSegmentIDs
-            updateProgress(for: engine.rawValue)
-
-            let options = TranslationOptions()
-            let summary = try await router.translateStream(
-                segments: segments,
-                options: options,
-                preferredEngine: engine.rawValue
-            ) { [weak self, weak webView] event in
-                guard let self else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, let webView = webView else { return }
-                    if Task.isCancelled { return }
-                    await self.handleStreamEvent(
-                        event,
-                        url: url,
-                        executor: executor,
-                        requestID: requestID
-                    )
-                }
+            updateProgress(for: engineID)
+            
+            if wipeExisting {
+                replacer.restore(using: executor)
+                replacer.setPairs([], using: executor, observer: .restart)
             }
-
-            if var updatedState = currentPageTranslation, updatedState.url == url {
-                updatedState.summary = summary
-                currentPageTranslation = updatedState
-                failedSegmentIDs = updatedState.failedSegmentIDs
-                updateProgress(for: engine.rawValue)
+            
+            if let c = webView.navigationDelegate as? WebContainerView.Coordinator {
+                c.resetMarks()
+                await c.markSegments(state.segments)
             }
-        } catch {
-            if error is CancellationError { return }
-            print("partial translate error: \(error)")
+            
+            return .init(url: url, engineID: engineID, segments: presetSegments)
         }
+    }
+    
+    // 번역 스트림 실행
+    @MainActor
+    func runTranslationStream(
+        runID: String,
+        requestID: UUID,
+        segments: [Segment],
+        engineID: TranslationEngineID,
+        webView: WKWebView
+    ) async throws -> TranslationStreamSummary {
+        print("[T] runTranslationStream START reqID: \(requestID.uuidString)")
+        let summary = try await router.translateStream(
+            runID: runID,
+            segments: segments,
+            options: TranslationOptions(),
+            preferredEngine: engineID
+        ) { [weak self, weak webView] event in
+            Task { @MainActor in
+                guard let self, let webView, let url = webView.url else { return }
+                if self.activeTranslationID != requestID { return }
+                await self.handleStreamEvent(
+                    event,
+                    url: url,
+                    executor: WKWebViewScriptAdapter(webView: webView),
+                    requestID: requestID
+                )
+            }
+        }
+        
+        // summary 반영
+        if var updatedState = currentPageTranslation, updatedState.url == webView.url {
+            updatedState.summary = summary
+            currentPageTranslation = updatedState
+            failedSegmentIDs = updatedState.failedSegmentIDs
+            updateProgress(for: engineID)
+        }
+        return summary
     }
 
     /// 번역 스트림 이벤트를 분기 처리해 상태와 UI를 최신으로 유지한다.
@@ -341,8 +464,12 @@ private extension BrowserViewModel {
         executor: WebViewScriptExecutor,
         requestID: UUID
     ) async {
-        if Task.isCancelled { return }
-        guard activeTranslationID == requestID else { return }
+        if activeTranslationID != requestID {
+            print(
+                "[T] handleStreamEvent DROP reason=activeID-mismatch req=\(requestID.uuidString) act=\(_id(activeTranslationID))"
+            )
+            return
+        }
 
         switch event.kind {
         case .cachedHit:
@@ -381,6 +508,14 @@ private extension BrowserViewModel {
             break
         }
     }
+    
+    /// MT 하이라이트/치환 흔적 정리
+    @MainActor
+    private func clearMT(on webView: WKWebView) async {
+        let ex = WKWebViewScriptAdapter(webView: webView)
+        replacer.restore(using: ex)
+        _ = try? await ex.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
+    }
 
     /// 스트림으로 전달된 번역 결과를 캐시에 반영하고 웹뷰에 적용한다.
     func applyStreamPayload(
@@ -391,7 +526,12 @@ private extension BrowserViewModel {
         highlight: Bool,
         url: URL
     ) async {
-        guard var state = currentPageTranslation, state.url == url else { return }
+        guard var state = currentPageTranslation, state.url == url else {
+            print(
+                "[T] applyStreamPayload DROP reason=url-mismatch seg=\(payload.segmentID) act=\(_id(activeTranslationID)) webUrl=\(_url(attachedWebView?.url)) snapUrl=\(_url(url)) state.url=\(_url(currentPageTranslation?.url))"
+            )
+            return
+        }
         var buffer = state.buffersByEngine[engineID] ?? .init()
         buffer.upsert(payload)
         state.buffersByEngine[engineID] = buffer
@@ -422,6 +562,17 @@ private extension BrowserViewModel {
             applyImmediately: true,
             highlight: highlight
         )
+    }
+    
+    /// 세션 종료 처리 - 현재 req에 대해 종료/정리(진행중 플래그 해제 등)
+    @MainActor
+    private func finalizeTranslationSessionIfCurrent(_ requestID: UUID, webView: WKWebView) async {
+        print("[T] finalizeTranslationSessionIfCurrent reqID: \(requestID.uuidString)")
+        guard activeTranslationID == requestID else { return }
+        normalizePageScale(webView)
+        isTranslating = false
+        translationTask = nil
+        activeTranslationID = nil
     }
 
     /// 번역 적용 여부와 상관없이 페이지 확대 비율을 초기화한다.
@@ -476,7 +627,6 @@ private extension BrowserViewModel {
         currentPageTranslation = updatedState
         failedSegmentIDs = updatedState.failedSegmentIDs
         updateProgress(for: engine.rawValue)
-        hasAttemptedTranslationForCurrentPage = true
 
         if let coordinator = webView.navigationDelegate as? WebContainerView.Coordinator {
             coordinator.resetMarks()
@@ -486,5 +636,17 @@ private extension BrowserViewModel {
         }
 
         return CacheApplyResult(applied: true, remainingSegmentIDs: remainingSegmentIDs)
+    }
+}
+
+extension BrowserViewModel {
+    private struct PreparedState: Sendable {
+        let url: URL
+        let engineID: TranslationEngineID
+        let segments: [Segment]
+    }
+    
+    enum TranslationStreamError: Error {
+        case prepareFailed, missingRequired
     }
 }

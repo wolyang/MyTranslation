@@ -59,7 +59,6 @@ struct BrowserTabView: View {
                     OverlayPanelContainer(
                         state: overlayState,
                         onAsk: { Task { await vm.askAIForSelected() } },
-                        onApply: { vm.applyAIImproved() },
                         onClose: { vm.closeOverlay() }
                     )
                 }
@@ -80,12 +79,6 @@ struct BrowserTabView: View {
         .onChange(of: preferredEngineRawValue) { _, newValue in
             let engine = EngineTag(rawValue: newValue) ?? .afm
             vm.settings.preferredEngine = engine
-        }
-        // WebView 로드 이후 자동 번역
-        .task(id: vm.pendingAutoTranslateID) {
-            if vm.pendingAutoTranslateID != nil {
-                vm.onShowOriginalChanged(vm.showOriginal)
-            }
         }
         // TranslationSession을 컨테이너 서비스에 연결
         .translationTask(trConfig) { session in

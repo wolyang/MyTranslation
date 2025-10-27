@@ -23,18 +23,20 @@ public struct AFMEngine: TranslationEngine {
         self.client = client
     }
 
-    public func translate(_ segments: [Segment],
+    public func translate(runID: String,
+                          _ segments: [Segment],
                           options: TranslationOptions) async throws -> AsyncThrowingStream<[TranslationResult], Error> {
         guard segments.isEmpty == false else {
             throw TranslationEngineError.emptySegments
         }
 
-        let batchSize = 50
         let segmentMap = Dictionary(uniqueKeysWithValues: segments.map { ($0.id, $0) })
+        let bag = RouterCancellationCenter.shared.bag(for: runID)
 
         return AsyncThrowingStream { continuation in
-            let task = Task {
+            let worker = Task {
                 do {
+                    let batchSize = 50
                     var index = 0
                     while index < segments.count {
                         let end = min(index + batchSize, segments.count)
@@ -46,6 +48,7 @@ public struct AFMEngine: TranslationEngine {
                         )
 
                         for try await item in stream {
+                            try Task.checkCancellation()
                             guard let segment = segmentMap[item.segmentID] else { continue }
                             let result = TranslationResult(
                                 id: segment.id + ":afm",
@@ -61,13 +64,19 @@ public struct AFMEngine: TranslationEngine {
                         index = end
                     }
                     continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-
+            
+            // runID 취소 -> worker.cancel()
+            bag.insert { worker.cancel() }
+            
+            // 스트림 종료 시 안전 해제
             continuation.onTermination = { _ in
-                task.cancel()
+                worker.cancel()
             }
         }
     }
