@@ -93,37 +93,95 @@ final class WebViewInlineReplacer: InlineReplacer {
     };
   }
 
+  if (typeof S._findExclusiveAnchor !== 'function') {
+    S._findExclusiveAnchor = function(element) {
+      if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+      const tag = element.tagName ? element.tagName.toUpperCase() : '';
+      if (tag === 'A') return element;
+      const nodes = element.childNodes;
+      if (!nodes || !nodes.length) return null;
+      let anchor = null;
+      for (let i = 0; i < nodes.length; i++) {
+        const child = nodes[i];
+        if (child.nodeType === Node.TEXT_NODE) {
+          if (child.nodeValue && child.nodeValue.trim()) return null;
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE) return null;
+        if (anchor) return null;
+        const childTag = child.tagName ? child.tagName.toUpperCase() : '';
+        if (childTag === 'A') {
+          anchor = child;
+          continue;
+        }
+        return null;
+      }
+      return anchor;
+    };
+  }
+
   if (typeof S._applySegmentElement !== 'function') {
     S._applySegmentElement = function(element, sid) {
       if (!element || !sid) return false;
       element.__afmSegmentId = sid;
       const hasTranslation = S.translationBySid instanceof Map && S.translationBySid.has(sid);
       const translated = hasTranslation ? S.translationBySid.get(sid) : null;
+      const anchor = S._findExclusiveAnchor(element);
 
       if (hasTranslation && typeof translated === 'string' && translated.length) {
         if (element.__afmAppliedBy && element.__afmAppliedBy !== sid) return false;
-        if (typeof element.__afmOriginalText !== 'string') {
-          element.__afmOriginalText = element.textContent;
-        }
-        const changed = element.textContent !== translated;
-        if (changed) {
-          // Use SID-based replacement (no substring matching)
-          element.textContent = translated;
+        let changed = false;
+        if (anchor) {
+          if (!('__afmOriginalHtml' in anchor)) {
+            anchor.__afmOriginalHtml = anchor.innerHTML;
+          }
+          if (anchor.textContent !== translated) {
+            anchor.textContent = translated;
+            changed = true;
+          }
+          element.__afmAppliedMode = 'anchor';
+          anchor.__afmAppliedBy = sid;
+        } else {
+          if (typeof element.__afmOriginalText !== 'string') {
+            element.__afmOriginalText = element.textContent;
+          }
+          if (element.textContent !== translated) {
+            // Use SID-based replacement (no substring matching)
+            element.textContent = translated;
+            changed = true;
+          }
+          element.__afmAppliedMode = 'text';
         }
         element.__afmAppliedBy = sid;
         element.__afmApplied = true;
         return changed;
       }
 
-      if (element.__afmAppliedBy === sid && typeof element.__afmOriginalText === 'string') {
-        const changed = element.textContent !== element.__afmOriginalText;
-        if (changed) {
-          element.textContent = element.__afmOriginalText;
+      if (element.__afmAppliedBy === sid) {
+        if (element.__afmAppliedMode === 'anchor' && anchor) {
+          const hasOriginal = '__afmOriginalHtml' in anchor;
+          let changed = false;
+          if (hasOriginal && anchor.innerHTML !== anchor.__afmOriginalHtml) {
+            anchor.innerHTML = anchor.__afmOriginalHtml;
+            changed = true;
+          }
+          anchor.__afmAppliedBy = undefined;
+          element.__afmAppliedBy = undefined;
+          element.__afmApplied = undefined;
+          element.__afmAppliedMode = undefined;
+          return changed;
         }
-        element.__afmAppliedBy = undefined;
-        element.__afmApplied = undefined;
-        element.__afmOriginalText = undefined;
-        return changed;
+        if (typeof element.__afmOriginalText === 'string') {
+          const changed = element.textContent !== element.__afmOriginalText;
+          if (changed) {
+            element.textContent = element.__afmOriginalText;
+          }
+          element.__afmAppliedBy = undefined;
+          element.__afmApplied = undefined;
+          element.__afmOriginalText = undefined;
+          element.__afmAppliedMode = undefined;
+          return changed;
+        }
       }
 
       return false;
