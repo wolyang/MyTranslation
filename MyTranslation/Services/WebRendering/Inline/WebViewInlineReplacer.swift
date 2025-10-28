@@ -212,7 +212,6 @@ final class WebViewInlineReplacer: InlineReplacer {
           element.__afmAppliedMode = 'text';
         }
         element.__afmAppliedBy = sid;
-        element.__afmApplied = true;
         return changed;
       }
 
@@ -238,7 +237,6 @@ final class WebViewInlineReplacer: InlineReplacer {
           element.__afmAnchorRef = undefined;
           element.__afmAnchorMode = undefined;
           element.__afmAppliedBy = undefined;
-          element.__afmApplied = undefined;
           element.__afmAppliedMode = undefined;
           return changed;
         }
@@ -248,7 +246,6 @@ final class WebViewInlineReplacer: InlineReplacer {
             element.textContent = element.__afmOriginalText;
           }
           element.__afmAppliedBy = undefined;
-          element.__afmApplied = undefined;
           element.__afmOriginalText = undefined;
           element.__afmAppliedMode = undefined;
           return changed;
@@ -302,7 +299,6 @@ final class WebViewInlineReplacer: InlineReplacer {
             el.textContent = el.__afmOriginalText;
           }
           el.__afmAppliedBy = undefined;
-          el.__afmApplied = undefined;
           el.__afmOriginalText = undefined;
           count += changed ? 1 : 0;
         }
