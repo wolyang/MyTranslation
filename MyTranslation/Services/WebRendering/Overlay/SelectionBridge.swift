@@ -287,6 +287,21 @@ final class SelectionBridge: NSObject {
             const endHost = endNode.parentElement && endNode.parentElement.closest('[data-seg-id]');
             if (endHost && endHost.getAttribute('data-seg-id') !== desc.id) return false;
 
+            let sharedAnchor = null;
+            let anchorInsertBefore = null;
+            if (startNode.parentElement && endNode.parentElement) {
+              const startAnchor = startNode.parentElement.closest('a');
+              const endAnchor = endNode.parentElement.closest('a');
+              if (startAnchor && startAnchor === endAnchor) {
+                sharedAnchor = startAnchor;
+                let probe = startNode;
+                while (probe && probe.parentNode !== sharedAnchor) {
+                  probe = probe.parentNode;
+                }
+                anchorInsertBefore = probe ? probe.nextSibling : null;
+              }
+            }
+
             try {
               const doc = startNode.ownerDocument || document;
               const r = doc.createRange();
@@ -310,7 +325,11 @@ final class SelectionBridge: NSObject {
               const frag = r.extractContents();
               span.appendChild(frag);
               tagTextNodesWithSegment(span, desc.id);
-              r.insertNode(span);
+              if (sharedAnchor && sharedAnchor.isConnected) {
+                sharedAnchor.insertBefore(span, anchorInsertBefore);
+              } else {
+                r.insertNode(span);
+              }
               return true;
             } catch (_) {
               return false;

@@ -94,7 +94,7 @@ final class WebViewInlineReplacer: InlineReplacer {
   }
 
   if (typeof S._findExclusiveAnchor !== 'function') {
-    S._findExclusiveAnchor = function(element, allowAdopt) {
+    S._findExclusiveAnchor = function(element) {
       if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
 
       const isAnchor = function(node) {
@@ -156,33 +156,6 @@ final class WebViewInlineReplacer: InlineReplacer {
         return { anchor: childAnchor, mode: 'child' };
       }
 
-      if (allowAdopt) {
-        let prev = element.previousSibling;
-        while (prev && isWhitespace(prev)) {
-          prev = prev.previousSibling;
-        }
-        if (isAnchor(prev)) {
-          const nodes = prev.childNodes;
-          let hasContent = false;
-          if (nodes && nodes.length) {
-            for (let i = 0; i < nodes.length; i++) {
-              const node = nodes[i];
-              if (isWhitespace(node)) continue;
-              hasContent = true;
-              break;
-            }
-          }
-          if (!hasContent) {
-            if (!element.__afmAnchorOriginalParent) {
-              element.__afmAnchorOriginalParent = element.parentNode || null;
-              element.__afmAnchorOriginalNext = element.nextSibling || null;
-            }
-            prev.appendChild(element);
-            return { anchor: prev, mode: 'wrapped' };
-          }
-        }
-      }
-
       return null;
     };
   }
@@ -195,7 +168,7 @@ final class WebViewInlineReplacer: InlineReplacer {
       const translated = hasTranslation ? S.translationBySid.get(sid) : null;
       let anchorInfo = null;
       if (hasTranslation && typeof translated === 'string' && translated.length) {
-        anchorInfo = S._findExclusiveAnchor(element, true);
+        anchorInfo = S._findExclusiveAnchor(element);
       }
       const anchor = anchorInfo ? anchorInfo.anchor : null;
       const anchorMode = anchorInfo ? anchorInfo.mode : null;
@@ -262,20 +235,6 @@ final class WebViewInlineReplacer: InlineReplacer {
             }
             element.__afmOriginalText = undefined;
           }
-          if (element.__afmAnchorOriginalParent) {
-            const originalParent = element.__afmAnchorOriginalParent;
-            const originalNext = element.__afmAnchorOriginalNext;
-            if (originalParent && element.parentNode !== originalParent) {
-              if (originalNext && originalNext.parentNode === originalParent) {
-                originalParent.insertBefore(element, originalNext);
-              } else {
-                originalParent.appendChild(element);
-              }
-              changed = true;
-            }
-          }
-          element.__afmAnchorOriginalParent = undefined;
-          element.__afmAnchorOriginalNext = undefined;
           element.__afmAnchorRef = undefined;
           element.__afmAnchorMode = undefined;
           element.__afmAppliedBy = undefined;
