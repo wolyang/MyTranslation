@@ -94,29 +94,96 @@ final class WebViewInlineReplacer: InlineReplacer {
   }
 
   if (typeof S._findExclusiveAnchor !== 'function') {
-    S._findExclusiveAnchor = function(element) {
+    S._findExclusiveAnchor = function(element, allowAdopt) {
       if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+
+      const isAnchor = function(node) {
+        if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+        const tag = node.tagName ? node.tagName.toUpperCase() : '';
+        return tag === 'A';
+      };
+
+      const isWhitespace = function(node) {
+        return node && node.nodeType === Node.TEXT_NODE && (!node.nodeValue || !node.nodeValue.trim());
+      };
+
+      const anchorWrapsOnly = function(anchor, child) {
+        if (!anchor || !child) return false;
+        const nodes = anchor.childNodes;
+        if (!nodes || !nodes.length) return false;
+        let seen = false;
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i];
+          if (node === child) {
+            if (seen) return false;
+            seen = true;
+            continue;
+          }
+          if (isWhitespace(node)) continue;
+          return false;
+        }
+        return seen;
+      };
+
+      const findChildAnchor = function(container) {
+        const nodes = container.childNodes;
+        if (!nodes || !nodes.length) return null;
+        let anchor = null;
+        for (let i = 0; i < nodes.length; i++) {
+          const child = nodes[i];
+          if (isWhitespace(child)) continue;
+          if (child.nodeType !== Node.ELEMENT_NODE) return null;
+          if (anchor) return null;
+          if (isAnchor(child)) {
+            anchor = child;
+            continue;
+          }
+          return null;
+        }
+        return anchor;
+      };
+
       const tag = element.tagName ? element.tagName.toUpperCase() : '';
-      if (tag === 'A') return element;
-      const nodes = element.childNodes;
-      if (!nodes || !nodes.length) return null;
-      let anchor = null;
-      for (let i = 0; i < nodes.length; i++) {
-        const child = nodes[i];
-        if (child.nodeType === Node.TEXT_NODE) {
-          if (child.nodeValue && child.nodeValue.trim()) return null;
-          continue;
-        }
-        if (child.nodeType !== Node.ELEMENT_NODE) return null;
-        if (anchor) return null;
-        const childTag = child.tagName ? child.tagName.toUpperCase() : '';
-        if (childTag === 'A') {
-          anchor = child;
-          continue;
-        }
-        return null;
+      if (tag === 'A') return { anchor: element, mode: 'self' };
+
+      const parent = element.parentElement;
+      if (isAnchor(parent) && anchorWrapsOnly(parent, element)) {
+        return { anchor: parent, mode: 'wrapped' };
       }
-      return anchor;
+
+      const childAnchor = findChildAnchor(element);
+      if (childAnchor) {
+        return { anchor: childAnchor, mode: 'child' };
+      }
+
+      if (allowAdopt) {
+        let prev = element.previousSibling;
+        while (prev && isWhitespace(prev)) {
+          prev = prev.previousSibling;
+        }
+        if (isAnchor(prev)) {
+          const nodes = prev.childNodes;
+          let hasContent = false;
+          if (nodes && nodes.length) {
+            for (let i = 0; i < nodes.length; i++) {
+              const node = nodes[i];
+              if (isWhitespace(node)) continue;
+              hasContent = true;
+              break;
+            }
+          }
+          if (!hasContent) {
+            if (!element.__afmAnchorOriginalParent) {
+              element.__afmAnchorOriginalParent = element.parentNode || null;
+              element.__afmAnchorOriginalNext = element.nextSibling || null;
+            }
+            prev.appendChild(element);
+            return { anchor: prev, mode: 'wrapped' };
+          }
+        }
+      }
+
+      return null;
     };
   }
 
@@ -126,22 +193,41 @@ final class WebViewInlineReplacer: InlineReplacer {
       element.__afmSegmentId = sid;
       const hasTranslation = S.translationBySid instanceof Map && S.translationBySid.has(sid);
       const translated = hasTranslation ? S.translationBySid.get(sid) : null;
-      const anchor = S._findExclusiveAnchor(element);
+      let anchorInfo = null;
+      if (hasTranslation && typeof translated === 'string' && translated.length) {
+        anchorInfo = S._findExclusiveAnchor(element, true);
+      }
+      const anchor = anchorInfo ? anchorInfo.anchor : null;
+      const anchorMode = anchorInfo ? anchorInfo.mode : null;
 
       if (hasTranslation && typeof translated === 'string' && translated.length) {
         if (element.__afmAppliedBy && element.__afmAppliedBy !== sid) return false;
         let changed = false;
         if (anchor) {
-          if (!('__afmOriginalHtml' in anchor)) {
-            anchor.__afmOriginalHtml = anchor.innerHTML;
-          }
-          if (anchor.textContent !== translated) {
-            anchor.textContent = translated;
-            changed = true;
+          element.__afmAnchorRef = anchor;
+          element.__afmAnchorMode = anchorMode;
+          if (anchorMode === 'self' || anchorMode === 'child') {
+            if (!('__afmOriginalHtml' in anchor)) {
+              anchor.__afmOriginalHtml = anchor.innerHTML;
+            }
+            if (anchor.textContent !== translated) {
+              anchor.textContent = translated;
+              changed = true;
+            }
+          } else {
+            if (typeof element.__afmOriginalText !== 'string') {
+              element.__afmOriginalText = element.textContent;
+            }
+            if (element.textContent !== translated) {
+              element.textContent = translated;
+              changed = true;
+            }
           }
           element.__afmAppliedMode = 'anchor';
           anchor.__afmAppliedBy = sid;
         } else {
+          element.__afmAnchorRef = undefined;
+          element.__afmAnchorMode = undefined;
           if (typeof element.__afmOriginalText !== 'string') {
             element.__afmOriginalText = element.textContent;
           }
@@ -158,14 +244,40 @@ final class WebViewInlineReplacer: InlineReplacer {
       }
 
       if (element.__afmAppliedBy === sid) {
-        if (element.__afmAppliedMode === 'anchor' && anchor) {
-          const hasOriginal = '__afmOriginalHtml' in anchor;
+        if (element.__afmAppliedMode === 'anchor') {
+          const anchor = element.__afmAnchorRef;
+          const mode = element.__afmAnchorMode;
           let changed = false;
-          if (hasOriginal && anchor.innerHTML !== anchor.__afmOriginalHtml) {
-            anchor.innerHTML = anchor.__afmOriginalHtml;
-            changed = true;
+          if (anchor && (mode === 'self' || mode === 'child')) {
+            if ('__afmOriginalHtml' in anchor && anchor.innerHTML !== anchor.__afmOriginalHtml) {
+              anchor.innerHTML = anchor.__afmOriginalHtml;
+              changed = true;
+            }
+            anchor.__afmOriginalHtml = undefined;
+            anchor.__afmAppliedBy = undefined;
+          } else if (typeof element.__afmOriginalText === 'string') {
+            if (element.textContent !== element.__afmOriginalText) {
+              element.textContent = element.__afmOriginalText;
+              changed = true;
+            }
+            element.__afmOriginalText = undefined;
           }
-          anchor.__afmAppliedBy = undefined;
+          if (element.__afmAnchorOriginalParent) {
+            const originalParent = element.__afmAnchorOriginalParent;
+            const originalNext = element.__afmAnchorOriginalNext;
+            if (originalParent && element.parentNode !== originalParent) {
+              if (originalNext && originalNext.parentNode === originalParent) {
+                originalParent.insertBefore(element, originalNext);
+              } else {
+                originalParent.appendChild(element);
+              }
+              changed = true;
+            }
+          }
+          element.__afmAnchorOriginalParent = undefined;
+          element.__afmAnchorOriginalNext = undefined;
+          element.__afmAnchorRef = undefined;
+          element.__afmAnchorMode = undefined;
           element.__afmAppliedBy = undefined;
           element.__afmApplied = undefined;
           element.__afmAppliedMode = undefined;
