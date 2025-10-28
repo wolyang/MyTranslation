@@ -119,11 +119,15 @@ extension BrowserViewModel {
 
     static let defaultPresetLinks: [PresetLink] = [
         .init(
+            title: "AO3 - 너무 긴 세그먼트",
+            url: "https://archiveofourown.org/works/68882536"
+        ),
+        .init(
             title: "AO3 – 특정 작품",
             url: "https://archiveofourown.org/works/71109986?view_adult=true"
         ),
         .init(
-            title: "AO3 – Jugglus Juggler 태그",
+            title: "AO3 – 가이쟈그 태그",
             url: "https://archiveofourown.org/tags/Jugglus%20Juggler%20%7C%20Hebikura%20Shota*s*Kurenai%20Gai/works"
         ),
         .init(
