@@ -329,29 +329,87 @@ public final class TermMasker {
 
     /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
     func surroundTokenWithNBSP(_ text: String, token: String) -> String {
-        // 경계 판단
+        guard Self.enableTokenSpacingAdjustment else { return text }
+
+        let sentenceBoundaryCharacters: Set<Character> = Set("。！？；：（、“‘〈《【—\n\r!?;:()[]{}\"'".map { $0 })
+
         func isBoundary(_ c: Character?) -> Bool {
             guard let c = c else { return true }
             if c == "\u{00A0}" || c.isWhitespace { return true }
-            // 흔한 구두점
-            if ".,!?;:()[]{}\"'、。・·-—–".contains(c) { return true }
+            if "。,!?;:()[]{}\"'、・·-—–“”‘’〈〉《》【】『』「」".contains(c) { return true }
             return false
         }
-        // 문자(단어 본체) 판단: 한글/한자/가나/라틴/숫자 등
+
         func isLetterLike(_ c: Character?) -> Bool {
             guard let c = c else { return false }
             for u in c.unicodeScalars {
                 if CharacterSet.alphanumerics.contains(u) { return true }
                 switch u.value {
-                case 0x4E00 ... 0x9FFF, // CJK
-                     0xAC00 ... 0xD7A3, // Hangul
-                     0x3040 ... 0x309F, // Hiragana
-                     0x30A0 ... 0x30FF: // Katakana
+                case 0x4E00 ... 0x9FFF,
+                     0xAC00 ... 0xD7A3,
+                     0x3040 ... 0x309F,
+                     0x30A0 ... 0x30FF:
                     return true
                 default: break
                 }
             }
             return false
+        }
+
+        func isCJKCharacter(_ c: Character?) -> Bool {
+            guard let c = c else { return false }
+            for u in c.unicodeScalars {
+                switch u.value {
+                case 0x3400 ... 0x4DBF,
+                     0x4E00 ... 0x9FFF,
+                     0xF900 ... 0xFAFF,
+                     0x20000 ... 0x2A6DF,
+                     0x2A700 ... 0x2B73F,
+                     0x2B740 ... 0x2B81F,
+                     0x2B820 ... 0x2CEAF:
+                    return true
+                default: break
+                }
+            }
+            return false
+        }
+
+        func isLatinOrDigit(_ c: Character?) -> Bool {
+            guard let c = c else { return false }
+            for u in c.unicodeScalars {
+                switch u.value {
+                case 0x30 ... 0x39,
+                     0x41 ... 0x5A,
+                     0x61 ... 0x7A:
+                    return true
+                default: break
+                }
+            }
+            return false
+        }
+
+        func previousNonSpacingCharacter(in text: String, before index: String.Index) -> Character? {
+            var idx = index
+            while idx > text.startIndex {
+                idx = text.index(before: idx)
+                let ch = text[idx]
+                if ch == "\u{00A0}" || ch.isWhitespace { continue }
+                return ch
+            }
+            return nil
+        }
+
+        func nextNonSpacingCharacter(in text: String, after index: String.Index) -> Character? {
+            var idx = index
+            while idx < text.endIndex {
+                let ch = text[idx]
+                if ch == "\u{00A0}" || ch.isWhitespace {
+                    idx = text.index(after: idx)
+                    continue
+                }
+                return ch
+            }
+            return nil
         }
 
         var out = text
@@ -364,24 +422,44 @@ public final class TermMasker {
             let beforeCh = beforeIdx.map { out[$0] }
             let afterCh = afterIdx.map { out[$0] }
 
-            // 양옆이 '단어 문자'에 붙어 있으면 주입, 이미 경계면 스킵
-            let needNBSP = (!isBoundary(beforeCh) && isLetterLike(beforeCh))
-                || (!isBoundary(afterCh) && isLetterLike(afterCh))
+            let prevNonSpacing = previousNonSpacingCharacter(in: out, before: r.lowerBound)
+            let nextNonSpacing = nextNonSpacingCharacter(in: out, after: r.upperBound)
 
-            if needNBSP {
-                // 중복 주입 방지: 이미 NBSP/공백이면 주입 안 함
-                let leftOK = isBoundary(beforeCh)
-                let rightOK = isBoundary(afterCh)
+            var needLeftNBSP = false
+            var needRightNBSP = false
 
+            if let prev = beforeCh, !isBoundary(prev), isLetterLike(prev) {
+                needLeftNBSP = true
+            }
+
+            let forbidRightNBSP: Bool
+            if let next = nextNonSpacing, isCJKCharacter(next) {
+                if let prev = prevNonSpacing {
+                    forbidRightNBSP = sentenceBoundaryCharacters.contains(prev)
+                } else {
+                    forbidRightNBSP = true
+                }
+            } else {
+                forbidRightNBSP = false
+            }
+
+            if !forbidRightNBSP, let next = afterCh, !isBoundary(next), isLatinOrDigit(next) {
+                needRightNBSP = true
+            }
+
+            if needLeftNBSP || needRightNBSP {
                 var replacement = token
-                if !leftOK { replacement = "\u{00A0}" + replacement }
-                if !rightOK { replacement = replacement + "\u{00A0}" }
+                if needLeftNBSP {
+                    replacement = "\u{00A0}" + replacement
+                }
+                if needRightNBSP {
+                    replacement += "\u{00A0}"
+                }
 
+                let lowerDistance = out.distance(from: out.startIndex, to: r.lowerBound)
                 out.replaceSubrange(r, with: replacement)
-
-                // 치환 후 다음 탐색 시작점 보정
-                let advancedBy = replacement.count
-                searchStart = out.index(r.lowerBound, offsetBy: advancedBy)
+                let advancedDistance = lowerDistance + replacement.count
+                searchStart = out.index(out.startIndex, offsetBy: advancedDistance)
             } else {
                 searchStart = r.upperBound
             }
