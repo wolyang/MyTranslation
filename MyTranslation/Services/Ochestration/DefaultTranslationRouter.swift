@@ -352,8 +352,9 @@ final class DefaultTranslationRouter: TranslationRouter {
                     
                 let pack = maskingContext.maskedPacks[index]
                 let originalSegment = pendingSegments[index]
-                print("[T] router.processStream [\(result.segmentID)] ORIGINAL TEXT: \(originalSegment.originalText)")
-                print("[T] router.processStream [\(result.segmentID)] TRANSLATED RESULT: \(result.text)")
+//                print("[T] router.processStream [\(result.segmentID)] ORIGINAL TEXT: \(originalSegment.originalText)")
+//                print("[T] router.processStream [\(result.segmentID)] MASKED TEXT: \(maskedSegments[index].originalText)")
+//                print("[T] router.processStream [\(result.segmentID)] TRANSLATED RESULT: \(result.text)")
                 let output = restoreOutput(
                     from: result.text,
                     pack: pack,

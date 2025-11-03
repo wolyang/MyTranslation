@@ -202,6 +202,7 @@ public final class TermMasker {
             let whole = ns.substring(with: full)
             out += locks[whole]?.target ?? whole
             last = full.location + full.length
+//            print("[UNLOCK] matched token='\(whole)' -> target='\((locks[whole]?.target ?? whole).replacingOccurrences(of: "\u{00A0}", with: "⍽"))'")
         }
 
         if last < ns.length {
@@ -699,7 +700,7 @@ public final class TermMasker {
                 changed = true
             }
         }
-
+//        print("[CHOOSE] cand='\(String(describing: cand))' -> chosen='\(resultSegments.joined())' (hasBatchim=\(baseHasBatchim), rieul=\(baseIsRieul))")
         if !changed { return cand }
         return resultSegments.joined()
     }
@@ -857,14 +858,17 @@ public final class TermMasker {
         names: [NameGlossary],
         mode: EntityMode
     ) -> (canon: String, josa: String) {
+//        print("[RESOLVE] nameText='\(nameText)' josaCand='\(String(describing: josaCandidate))' mode=\(mode)")
         if mode != .namesOnly, let info = locksByToken[nameText] {
             // 토큰: 표기는 그대로, 조사만 LockInfo 기준 재계산
+//            print("[RESOLVE] token lock target='\(info.target.replacingOccurrences(of: "\u{00A0}", with: "⍽"))' endsBatchim=\(info.endsWithBatchim) rieul=\(info.endsWithRieul)")
             let j = chooseJosa(for: josaCandidate, baseHasBatchim: info.endsWithBatchim, baseIsRieul: info.endsWithRieul)
             return (nameText, j)
         } else {
             // 이름: canonical 통일 + canonical 받침 기준으로 조사 재계산
             let canon = canonicalFor(nameText, entries: names)
             let (has, rieul) = hangulFinalJongInfo(canon)
+//            print("[RESOLVE] canon='\(canon)' hasBatchim=\(has) rieul=\(rieul)")
             let j = chooseJosa(for: josaCandidate, baseHasBatchim: has, baseIsRieul: rieul)
             return (canon, j)
         }
