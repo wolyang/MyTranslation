@@ -22,8 +22,6 @@ public final class TermMasker {
     // PERSON 큐 언락을 위한 타입
     public typealias PersonQueues = [String: [String]]
 
-    /// 개발자가 토큰 포맷을 전역적으로 전환할 수 있는 테스트용 플래그
-    public static var usePercentTokenFormat: Bool = false
     /// 토큰 좌우 공백 보정을 전역적으로 전환할 수 있는 테스트용 플래그
     public static var enableTokenSpacingAdjustment: Bool = true
 
@@ -214,22 +212,12 @@ public final class TermMasker {
     }
 
     // --------------------------------------
-    private static var tokenRegexPattern: String {
-        if usePercentTokenFormat {
-            return #"%%(?:[^%]|%(?!%))+%%"#
-        } else {
-            return #"__(?:[^_]|_(?!_))+__"#
-        }
-    }
+    private static let tokenRegexPattern: String = #"__(?:[^_]|_(?!_))+__"#
 
     private var tokenRegex: String { Self.tokenRegexPattern }
 
     private static func makeToken(prefix: String, index: Int) -> String {
-        if usePercentTokenFormat {
-            return "%%\(prefix)\(index)%%"
-        } else {
-            return "__\(prefix)#\(index)__"
-        }
+        return "__\(prefix)#\(index)__"
     }
     
     // - 단일 한자 인물의 오검출 방지 보조들
