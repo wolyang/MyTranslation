@@ -20,6 +20,8 @@ struct BrowserRootView: View {
     @State private var isGlossaryPresented: Bool = false
     /// 설정 화면 노출 여부입니다.
     @State private var isSettingsPresented: Bool = false
+    /// 즐겨찾기 관리 화면 노출 여부입니다.
+    @State private var isFavoritesManagerPresented: Bool = false
 
     init(container: AppContainer) {
         _vm = StateObject(
@@ -43,6 +45,32 @@ struct BrowserRootView: View {
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView()
             }
+            .sheet(isPresented: $isFavoritesManagerPresented) {
+                NavigationStack {
+                    FavoritesManagerView(
+                        favorites: vm.favoriteLinks,
+                        onSelectFavorite: { link in
+                            isFavoritesManagerPresented = false
+                            handleFavorite(link)
+                        },
+                        onUpdateFavorite: { favorite, title, url in
+                            vm.updateFavorite(favorite, title: title, url: url)
+                        },
+                        onDeleteFavorites: { offsets in
+                            vm.removeFavorites(at: offsets)
+                        },
+                        onMoveFavorites: { offsets, destination in
+                            vm.moveFavorites(from: offsets, to: destination)
+                        }
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("닫기") { isFavoritesManagerPresented = false }
+                        }
+                    }
+                }
+                .presentationDetents([.medium, .large])
+            }
             .task {
                 // 앱 시작 후 한 번 시드 시도
                 GlossarySeeder.seedIfNeeded(modelContext)
@@ -55,8 +83,10 @@ struct BrowserRootView: View {
         if horizontalSizeClass == .regular {
             NavigationSplitView {
                 MoreSidebarView(
-                    favorites: vm.presetLinks,
+                    favorites: vm.favoriteLinks,
                     onSelectFavorite: handleFavorite(_:),
+                    onAddFavorite: { vm.addCurrentPageToFavorites() },
+                    onManageFavorites: { isFavoritesManagerPresented = true },
                     onOpenGlossary: { isGlossaryPresented = true },
                     onOpenSettings: { isSettingsPresented = true }
                 )
@@ -71,10 +101,23 @@ struct BrowserRootView: View {
             }
             .sheet(isPresented: $isMorePresented) {
                 MoreMenuView(
-                    favorites: vm.presetLinks,
+                    favorites: vm.favoriteLinks,
                     onSelectFavorite: { link in
                         isMorePresented = false
                         handleFavorite(link)
+                    },
+                    onAddFavorite: {
+                        let isNew = vm.addCurrentPageToFavorites()
+                        return isNew
+                    },
+                    onUpdateFavorite: { favorite, title, url in
+                        vm.updateFavorite(favorite, title: title, url: url)
+                    },
+                    onDeleteFavorites: { offsets in
+                        vm.removeFavorites(at: offsets)
+                    },
+                    onMoveFavorites: { offsets, destination in
+                        vm.moveFavorites(from: offsets, to: destination)
                     },
                     onOpenGlossary: {
                         isMorePresented = false
@@ -103,10 +146,10 @@ struct BrowserRootView: View {
         VStack(spacing: 12) {
             URLBarView(
                 urlString: $vm.urlString,
-                presetURLs: vm.presetLinks,
                 selectedEngine: preferredEngineBinding,
                 showOriginal: $vm.showOriginal,
                 isEditing: $vm.isEditingURL,
+                isTranslating: $vm.isTranslating,
                 currentPageURLString: vm.currentPageURLString,
                 onGo: { url in
                     vm.load(urlString: url)
@@ -140,16 +183,14 @@ struct BrowserRootView: View {
                         onClose: { vm.closeOverlay() }
                     )
                 }
-                if vm.isTranslating {
-                    ProgressView().padding(.top, 12)
-                }
             }
         }
         .onAppear {
             ensureTranslationSession()
-            // 아래 두 줄은 개발 중 편의를 위한 임시 코드
-            vm.load(urlString: vm.urlString)
-            triggerTranslationSession()
+            if vm.urlString.isEmpty == false {
+                vm.load(urlString: vm.urlString)
+                triggerTranslationSession()
+            }
         }
         .onChange(of: vm.showOriginal) { _, newValue in
             vm.onShowOriginalChanged(newValue)
@@ -185,7 +226,7 @@ struct BrowserRootView: View {
         }
     }
 
-    private func handleFavorite(_ link: BrowserViewModel.PresetLink) {
+    private func handleFavorite(_ link: UserSettings.FavoriteLink) {
         /// 즐겨찾기에서 선택한 URL을 로드하고 번역 스트림을 이어갑니다.
         vm.load(urlString: link.url)
         triggerTranslationSession()

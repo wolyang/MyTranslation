@@ -20,6 +20,7 @@ extension BrowserViewModel {
         // 로딩된 url의 주소
         let prevEffectiveURL = currentPageURLString
         let curURLString = url.absoluteString
+        settings.lastVisitedURL = curURLString
         let isNewPage = (prevEffectiveURL != curURLString)
         
         print("[T] didFinish url=\(curURLString) isNew=\(isNewPage) curPage(before)=\(prevEffectiveURL) act=\(_id(activeTranslationID))")
