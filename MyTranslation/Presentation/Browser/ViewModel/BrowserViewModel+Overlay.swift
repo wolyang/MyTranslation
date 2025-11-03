@@ -99,21 +99,20 @@ private extension BrowserViewModel {
     /// 오버레이에서 비교용으로 사용할 번역 엔진 목록을 계산한다.
     func overlayTargetEngines(for showOriginal: Bool, selectedEngine: EngineTag) -> [EngineTag] {
         if showOriginal {
-            return [.afm, .google]
+            return [.afm, .google, .deepl]
         }
-        guard let alternate = overlayAlternateEngine(for: selectedEngine) else { return [] }
-        return [alternate]
+        return overlayAlternateEngines(for: selectedEngine)
     }
 
     /// 선택된 엔진과 비교할 대체 엔진을 결정한다.
-    func overlayAlternateEngine(for engine: EngineTag) -> EngineTag? {
+    func overlayAlternateEngines(for engine: EngineTag) -> [EngineTag] {
         switch engine {
         case .afm, .afmMask:
-            return .google
+            return [.google, .deepl]
         case .google:
-            return .afm
+            return [.afm, .deepl]
         case .deepl, .unknown:
-            return .google
+            return [.afm, .google]
         }
     }
 
