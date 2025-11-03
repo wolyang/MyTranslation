@@ -704,6 +704,31 @@ public final class TermMasker {
         return resultSegments.joined()
     }
     
+    private let damagedTokenRx = try! NSRegularExpression(
+        pattern: "(?<!_)(?:_)?(?:_)?(PERSON|ENT)[#＃](\\d+)(?:_)?(?:_)?(?!_)",
+        options: [.caseInsensitive]
+    )
+    // 설명: 좌우 밑줄 0~2개 허용(그러나 '_' 연속과의 경계는 lookaround로 방지), #는 전각＃도 허용.
+
+    func normalizeDamagedTokens(_ text: String) -> String {
+        let ns = text as NSString
+        let matches = damagedTokenRx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return text }
+        var out = ""
+        out.reserveCapacity(ns.length)
+        var last = 0
+        for m in matches {
+            let r = m.range(at: 0)
+            if last < r.location { out += ns.substring(with: NSRange(location: last, length: r.location - last)) }
+            let typ = ns.substring(with: m.range(at: 1)).uppercased()   // PERSON|ENT
+            let id  = ns.substring(with: m.range(at: 2))
+            out += "__\(typ)#\(id)__"  // 표준형으로 복구
+            last = r.location + r.length
+        }
+        if last < ns.length { out += ns.substring(with: NSRange(location: last, length: ns.length - last)) }
+        return out
+    }
+    
     private func normKey(_ s: String) -> String {
         s.precomposedStringWithCompatibilityMapping.lowercased()
     }

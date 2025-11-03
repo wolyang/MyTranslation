@@ -437,8 +437,9 @@ final class DefaultTranslationRouter: TranslationRouter {
         nameGlossaries: [TermMasker.NameGlossary],
         shouldNormalizeNames: Bool
     ) -> String {
-        var output = termMasker.normalizeEntitiesAndParticles(
-            in: text,
+        var output = termMasker.normalizeDamagedTokens(text)
+        output = termMasker.normalizeEntitiesAndParticles(
+            in: output,
             locksByToken: pack.locks,
             names: [],
             mode: .tokensOnly
