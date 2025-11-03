@@ -352,8 +352,8 @@ final class DefaultTranslationRouter: TranslationRouter {
                     
                 let pack = maskingContext.maskedPacks[index]
                 let originalSegment = pendingSegments[index]
-                print("[T] router.processStream [\(result.segmentID)] ORIGINAL TEXT: \(originalSegment.originalText)")
-                print("[T] router.processStream [\(result.segmentID)] TRANSLATED RESULT: \(result.text)")
+//                print("[T] router.processStream [\(result.segmentID)] ORIGINAL TEXT: \(originalSegment.originalText)")
+//                print("[T] router.processStream [\(result.segmentID)] MASKED TEXT: \(maskedSegments[index].originalText)")
                 let output = restoreOutput(
                     from: result.text,
                     pack: pack,
@@ -437,16 +437,21 @@ final class DefaultTranslationRouter: TranslationRouter {
         nameGlossaries: [TermMasker.NameGlossary],
         shouldNormalizeNames: Bool
     ) -> String {
-        var output = termMasker.normalizeEntitiesAndParticles(
-            in: text,
+//        print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
+        var output = termMasker.normalizeDamagedTokens(text)
+//        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
+        output = termMasker.normalizeEntitiesAndParticles(
+            in: output,
             locksByToken: pack.locks,
             names: [],
             mode: .tokensOnly
         )
+//        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
         output = termMasker.unlockTermsSafely(
             output,
             locks: pack.locks
         )
+//        print("[T] router.processStream [\(pack.seg.id)] UNLOCKED TERMS RESULT: \(output)")
 
         if shouldNormalizeNames, nameGlossaries.isEmpty == false {
             // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
@@ -456,12 +461,14 @@ final class DefaultTranslationRouter: TranslationRouter {
                 names: nameGlossaries,
                 mode: .namesOnly
             )
+//            print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES 2 RESULT: \(output)")
         }
 
         if pack.locks.values.count == 1,
            let target = pack.locks.values.first?.target
         {
             output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
+//            print("[T] router.processStream [\(pack.seg.id)] COLLAPSE SPACES RESULT: \(output)")
         }
 
         return output

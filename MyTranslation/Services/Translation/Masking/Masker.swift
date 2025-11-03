@@ -22,6 +22,9 @@ public final class TermMasker {
     // PERSON 큐 언락을 위한 타입
     public typealias PersonQueues = [String: [String]]
 
+    /// 토큰 좌우 공백 보정을 전역적으로 전환할 수 있는 테스트용 플래그
+    public static var enableTokenSpacingAdjustment: Bool = false
+
     private var nextIndex: Int = 1
     
     // ===== configurable guards =====
@@ -88,7 +91,8 @@ public final class TermMasker {
             if !maskPerson && e.category == .person && e.personId != nil { continue }
 
             // === (1) 유니크 토큰 생성 ===
-            let token = "__ENT#\(localNextIndex)__"
+            let tokenPrefix = "ENT"
+            let token = Self.makeToken(prefix: tokenPrefix, index: localNextIndex)
             localNextIndex += 1
 
             let pattern = NSRegularExpression.escapedPattern(for: e.source)
@@ -198,6 +202,7 @@ public final class TermMasker {
             let whole = ns.substring(with: full)
             out += locks[whole]?.target ?? whole
             last = full.location + full.length
+//            print("[UNLOCK] matched token='\(whole)' -> target='\((locks[whole]?.target ?? whole).replacingOccurrences(of: "\u{00A0}", with: "⍽"))'")
         }
 
         if last < ns.length {
@@ -208,7 +213,13 @@ public final class TermMasker {
     }
 
     // --------------------------------------
-    private let tokenRegex = #"__(?:[^_]|_(?!_))+__"#
+    private static let tokenRegexPattern: String = #"__(?:[^_]|_(?!_))+__"#
+
+    private var tokenRegex: String { Self.tokenRegexPattern }
+
+    private static func makeToken(prefix: String, index: Int) -> String {
+        return "__\(prefix)#\(index)__"
+    }
     
     // - 단일 한자 인물의 오검출 방지 보조들
     private static let baseNegativeBigrams: Set<String> = [
@@ -241,13 +252,18 @@ public final class TermMasker {
     /// "토큰을 모두 제거하면 문장부호/공백만 남는" 단락에서만
     /// 토큰 양옆(문장부호 인접)에 공백을 삽입한다.
     func insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(_ text: String) -> String {
+        guard Self.enableTokenSpacingAdjustment else { return text }
+
         let paras = text.components(separatedBy: "\n")
         var outParas: [String] = []
         outParas.reserveCapacity(paras.count)
 
-        let stripRx = try! NSRegularExpression(pattern: tokenRegex)
-        let leftRx = try! NSRegularExpression(pattern: #"(?<=[\p{P}\p{S}])(__(?:[^_]|_(?!_))+__)"#)
-        let rightRx = try! NSRegularExpression(pattern: #"(__(?:[^_]|_(?!_))+__)(?=[\p{P}\p{S}])"#)
+        let tokenPattern = Self.tokenRegexPattern
+        let stripRx = try! NSRegularExpression(pattern: tokenPattern)
+        let leftPattern = #"(?<=[\p{P}\p{S}])(\#(tokenPattern))"#
+        let rightPattern = #"(\#(tokenPattern))(?=[\p{P}\p{S}])"#
+        let leftRx = try! NSRegularExpression(pattern: leftPattern)
+        let rightRx = try! NSRegularExpression(pattern: rightPattern)
 
         for p in paras {
             // 1) 단락에서 토큰을 모두 제거한 결과가 문장부호/공백 뿐인지 검사
@@ -314,29 +330,87 @@ public final class TermMasker {
 
     /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
     func surroundTokenWithNBSP(_ text: String, token: String) -> String {
-        // 경계 판단
+//        guard Self.enableTokenSpacingAdjustment else { return text }
+
+        let sentenceBoundaryCharacters: Set<Character> = Set("。！？；：（、“‘〈《【—\n\r!?;:()[]{}\"'".map { $0 })
+
         func isBoundary(_ c: Character?) -> Bool {
             guard let c = c else { return true }
             if c == "\u{00A0}" || c.isWhitespace { return true }
-            // 흔한 구두점
-            if ".,!?;:()[]{}\"'、。・·-—–".contains(c) { return true }
+            if "。,!?;:()[]{}\"'、・·-—–“”‘’〈〉《》【】『』「」".contains(c) { return true }
             return false
         }
-        // 문자(단어 본체) 판단: 한글/한자/가나/라틴/숫자 등
+
         func isLetterLike(_ c: Character?) -> Bool {
             guard let c = c else { return false }
             for u in c.unicodeScalars {
                 if CharacterSet.alphanumerics.contains(u) { return true }
                 switch u.value {
-                case 0x4E00 ... 0x9FFF, // CJK
-                     0xAC00 ... 0xD7A3, // Hangul
-                     0x3040 ... 0x309F, // Hiragana
-                     0x30A0 ... 0x30FF: // Katakana
+                case 0x4E00 ... 0x9FFF,
+                     0xAC00 ... 0xD7A3,
+                     0x3040 ... 0x309F,
+                     0x30A0 ... 0x30FF:
                     return true
                 default: break
                 }
             }
             return false
+        }
+
+        func isCJKCharacter(_ c: Character?) -> Bool {
+            guard let c = c else { return false }
+            for u in c.unicodeScalars {
+                switch u.value {
+                case 0x3400 ... 0x4DBF,
+                     0x4E00 ... 0x9FFF,
+                     0xF900 ... 0xFAFF,
+                     0x20000 ... 0x2A6DF,
+                     0x2A700 ... 0x2B73F,
+                     0x2B740 ... 0x2B81F,
+                     0x2B820 ... 0x2CEAF:
+                    return true
+                default: break
+                }
+            }
+            return false
+        }
+
+        func isLatinOrDigit(_ c: Character?) -> Bool {
+            guard let c = c else { return false }
+            for u in c.unicodeScalars {
+                switch u.value {
+                case 0x30 ... 0x39,
+                     0x41 ... 0x5A,
+                     0x61 ... 0x7A:
+                    return true
+                default: break
+                }
+            }
+            return false
+        }
+
+        func previousNonSpacingCharacter(in text: String, before index: String.Index) -> Character? {
+            var idx = index
+            while idx > text.startIndex {
+                idx = text.index(before: idx)
+                let ch = text[idx]
+                if ch == "\u{00A0}" || ch.isWhitespace { continue }
+                return ch
+            }
+            return nil
+        }
+
+        func nextNonSpacingCharacter(in text: String, after index: String.Index) -> Character? {
+            var idx = index
+            while idx < text.endIndex {
+                let ch = text[idx]
+                if ch == "\u{00A0}" || ch.isWhitespace {
+                    idx = text.index(after: idx)
+                    continue
+                }
+                return ch
+            }
+            return nil
         }
 
         var out = text
@@ -349,24 +423,44 @@ public final class TermMasker {
             let beforeCh = beforeIdx.map { out[$0] }
             let afterCh = afterIdx.map { out[$0] }
 
-            // 양옆이 '단어 문자'에 붙어 있으면 주입, 이미 경계면 스킵
-            let needNBSP = (!isBoundary(beforeCh) && isLetterLike(beforeCh))
-                || (!isBoundary(afterCh) && isLetterLike(afterCh))
+            let prevNonSpacing = previousNonSpacingCharacter(in: out, before: r.lowerBound)
+            let nextNonSpacing = nextNonSpacingCharacter(in: out, after: r.upperBound)
 
-            if needNBSP {
-                // 중복 주입 방지: 이미 NBSP/공백이면 주입 안 함
-                let leftOK = isBoundary(beforeCh)
-                let rightOK = isBoundary(afterCh)
+            var needLeftNBSP = false
+            var needRightNBSP = false
 
+            if let prev = beforeCh, !isBoundary(prev), isLetterLike(prev) {
+                needLeftNBSP = true
+            }
+
+            let forbidRightNBSP: Bool
+            if let next = nextNonSpacing, isCJKCharacter(next) {
+                if let prev = prevNonSpacing {
+                    forbidRightNBSP = sentenceBoundaryCharacters.contains(prev)
+                } else {
+                    forbidRightNBSP = true
+                }
+            } else {
+                forbidRightNBSP = false
+            }
+
+            if !forbidRightNBSP, let next = afterCh, !isBoundary(next), isLatinOrDigit(next) {
+                needRightNBSP = true
+            }
+
+            if needLeftNBSP || needRightNBSP {
                 var replacement = token
-                if !leftOK { replacement = "\u{00A0}" + replacement }
-                if !rightOK { replacement = replacement + "\u{00A0}" }
+                if needLeftNBSP {
+                    replacement = "\u{00A0}" + replacement
+                }
+                if needRightNBSP {
+                    replacement += "\u{00A0}"
+                }
 
+                let lowerDistance = out.distance(from: out.startIndex, to: r.lowerBound)
                 out.replaceSubrange(r, with: replacement)
-
-                // 치환 후 다음 탐색 시작점 보정
-                let advancedBy = replacement.count
-                searchStart = out.index(r.lowerBound, offsetBy: advancedBy)
+                let advancedDistance = lowerDistance + replacement.count
+                searchStart = out.index(out.startIndex, offsetBy: advancedDistance)
             } else {
                 searchStart = r.upperBound
             }
@@ -555,22 +649,33 @@ public final class TermMasker {
 
         var resultSegments = segments
         var changed = false
-
-        func hasAuxAdjacent(_ tokenIndex: Int) -> Bool {
-            if tokenIndex > 0 {
-                switch tokens[tokenIndex - 1].kind {
-                case .auxiliary:
-                    return true
-                default:
-                    break
+        
+        func noWhitespaceBetween(_ segA: Int, _ segB: Int) -> Bool {
+            let lo = min(segA, segB), hi = max(segA, segB)
+            // segA와 segB 사이에 '공백 세그먼트'가 하나라도 있으면 false
+            if lo+1 <= hi-1 {
+                for i in (lo+1)...(hi-1) {
+                    if isWhitespace.indices.contains(i), isWhitespace[i] { return false }
                 }
             }
-            if tokenIndex + 1 < tokens.count {
-                switch tokens[tokenIndex + 1].kind {
-                case .auxiliary:
+            return true
+        }
+
+        func hasAuxAdjacent(_ tokenIndex: Int) -> Bool {
+            // 왼쪽 보조사
+            if tokenIndex > 0 {
+                let left = tokens[tokenIndex - 1]
+                if case .auxiliary = left.kind,
+                   noWhitespaceBetween(left.segmentIndex, tokens[tokenIndex].segmentIndex) {
                     return true
-                default:
-                    break
+                }
+            }
+            // 오른쪽 보조사
+            if tokenIndex + 1 < tokens.count {
+                let right = tokens[tokenIndex + 1]
+                if case .auxiliary = right.kind,
+                   noWhitespaceBetween(tokens[tokenIndex].segmentIndex, right.segmentIndex) {
+                    return true
                 }
             }
             return false
@@ -595,9 +700,38 @@ public final class TermMasker {
                 changed = true
             }
         }
-
+//        print("[CHOOSE] cand='\(String(describing: cand))' -> chosen='\(resultSegments.joined())' (hasBatchim=\(baseHasBatchim), rieul=\(baseIsRieul))")
         if !changed { return cand }
         return resultSegments.joined()
+    }
+    
+    private let damagedTokenRx = try! NSRegularExpression(
+        pattern: "(?<![A-Za-z0-9_])(?:_{1,2})?ENT[#＃](\\d+)(?:_{1,2})?(?![A-Za-z0-9_])",
+        options: [.caseInsensitive]
+    )
+
+    func normalizeDamagedTokens(_ text: String) -> String {
+        let ns = text as NSString
+        let matches = damagedTokenRx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return text }
+
+        var out = ""
+        out.reserveCapacity(ns.length)
+        var last = 0
+
+        for m in matches {
+            let full = m.range(at: 0)
+            if last < full.location {
+                out += ns.substring(with: NSRange(location: last, length: full.location - last))
+            }
+            let id = ns.substring(with: m.range(at: 1))
+            out += "__ENT#\(id)__"
+            last = full.location + full.length
+        }
+        if last < ns.length {
+            out += ns.substring(with: NSRange(location: last, length: ns.length - last))
+        }
+        return out
     }
     
     private func normKey(_ s: String) -> String {
@@ -618,7 +752,6 @@ public final class TermMasker {
         names: [NameGlossary],
         mode: EntityMode = .both
     ) -> String {
-
         // --- [0] 준비: 소스 정규화 & 엔터티/조사 alternation 구성 ---
         let textNFC = text.precomposedStringWithCompatibilityMapping
         func esc(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
@@ -639,69 +772,84 @@ public final class TermMasker {
 
         // 유니코드 '단어' 경계 집합: 모든 Letter/Number + '_'. (이전엔 Hangul 누락)
         let cjkBody = "\\p{L}\\p{N}_"
-        let ws = "(?:\\s|\\u00A0)*"
+        let pre = "(?<![" + cjkBody + "])"
+        let suf = "(?![" + cjkBody + "])"
+        
+        let wsZ = "(?:\\s|\\u00A0|\\u200B|\\u200C|\\u200D|\\uFEFF)*" // ← ZWSP/ZWJ/ZWNJ/BOM 추가
+        let softPunct = "[\"'“”’»«》〈〉〉》」』】）\\)\\]\\}]"
+        let gap = "(?:" + wsZ + "(?:" + softPunct + ")?" + wsZ + ")"  // 엔터티↔조사 사이 ‘얇은 갭’
 
         let particleTokenAlt = "(?:" + particleTokenAlternation + ")"
-        let josaSequence = particleTokenAlt + "(?:(?:" + ws + ")" + particleTokenAlt + ")*"
+
+        // 조사 시퀀스에는 ‘공백 금지’(필요하면 NBSP만 0~1 허용)
+        let josaJoin = ""                  // 공백 완전 금지
+        // let josaJoin = "(?:\\u00A0)?"   // NBSP만 0~1 허용으로 하고 싶다면 이 줄 사용
+
+        let josaSequence = particleTokenAlt + "(?:" + josaJoin + particleTokenAlt + ")*"
 
         // --- [1] 1패스: [조사 O] 패턴 (조사 ‘뒤’에서 경계 검사) ---
         let patWithJosa =
-        "(^|[^" + cjkBody + "])" +                // grp1 prefix
-        "(" + entityAlts + ")" +                  // grp2 entity
-        "(" + ws + ")" +                          // grp3 ws between
-        "(" + josaSequence + ")" +                // grp4 josa sequence
-        "($|[^" + cjkBody + "])"                  // grp5 suffix
+        pre +
+        "(" + entityAlts + ")" +                  // grp1 entity
+        "(" + gap + ")" +                          // grp2 ws between
+        "(" + josaSequence + ")" +                // grp3 josa sequence
+        suf                  // grp5 suffix
         let rxWithJosa = try! NSRegularExpression(
-            pattern: patWithJosa,           // 주석 없는 버전
+            pattern: patWithJosa,
             options: [.caseInsensitive]
         )
 
         var out = textNFC
-        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange, g4:NSRange, g5:NSRange)] = []
+        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange)] = []
         let ns1 = out as NSString
         rxWithJosa.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns1.length)) { m, _, _ in
             guard let m = m else { return }
-            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3), m.range(at: 4), m.range(at: 5)))
+            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3)))
         }
 
         for m in matches1.reversed() {
             let ns = out as NSString
-            let prefix = ns.substring(with: m.g1)
-            let name   = ns.substring(with: m.g2)
-            let spacing = ns.substring(with: m.g3)
-            let josa   = ns.substring(with: m.g4)
-            let suffix = ns.substring(with: m.g5)
+            let entity  = ns.substring(with: m.g1)
+            let spacing = ns.substring(with: m.g2)
+            let josa    = ns.substring(with: m.g3)
 
-            let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: josa,
-                                                       locksByToken: locksByToken, names: names, mode: mode)
-            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + spacing + chosen + suffix)
+            let (canon, chosen) = resolveEntityAndJosa(
+                nameText: entity, josaCandidate: josa,
+                locksByToken: locksByToken, names: names, mode: mode
+            )
+            out = ns.replacingCharacters(in: m.whole, with: canon + spacing + chosen)
         }
 
         // --- [2] 2패스: [조사 X] 패턴 (엔터티 ‘바로 뒤’에서 경계 검사) ---
         let patBare =
-        "(^|[^" + cjkBody + "])" +                // grp1 prefix
-        "(" + entityAlts + ")" +                  // grp2 entity
-        "(?=$|[^" + cjkBody + "]|(?:" + ws + ")" + particleTokenAlt + ")"
+        pre +
+        "(" + entityAlts + ")" +                  // grp1 entity
+        "(?=" +                       // lookahead으로 조사 존재/경계만 확인
+            "$|[^" + cjkBody + "]|(?:" + gap + ")" + particleTokenAlt +
+        ")"
         let rxBare = try! NSRegularExpression(
-            pattern: patBare,               // 주석 없는 버전
+            pattern: patBare,
             options: [.caseInsensitive]
         )
 
-        var matches2: [(whole:NSRange, g1:NSRange, g2:NSRange)] = []
+        var matches2: [(whole:NSRange, g1:NSRange)] = []
         let ns2 = out as NSString
         rxBare.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns2.length)) { m, _, _ in
             guard let m = m else { return }
-            matches2.append((m.range(at: 0), m.range(at: 1), m.range(at: 2)))
+            matches2.append((m.range(at: 0), m.range(at: 1)))
         }
 
         for m in matches2.reversed() {
             let ns = out as NSString
-            let prefix = ns.substring(with: m.g1)
-            let name   = ns.substring(with: m.g2)
+            let name = ns.substring(with: m.g1)
 
-            let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: nil,
-                                                       locksByToken: locksByToken, names: names, mode: mode)
-            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen)
+            let (canon, chosen) = resolveEntityAndJosa(
+                nameText: name, josaCandidate: nil,
+                locksByToken: locksByToken, names: names, mode: mode
+            )
+
+            // prefix 캡처가 없으므로, 바로 엔티티 범위 전체를 교체
+            out = ns.replacingCharacters(in: m.whole, with: canon + chosen)
         }
 
         return out
@@ -714,14 +862,17 @@ public final class TermMasker {
         names: [NameGlossary],
         mode: EntityMode
     ) -> (canon: String, josa: String) {
+//        print("[RESOLVE] nameText='\(nameText)' josaCand='\(String(describing: josaCandidate))' mode=\(mode)")
         if mode != .namesOnly, let info = locksByToken[nameText] {
             // 토큰: 표기는 그대로, 조사만 LockInfo 기준 재계산
+//            print("[RESOLVE] token lock target='\(info.target.replacingOccurrences(of: "\u{00A0}", with: "⍽"))' endsBatchim=\(info.endsWithBatchim) rieul=\(info.endsWithRieul)")
             let j = chooseJosa(for: josaCandidate, baseHasBatchim: info.endsWithBatchim, baseIsRieul: info.endsWithRieul)
             return (nameText, j)
         } else {
             // 이름: canonical 통일 + canonical 받침 기준으로 조사 재계산
             let canon = canonicalFor(nameText, entries: names)
             let (has, rieul) = hangulFinalJongInfo(canon)
+//            print("[RESOLVE] canon='\(canon)' hasBatchim=\(has) rieul=\(rieul)")
             let j = chooseJosa(for: josaCandidate, baseHasBatchim: has, baseIsRieul: rieul)
             return (canon, j)
         }
