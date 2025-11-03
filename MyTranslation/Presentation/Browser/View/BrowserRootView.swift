@@ -1,15 +1,23 @@
-// MARK: - BrowserTabView.swift
+// File: BrowserRootView.swift
 import SwiftUI
+import SwiftData
 import Translation
 
-struct BrowserTabView: View {
+struct BrowserRootView: View {
     @EnvironmentObject private var container: AppContainer
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     @StateObject private var vm: BrowserViewModel
     @AppStorage("preferredEngine") private var preferredEngineRawValue: String = EngineTag.afm.rawValue
 
     // TranslationSession 트리거
     @State private var trConfig: TranslationSession.Configuration? = nil
-    
+
+    @State private var isMorePresented: Bool = false
+    @State private var isGlossaryPresented: Bool = false
+    @State private var isSettingsPresented: Bool = false
+
     init(container: AppContainer) {
         _vm = StateObject(
             wrappedValue: BrowserViewModel(
@@ -23,6 +31,80 @@ struct BrowserTabView: View {
     }
 
     var body: some View {
+        content
+            .fullScreenCover(isPresented: $isGlossaryPresented) {
+                GlossaryHost(modelContext: modelContext) // NEW
+            }
+            .sheet(isPresented: $isSettingsPresented) {
+                SettingsView() // NEW
+            }
+            .task {
+                // 앱 시작 후 한 번 시드 시도
+                GlossarySeeder.seedIfNeeded(modelContext)
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if horizontalSizeClass == .regular {
+            NavigationSplitView {
+                MoreSidebarView( // NEW
+                    favorites: vm.presetLinks,
+                    onSelectFavorite: handleFavorite(_:),
+                    onOpenGlossary: { isGlossaryPresented = true },
+                    onOpenSettings: { isSettingsPresented = true }
+                )
+                .navigationTitle("더보기")
+            } detail: {
+                NavigationStack {
+                    browserScene
+                        .navigationTitle("브라우저")
+                }
+            }
+        } else {
+            NavigationStack {
+                browserScene
+                    .navigationTitle("브라우저")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                isMorePresented = true
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                            }
+                            .accessibilityLabel("더보기")
+                        }
+                    }
+            }
+            .sheet(isPresented: $isMorePresented) {
+                MoreMenuView( // NEW
+                    favorites: vm.presetLinks,
+                    onSelectFavorite: { link in
+                        isMorePresented = false
+                        handleFavorite(link)
+                    },
+                    onOpenGlossary: {
+                        isMorePresented = false
+                        isGlossaryPresented = true
+                    },
+                    onOpenSettings: {
+                        isMorePresented = false
+                        isSettingsPresented = true
+                    }
+                )
+                .presentationDetents([.medium, .large])
+            }
+        }
+    }
+
+    private var preferredEngineBinding: Binding<EngineTag> {
+        Binding(
+            get: { EngineTag(rawValue: preferredEngineRawValue) ?? .afm },
+            set: { preferredEngineRawValue = $0.rawValue }
+        )
+    }
+
+    private var browserScene: some View {
         VStack(spacing: 12) {
             URLBarView(
                 urlString: $vm.urlString,
@@ -88,13 +170,6 @@ struct BrowserTabView: View {
         }
     }
 
-    private var preferredEngineBinding: Binding<EngineTag> {
-        Binding(
-            get: { EngineTag(rawValue: preferredEngineRawValue) ?? .afm },
-            set: { preferredEngineRawValue = $0.rawValue }
-        )
-    }
-
     private func ensureTranslationSession() {
         if trConfig == nil {
             trConfig = TranslationSession.Configuration(
@@ -111,5 +186,9 @@ struct BrowserTabView: View {
             trConfig?.invalidate()
         }
     }
-}
 
+    private func handleFavorite(_ link: BrowserViewModel.PresetLink) {
+        vm.load(urlString: link.url)
+        triggerTranslationSession()
+    }
+}
