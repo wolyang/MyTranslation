@@ -7,6 +7,8 @@ final class AppContainer: ObservableObject {
     // Engines / Services
     let afmService: AFMTranslationService
     let afmEngine: TranslationEngine
+    let deeplClient: DeepLTranslateClient
+    let deeplEngine: TranslationEngine
     let googleClient: GoogleTranslateV2Client
     let googleEngine: TranslationEngine
 
@@ -31,6 +33,15 @@ final class AppContainer: ObservableObject {
         
         self.afmService = AFMTranslationService()
         self.afmEngine  = AFMEngine(client: afmService)
+        self.deeplClient = DeepLTranslateClient(
+            config: .init(
+                apiKey: APIKeys.deepl,
+                useFreeTier: true, // 필요 시 유료 엔드포인트 사용으로 변경
+                defaultTarget: "KO",
+                defaultSource: "ZH"
+            )
+        )
+        self.deeplEngine = DeepLEngine(client: deeplClient)
         self.googleClient = GoogleTranslateV2Client(config: .init(apiKey: APIKeys.googleTranslate))
         self.googleEngine = GoogleEngine(client: googleClient)
         
@@ -54,7 +65,7 @@ final class AppContainer: ObservableObject {
 
         self.router = DefaultTranslationRouter(
             afm: afmEngine,
-            deepl: DeepLEngine(),
+            deepl: deeplEngine,
             google: googleEngine,
             cache: cache,
             glossaryStore: glossaryStore,

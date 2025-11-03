@@ -91,7 +91,7 @@ public final class TermMasker {
             if !maskPerson && e.category == .person && e.personId != nil { continue }
 
             // === (1) 유니크 토큰 생성 ===
-            let tokenPrefix = "ENT"
+            let tokenPrefix = "E"
             let token = Self.makeToken(prefix: tokenPrefix, index: localNextIndex)
             localNextIndex += 1
 
@@ -705,32 +705,146 @@ public final class TermMasker {
         return resultSegments.joined()
     }
     
-    private let damagedTokenRx = try! NSRegularExpression(
-        pattern: "(?i)(?:_{0,2})ENT\\s*[#＃]\\s*(\\d+)(?:_{0,2})",
-        options: []
-    )
-
-    func normalizeDamagedTokens(_ text: String) -> String {
-        let ns = text as NSString
-        let matches = damagedTokenRx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
-        guard !matches.isEmpty else { return text }
-
-        var out = ""
-        out.reserveCapacity(ns.length)
-        var last = 0
-
-        for m in matches {
-            let full = m.range(at: 0)
-            if last < full.location {
-                out += ns.substring(with: NSRange(location: last, length: full.location - last))
+    @inline(__always)
+    private func extractTokenIDs(from locks: [String: LockInfo]) -> Set<String> {
+        // "__E#123__" 또는 "E#123" 둘 다 대비
+        let rx = try! NSRegularExpression(pattern: "(?:__)?E#(\\d+)(?:__)?", options: [.caseInsensitive])
+        var ids = Set<String>()
+        for key in locks.keys {
+            let ns = key as NSString
+            let ms = rx.matches(in: key, options: [], range: NSRange(location: 0, length: ns.length))
+            for m in ms {
+                ids.insert(ns.substring(with: m.range(at: 1)))
             }
-            let id = ns.substring(with: m.range(at: 1))
-            out += "__ENT#\(id)__"
-            last = full.location + full.length
         }
-        if last < ns.length {
-            out += ns.substring(with: NSRange(location: last, length: ns.length - last))
+        return ids
+    }
+    
+    func normalizeDamagedETokens(_ text: String, locks: [String: LockInfo]) -> String {
+        // 이번 배치에서 실제 존재하는 토큰 id 화이트리스트
+        let validIDs = extractTokenIDs(from: locks)
+
+        // 공백/NBSP/제로폭/BOM
+        let ws = "(?:\\s|\\u00A0|\\u200B|\\u200C|\\u200D|\\uFEFF)*"
+        // 숫자(전각 포함)
+        let d  = "([0-9０-９]+)"
+
+        // A) 분할/띄어쓰기/전각 섞임: "__E#  31 __", "__ E #３１  __" 등
+        let rxA = try! NSRegularExpression(pattern: "(?i)_{2}" + ws + "E" + ws + "#" + ws + d + ws + "_{2}")
+        // B0) 앞에 언더스코어가 전혀 없는 케이스: "E#56__" → "__E#56__"
+        let rxB0 = try! NSRegularExpression(pattern: "(?i)(?<!_)E#" + d + "_?__?(?!_)")
+        // B) 언더스코어 과다/부족 케이스: "___E#56__", "__E#56_", "_E#56__" 등
+        let rxB  = try! NSRegularExpression(pattern: "(?i)(?<!_)_?__?E#" + d + "_?__?(?!_)")
+
+        @inline(__always)
+        func halfwidth(_ s: String) -> String {
+            s.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? s
         }
+
+        var out = text
+
+        // --- A: 분할/띄어쓰기/전각 섞임 회수 ---
+        do {
+            let ns = out as NSString
+            let ms = rxA.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !ms.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in ms.reversed() {
+                    let idRaw = ns.substring(with: m.range(at: 1))
+                    let id = halfwidth(idRaw)
+                    // 실제 존재하는 id일 때만 표준화
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+        }
+
+        // --- B0 ---
+        do {
+            let ns = out as NSString
+            let ms = rxB0.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !ms.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in ms.reversed() {
+                    let idRaw = ns.substring(with: m.range(at: 1))
+                    let id = idRaw.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? idRaw
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+        }
+
+        // --- B ---
+        do {
+            let ns = out as NSString
+            let ms = rxB.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !ms.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in ms.reversed() {
+                    let idRaw = ns.substring(with: m.range(at: 1))
+                    let id = idRaw.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? idRaw
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+        }
+
+        // --- C: 접두 소실 복구 (화이트리스트 필수) ---
+
+        // C1) "#31__" → "__E#31__"
+        //  - 바로 앞 문자가 'E'가 아니어야 정상 토큰 내부를 건드리지 않음
+        let rxC1 = try! NSRegularExpression(pattern: "(?<![EＥ])#([0-9]{1,8})__(?!_)", options: [])
+
+        // C2) "31__"  → "__E#31__"
+        //  - 숫자 앞이 해시/영숫자/언더바가 아니어야 함(경계 보장)
+        let rxC2 = try! NSRegularExpression(pattern: "(?<![#A-Za-z0-9_])([0-9]{1,8})__(?!_)", options: [])
+
+        do {
+            // C1 먼저
+            var ns = out as NSString
+            let m1 = rxC1.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !m1.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in m1.reversed() {
+                    let id = ns.substring(with: m.range(at: 1))
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+
+            // C2 다음
+            ns = out as NSString
+            let m2 = rxC2.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !m2.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in m2.reversed() {
+                    let id = ns.substring(with: m.range(at: 1))
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+        }
+
         return out
     }
     
