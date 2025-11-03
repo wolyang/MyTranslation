@@ -5,15 +5,13 @@ import SwiftUI
 struct GlossaryTabView: View {
     @StateObject private var vm: GlossaryViewModel
 
-    @State private var showEditor: Bool = false
-    @State private var editing: Term? = nil
+    @State private var termSheetTarget: TermSheetTarget? = nil
 
     @State private var showImporter: Bool = false
     @State private var showExporter: Bool = false
 
     // People UI
-    @State private var showPersonEditor: Bool = false
-    @State private var editingPerson: Person? = nil
+    @State private var personSheetTarget: PersonSheetTarget? = nil
 
     // Segment
     enum Segment: String, CaseIterable, Identifiable { case terms = "용어"; case people = "인물"; var id: String { rawValue } }
@@ -49,6 +47,11 @@ struct GlossaryTabView: View {
                                     Text(term.target)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
+                                    if term.isEnabled == false {
+                                        Label("적용 안 함", systemImage: "slash.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                    }
                                     if !term.category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                         Text(term.category)
                                             .font(.caption)
@@ -60,8 +63,7 @@ struct GlossaryTabView: View {
                                 }
                                 Spacer()
                                 Button {
-                                    editing = term
-                                    showEditor = true
+                                    termSheetTarget = .edit(term.persistentModelID)
                                 } label: {
                                     Image(systemName: "square.and.pencil")
                                 }
@@ -89,8 +91,12 @@ struct GlossaryTabView: View {
                                     }
                                 }
                                 Spacer()
-                                Button { editingPerson = p; showPersonEditor = true } label: { Image(systemName: "square.and.pencil") }
-                                    .buttonStyle(.borderless)
+                                Button {
+                                    personSheetTarget = .edit(p.persistentModelID)
+                                } label: {
+                                    Image(systemName: "square.and.pencil")
+                                }
+                                .buttonStyle(.borderless)
                             }
                         }
                         .onDelete { idx in
@@ -105,19 +111,23 @@ struct GlossaryTabView: View {
                     Button { showImporter = true } label: { Image(systemName: "tray.and.arrow.down") }
                     Button { showExporter = true } label: { Image(systemName: "tray.and.arrow.up") }
                     if segment == .terms {
-                        Button { editing = nil; showEditor = true } label: { Image(systemName: "plus") }
+                        Button {
+                            termSheetTarget = .create(UUID())
+                        } label: { Image(systemName: "plus") }
                     } else {
-                        Button { editingPerson = nil; showPersonEditor = true } label: { Image(systemName: "person.crop.circle.badge.plus") }
+                        Button {
+                            personSheetTarget = .create(UUID())
+                        } label: { Image(systemName: "person.crop.circle.badge.plus") }
                     }
                 }
             }
-            .sheet(isPresented: $showEditor) {
-                TermEditorSheet(term: editing) { s, t, c in
-                    vm.upsert(source: s, target: t, category: c)
+            .sheet(item: $termSheetTarget) { target in
+                TermEditorSheet(term: vm.term(for: target.termID)) { term, s, t, c, isEnabled in
+                    vm.upsert(term: term, source: s, target: t, category: c, isEnabled: isEnabled)
                 }
             }
-            .sheet(isPresented: $showPersonEditor) {
-                PersonEditorSheet(person: editingPerson) { action in
+            .sheet(item: $personSheetTarget) { target in
+                PersonEditorSheet(person: vm.person(for: target.personID)) { action in
                     switch action {
                     case let .create(personId, familySources, familyTarget, givenSources, givenTarget, aliases):
                         vm.createPerson(personId: personId,
@@ -156,4 +166,52 @@ struct GlossaryTabView: View {
             }
         }
     }
+}
+
+private enum TermSheetTarget: Identifiable {
+    case create(UUID)
+    case edit(PersistentIdentifier)
+
+    var id: String {
+        switch self {
+        case let .create(uuid):
+            return "create-\(uuid.uuidString)"
+        case let .edit(identifier):
+            return "edit-\(String(describing: identifier))"
+        }
+    }
+
+    var termID: PersistentIdentifier? {
+        switch self {
+        case .create:
+            return nil
+        case let .edit(identifier):
+            return identifier
+        }
+    }
+
+}
+
+private enum PersonSheetTarget: Identifiable {
+    case create(UUID)
+    case edit(PersistentIdentifier)
+
+    var id: String {
+        switch self {
+        case let .create(uuid):
+            return "create-\(uuid.uuidString)"
+        case let .edit(identifier):
+            return "edit-\(String(describing: identifier))"
+        }
+    }
+
+    var personID: PersistentIdentifier? {
+        switch self {
+        case .create:
+            return nil
+        case let .edit(identifier):
+            return identifier
+        }
+    }
+
 }
