@@ -14,15 +14,15 @@ struct URLBarView: View {
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
     var onTapMore: (() -> Void)? = nil
 
-    @FocusState private var isFocused: Bool
-    @AppStorage("recentURLs") private var recentURLsData: Data = Data()
-    @AppStorage("recentURLLimit") private var recentURLLimit: Int = 8
+    @FocusState var isFocused: Bool
+    @AppStorage("recentURLs") var recentURLsData: Data = Data()
+    @AppStorage("recentURLLimit") var recentURLLimit: Int = 8
 
-    @State private var fieldHeight: CGFloat = 0
-    @State private var barHeight: CGFloat = 0
-    @State private var originalURLBeforeEditing: String = ""
-    @State private var didCommitDuringEditing: Bool = false
-    @State private var isShowingEngineOptions: Bool = false
+    @State var fieldHeight: CGFloat = 0
+    @State var barHeight: CGFloat = 0
+    @State var originalURLBeforeEditing: String = ""
+    @State var didCommitDuringEditing: Bool = false
+    @State var isShowingEngineOptions: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
