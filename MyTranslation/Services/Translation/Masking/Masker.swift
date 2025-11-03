@@ -88,7 +88,8 @@ public final class TermMasker {
             if !maskPerson && e.category == .person && e.personId != nil { continue }
 
             // === (1) 유니크 토큰 생성 ===
-            let token = "__ENT#\(localNextIndex)__"
+            let tokenPrefix = e.category == .person ? "PERSON" : "ENT"
+            let token = "__\(tokenPrefix)#\(localNextIndex)__"
             localNextIndex += 1
 
             let pattern = NSRegularExpression.escapedPattern(for: e.source)
