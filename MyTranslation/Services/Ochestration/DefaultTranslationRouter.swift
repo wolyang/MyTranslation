@@ -352,6 +352,8 @@ final class DefaultTranslationRouter: TranslationRouter {
                     
                 let pack = maskingContext.maskedPacks[index]
                 let originalSegment = pendingSegments[index]
+                print("[T] router.processStream [\(result.segmentID)] ORIGINAL TEXT: \(originalSegment.originalText)")
+                print("[T] router.processStream [\(result.segmentID)] TRANSLATED RESULT: \(result.text)")
                 let output = restoreOutput(
                     from: result.text,
                     pack: pack,
@@ -370,7 +372,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     residualSourceRatio: residual,
                     createdAt: result.createdAt
                 )
-                print("[T] router.processStream FINAL RESULT: \(output)")
+                print("[T] router.processStream [\(result.segmentID)] FINAL RESULT: \(output)")
                     
                 let payload = TranslationStreamPayload(
                     segmentID: originalSegment.id,
