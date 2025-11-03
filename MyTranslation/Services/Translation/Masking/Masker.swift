@@ -23,7 +23,7 @@ public final class TermMasker {
     public typealias PersonQueues = [String: [String]]
 
     /// 토큰 좌우 공백 보정을 전역적으로 전환할 수 있는 테스트용 플래그
-    public static var enableTokenSpacingAdjustment: Bool = true
+    public static var enableTokenSpacingAdjustment: Bool = false
 
     private var nextIndex: Int = 1
     
@@ -91,7 +91,7 @@ public final class TermMasker {
             if !maskPerson && e.category == .person && e.personId != nil { continue }
 
             // === (1) 유니크 토큰 생성 ===
-            let tokenPrefix = e.category == .person ? "PERSON" : "ENT"
+            let tokenPrefix = "ENT"
             let token = Self.makeToken(prefix: tokenPrefix, index: localNextIndex)
             localNextIndex += 1
 
@@ -330,7 +330,7 @@ public final class TermMasker {
 
     /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
     func surroundTokenWithNBSP(_ text: String, token: String) -> String {
-        guard Self.enableTokenSpacingAdjustment else { return text }
+//        guard Self.enableTokenSpacingAdjustment else { return text }
 
         let sentenceBoundaryCharacters: Set<Character> = Set("。！？；：（、“‘〈《【—\n\r!?;:()[]{}\"'".map { $0 })
 
@@ -706,27 +706,31 @@ public final class TermMasker {
     }
     
     private let damagedTokenRx = try! NSRegularExpression(
-        pattern: "(?<!_)(?:_)?(?:_)?(PERSON|ENT)[#＃](\\d+)(?:_)?(?:_)?(?!_)",
+        pattern: "(?<![A-Za-z0-9_])(?:_{1,2})?ENT[#＃](\\d+)(?:_{1,2})?(?![A-Za-z0-9_])",
         options: [.caseInsensitive]
     )
-    // 설명: 좌우 밑줄 0~2개 허용(그러나 '_' 연속과의 경계는 lookaround로 방지), #는 전각＃도 허용.
 
     func normalizeDamagedTokens(_ text: String) -> String {
         let ns = text as NSString
         let matches = damagedTokenRx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
         guard !matches.isEmpty else { return text }
+
         var out = ""
         out.reserveCapacity(ns.length)
         var last = 0
+
         for m in matches {
-            let r = m.range(at: 0)
-            if last < r.location { out += ns.substring(with: NSRange(location: last, length: r.location - last)) }
-            let typ = ns.substring(with: m.range(at: 1)).uppercased()   // PERSON|ENT
-            let id  = ns.substring(with: m.range(at: 2))
-            out += "__\(typ)#\(id)__"  // 표준형으로 복구
-            last = r.location + r.length
+            let full = m.range(at: 0)
+            if last < full.location {
+                out += ns.substring(with: NSRange(location: last, length: full.location - last))
+            }
+            let id = ns.substring(with: m.range(at: 1))
+            out += "__ENT#\(id)__"
+            last = full.location + full.length
         }
-        if last < ns.length { out += ns.substring(with: NSRange(location: last, length: ns.length - last)) }
+        if last < ns.length {
+            out += ns.substring(with: NSRange(location: last, length: ns.length - last))
+        }
         return out
     }
     
