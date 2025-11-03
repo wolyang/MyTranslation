@@ -262,11 +262,12 @@ final class DefaultTranslationRouter: TranslationRouter {
             termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries, maskPerson: engine.maskPerson)
         }
         let maskedSegments: [Segment] = maskedPacks.map { pack in
+            let encodedMasked = encodeSentinels(pack.masked)
             Segment(
                 id: pack.seg.id,
                 url: pack.seg.url,
                 indexInPage: pack.seg.indexInPage,
-                originalText: pack.masked,
+                originalText: encodedMasked,
                 normalizedText: pack.seg.normalizedText,
                 domRange: pack.seg.domRange
             )
@@ -438,7 +439,8 @@ final class DefaultTranslationRouter: TranslationRouter {
         shouldNormalizeNames: Bool
     ) -> String {
 //        print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
-        var output = termMasker.normalizeDamagedTokens(text)
+        var output = decodeSentinels(text)
+        output = termMasker.normalizeDamagedTokens(output)
 //        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
         output = termMasker.normalizeEntitiesAndParticles(
             in: output,
