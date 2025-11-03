@@ -3,7 +3,7 @@ import Foundation
 
 final class DeepLEngine: TranslationEngine {
     let tag: EngineTag = .deepl
-    public let maskPerson: Bool = true
+    public let maskPerson: Bool = false
 
     private let client: DeepLTranslateClient
 
@@ -94,7 +94,7 @@ final class DeepLEngine: TranslationEngine {
     private func mapFormality(style: TranslationStyle) -> DeepLTranslateClient.Formality? {
         switch style {
         case .colloquialKo:
-            return .less
+            return .preferLess
         case .neutralDictionaryTone:
             return .defaultTone
         }

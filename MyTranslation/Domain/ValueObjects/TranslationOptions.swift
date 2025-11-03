@@ -9,7 +9,7 @@ public struct TranslationOptions {
     public let preserveFormatting: Bool
     public let style: TranslationStyle
     public let applyGlossary: Bool
-    public init(preserveFormatting: Bool = true, style: TranslationStyle = .colloquialKo, applyGlossary: Bool = true) {
+    public init(preserveFormatting: Bool = true, style: TranslationStyle = .neutralDictionaryTone, applyGlossary: Bool = true) {
         self.preserveFormatting = preserveFormatting
         self.style = style
         self.applyGlossary = applyGlossary

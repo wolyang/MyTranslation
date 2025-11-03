@@ -353,7 +353,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                 let pack = maskingContext.maskedPacks[index]
                 let originalSegment = pendingSegments[index]
 //                print("[T] router.processStream [\(result.segmentID)] ORIGINAL TEXT: \(originalSegment.originalText)")
-//                print("[T] router.processStream [\(result.segmentID)] MASKED TEXT: \(maskedSegments[index].originalText)")
+                print("[T] router.processStream [\(result.segmentID)] MASKED TEXT: \(maskedSegments[index].originalText)")
                 let output = restoreOutput(
                     from: result.text,
                     pack: pack,
@@ -438,8 +438,9 @@ final class DefaultTranslationRouter: TranslationRouter {
         shouldNormalizeNames: Bool
     ) -> String {
 //        print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
-        var output = termMasker.normalizeDamagedTokens(text)
+        var output = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
 //        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
+        
         output = termMasker.normalizeEntitiesAndParticles(
             in: output,
             locksByToken: pack.locks,
@@ -447,6 +448,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             mode: .tokensOnly
         )
 //        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
+        
         output = termMasker.unlockTermsSafely(
             output,
             locks: pack.locks

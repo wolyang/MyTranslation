@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>DeepLAuthKey</key>
+	<string>5e9870e6-6920-46c0-b2e1-a9e2e25401af:fx</string>
 	<key>GoogleAPIKey</key>
 	<string>AIzaSyDKOhtYcEZxtYsLGRibf4Gvtmzs8qkmX-Y</string>
 </dict>

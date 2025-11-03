@@ -37,7 +37,7 @@ final class DeepLTranslateClient {
         let defaultTarget: String
         let defaultSource: String?
 
-        init(apiKey: String, useFreeTier: Bool = false, defaultTarget: String = "KO", defaultSource: String? = "ZH") {
+        init(apiKey: String, useFreeTier: Bool = true, defaultTarget: String = "KO", defaultSource: String? = "ZH") {
             self.apiKey = apiKey
             self.useFreeTier = useFreeTier
             self.defaultTarget = defaultTarget
@@ -57,6 +57,8 @@ final class DeepLTranslateClient {
         case defaultTone = "default"
         case more = "more"
         case less = "less"
+        case preferMore = "prefer_more"
+        case preferLess = "prefer_less"
     }
 
     private let config: Config
@@ -79,24 +81,49 @@ final class DeepLTranslateClient {
         var request = URLRequest(url: config.baseURL)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("DeepL-Auth-Key \(config.apiKey)", forHTTPHeaderField: "Authorization")
 
-        var items: [URLQueryItem] = texts.map { URLQueryItem(name: "text", value: $0) }
-        items.append(URLQueryItem(name: "target_lang", value: (target ?? config.defaultTarget).uppercased()))
-        if let src = (source ?? config.defaultSource) {
-            items.append(URLQueryItem(name: "source_lang", value: src.uppercased()))
-        }
-        if let preserveFormatting {
-            items.append(URLQueryItem(name: "preserve_formatting", value: preserveFormatting ? "1" : "0"))
-        }
-        if let formality {
-            items.append(URLQueryItem(name: "formality", value: formality.rawValue))
+        struct Payload: Encodable {
+            let text: [String]
+            let target_lang: String
+            let source_lang: String?
+            let preserve_formatting: Bool?
+            let formality: String?
         }
 
-        var components = URLComponents()
-        components.queryItems = items
-        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        let payload = Payload(
+            text: texts,
+            target_lang: (target ?? config.defaultTarget).uppercased(),
+            source_lang: (source ?? config.defaultSource)?.uppercased(),
+            preserve_formatting: preserveFormatting,
+            formality: formality?.rawValue
+        )
+
+        request.httpBody = try JSONEncoder().encode(payload)
+        
+        func logRequest(_ req: URLRequest) {
+            let method = req.httpMethod ?? "GET"
+            let url = req.url?.absoluteString ?? "nil"
+            print("➡️ \(method) \(url)")
+            print("➡️ headers:", req.allHTTPHeaderFields ?? [:])
+
+            if let body = req.httpBody {
+                // JSON 시도 → 실패하면 일반 문자열
+                if let json = try? JSONSerialization.jsonObject(with: body),
+                   let pretty = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted]),
+                   let s = String(data: pretty, encoding: .utf8) {
+                    print("➡️ body(json):\n\(s)")
+                } else {
+                    print("➡️ body(raw):", String(data: body, encoding: .utf8) ?? "<non-utf8 \(body.count) bytes>")
+                }
+            } else if let stream = req.httpBodyStream {
+                print("➡️ body: httpBodyStream(\(stream))  // stream은 여기선 덤프 어려움")
+            } else {
+                print("➡️ body: <nil>")
+            }
+        }
+        logRequest(request)
 
         return try await withCheckedThrowingContinuation { continuation in
             let task = session.dataTask(with: request) { data, response, error in
@@ -111,8 +138,12 @@ final class DeepLTranslateClient {
                 }
 
                 guard (200..<300).contains(http.statusCode) else {
-                    let err = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data))?.error.message ?? "상세 메시지 없음"
-                    continuation.resume(throwing: Self.mapHTTPError(status: http.statusCode, message: err))
+                    if let decodedError = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) {
+                        let errMsg = decodedError.error?.message ?? decodedError.message ?? "상세 메시지 없음"
+                        continuation.resume(throwing: Self.mapHTTPError(status: http.statusCode, message: errMsg))
+                    } else {
+                        continuation.resume(throwing: Self.mapHTTPError(status: http.statusCode, message: "에러 디코딩 실패"))
+                    }
                     return
                 }
 
@@ -168,9 +199,10 @@ final class DeepLTranslateClient {
     }
 
     private struct ErrorEnvelope: Decodable {
-        let error: ErrorBody
+        let error: ErrorBody?
         struct ErrorBody: Decodable {
             let message: String
         }
+        let message: String?
     }
 }
