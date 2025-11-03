@@ -36,12 +36,14 @@ public struct GlossaryEntry: Sendable {
     public let variants: [String]
     public let category: TermCategory
     public let personId: String?
+    public let isEnabled: Bool
     public init(source: String,
                 target: String,
                 variants: [String] = [],
                 category: TermCategory,
                 personId: String? = nil,
-                sourceForms: [String]? = nil) {
+                sourceForms: [String]? = nil,
+                isEnabled: Bool = true) {
         self.source = source
         let trimmed = sourceForms?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? []
         if trimmed.isEmpty {
@@ -53,5 +55,6 @@ public struct GlossaryEntry: Sendable {
         self.variants = variants
         self.category = category
         self.personId = personId
+        self.isEnabled = isEnabled
     }
 }

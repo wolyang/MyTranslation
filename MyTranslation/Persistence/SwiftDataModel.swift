@@ -8,11 +8,17 @@ final class Term {
     var target: String
     var category: String
     var variants: [String]
-    init(source: String, target: String, category: String, variants: [String] = []) {
+    var isEnabled: Bool = true
+    init(source: String,
+         target: String,
+         category: String,
+         variants: [String] = [],
+         isEnabled: Bool = true) {
         self.source = source
         self.target = target
         self.category = category
         self.variants = variants
+        self.isEnabled = isEnabled
     }
 }
 

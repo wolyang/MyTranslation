@@ -82,8 +82,15 @@ enum GlossarySeeder {
                 ex.target = t.target
                 ex.category = t.category
                 ex.variants = uniqSorted(t.variants)
+                ex.isEnabled = t.isEnabled
             } else {
-                let nt = Term(source: t.source, target: t.target, category: t.category, variants: uniqSorted(t.variants))
+                let nt = Term(
+                    source: t.source,
+                    target: t.target,
+                    category: t.category,
+                    variants: uniqSorted(t.variants),
+                    isEnabled: t.isEnabled
+                )
                 ctx.insert(nt); bySource[t.source] = nt
             }
         }

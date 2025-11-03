@@ -78,7 +78,7 @@ final class GlossaryViewModel: ObservableObject {
         return name.isEmpty ? p.personId : name
     }
 
-    func upsert(source: String, target: String, category: String) {
+    func upsert(source: String, target: String, category: String, isEnabled: Bool) {
         let s = source.trimmingCharacters(in: .whitespacesAndNewlines)
         let t = target.trimmingCharacters(in: .whitespacesAndNewlines)
         let c = category.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -88,8 +88,9 @@ final class GlossaryViewModel: ObservableObject {
         if let exist = terms.first(where: { $0.source == s }) {
             exist.target = t
             exist.category = c
+            exist.isEnabled = isEnabled
         } else {
-            let term = Term(source: s, target: t, category: c)
+            let term = Term(source: s, target: t, category: c, isEnabled: isEnabled)
             modelContext.insert(term)
         }
         try? modelContext.save()
@@ -159,8 +160,15 @@ final class GlossaryViewModel: ObservableObject {
                 exist.target = item.target
                 exist.category = item.category
                 exist.variants = item.variants
+                exist.isEnabled = item.isEnabled
             } else {
-                let t = Term(source: item.source, target: item.target, category: item.category, variants: item.variants)
+                let t = Term(
+                    source: item.source,
+                    target: item.target,
+                    category: item.category,
+                    variants: item.variants,
+                    isEnabled: item.isEnabled
+                )
                 modelContext.insert(t)
             }
         }
@@ -181,7 +189,15 @@ final class GlossaryViewModel: ObservableObject {
     }
 
     func makeExportDocument() -> GlossaryJSONDocument {
-        let items = terms.map { GlossaryJSON.TermItem(source: $0.source, target: $0.target, category: $0.category, variants: $0.variants) }
+        let items = terms.map {
+            GlossaryJSON.TermItem(
+                source: $0.source,
+                target: $0.target,
+                category: $0.category,
+                variants: $0.variants,
+                isEnabled: $0.isEnabled
+            )
+        }
         let payload = GlossaryJSON(terms: items, people: [])
         return GlossaryJSONDocument(payload: payload)
     }

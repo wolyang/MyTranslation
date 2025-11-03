@@ -49,6 +49,11 @@ struct GlossaryTabView: View {
                                     Text(term.target)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
+                                    if term.isEnabled == false {
+                                        Label("적용 안 함", systemImage: "slash.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                    }
                                     if !term.category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                         Text(term.category)
                                             .font(.caption)
@@ -112,8 +117,8 @@ struct GlossaryTabView: View {
                 }
             }
             .sheet(isPresented: $showEditor) {
-                TermEditorSheet(term: editing) { s, t, c in
-                    vm.upsert(source: s, target: t, category: c)
+                TermEditorSheet(term: editing) { s, t, c, isEnabled in
+                    vm.upsert(source: s, target: t, category: c, isEnabled: isEnabled)
                 }
             }
             .sheet(isPresented: $showPersonEditor) {

@@ -263,9 +263,18 @@ final class DefaultGlossaryStore: GlossaryStore {
         // 2️⃣ Terms
         let terms: [Term] = try fetchTerms(query: nil)
         for t in terms {
+            guard t.isEnabled else { continue }
             let cat = TermCategory(with: t.category)
             let mergedVariants = Self.mergeVariants(primary: t.variants, fallback: seedIndex.termVariants(for: t.source))
-            entries.append(.init(source: t.source, target: t.target, variants: mergedVariants, category: cat))
+            entries.append(
+                .init(
+                    source: t.source,
+                    target: t.target,
+                    variants: mergedVariants,
+                    category: cat,
+                    isEnabled: t.isEnabled
+                )
+            )
         }
 
         // 3️⃣ 정렬(긴 용어 우선)

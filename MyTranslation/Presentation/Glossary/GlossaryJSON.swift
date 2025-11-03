@@ -48,15 +48,17 @@ struct GlossaryJSON: Codable {
         let target: String
         let category: String
         let variants: [String]
+        let isEnabled: Bool
 
-        init(source: String, target: String, category: String, variants: [String] = []) {
+        init(source: String, target: String, category: String, variants: [String] = [], isEnabled: Bool = true) {
             self.source = source
             self.target = target
             self.category = category
             self.variants = variants
+            self.isEnabled = isEnabled
         }
 
-        enum CodingKeys: String, CodingKey { case source, target, category, variants }
+        enum CodingKeys: String, CodingKey { case source, target, category, variants, isEnabled }
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -64,6 +66,7 @@ struct GlossaryJSON: Codable {
             self.target = try container.decode(String.self, forKey: .target)
             self.category = try container.decode(String.self, forKey: .category)
             self.variants = try container.decodeIfPresent([String].self, forKey: .variants) ?? []
+            self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         }
     }
 
@@ -95,7 +98,8 @@ public struct GlossaryJSONDocument: FileDocument {
                 source: $0.source,
                 target: $0.target,
                 category: $0.category,
-                variants: $0.variants
+                variants: $0.variants,
+                isEnabled: $0.isEnabled
             )
         }
         let personItems = people.map {
