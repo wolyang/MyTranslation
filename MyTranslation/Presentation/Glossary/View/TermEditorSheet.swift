@@ -6,14 +6,16 @@ struct TermEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    let onSave: (String, String, String, Bool) -> Void
+    let term: Term?
+    let onSave: (Term?, String, String, String, Bool) -> Void
 
     @State private var source: String
     @State private var target: String
     @State private var category: String
     @State private var isEnabled: Bool
 
-    init(term: Term?, onSave: @escaping (String, String, String, Bool) -> Void) {
+    init(term: Term?, onSave: @escaping (Term?, String, String, String, Bool) -> Void) {
+        self.term = term
         self.onSave = onSave
         _source = State(initialValue: term?.source ?? "")
         _target = State(initialValue: term?.target ?? "")
@@ -50,7 +52,7 @@ struct TermEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("저장") {
-                        onSave(source, target, category, isEnabled)
+                        onSave(term, source, target, category, isEnabled)
                         dismiss()
                     }.disabled(source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                         target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

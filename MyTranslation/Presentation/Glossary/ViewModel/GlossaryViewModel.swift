@@ -78,20 +78,27 @@ final class GlossaryViewModel: ObservableObject {
         return name.isEmpty ? p.personId : name
     }
 
-    func upsert(source: String, target: String, category: String, isEnabled: Bool) {
+    func upsert(term: Term?, source: String, target: String, category: String, isEnabled: Bool) {
         let s = source.trimmingCharacters(in: .whitespacesAndNewlines)
         let t = target.trimmingCharacters(in: .whitespacesAndNewlines)
         let c = category.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty, !t.isEmpty else { return }
 
         // 동일 source 존재 시 업데이트, 없으면 생성
-        if let exist = terms.first(where: { $0.source == s }) {
-            exist.target = t
-            exist.category = c
-            exist.isEnabled = isEnabled
+        if let term {
+            term.source = s
+            term.target = t
+            term.category = c
+            term.isEnabled = isEnabled
         } else {
-            let term = Term(source: s, target: t, category: c, isEnabled: isEnabled)
-            modelContext.insert(term)
+            if let exist = try? modelContext.fetch(FetchDescriptor<Term>(predicate: #Predicate { $0.source == s })).first {
+                exist.target = t
+                exist.category = c
+                exist.isEnabled = isEnabled
+            } else {
+                let term = Term(source: s, target: t, category: c, isEnabled: isEnabled)
+                modelContext.insert(term)
+            }
         }
         try? modelContext.save()
         refresh()
@@ -200,5 +207,15 @@ final class GlossaryViewModel: ObservableObject {
         }
         let payload = GlossaryJSON(terms: items, people: [])
         return GlossaryJSONDocument(payload: payload)
+    }
+
+    func term(for identifier: PersistentIdentifier?) -> Term? {
+        guard let identifier else { return nil }
+        return (try? modelContext.model(for: identifier)) as? Term
+    }
+
+    func person(for identifier: PersistentIdentifier?) -> Person? {
+        guard let identifier else { return nil }
+        return (try? modelContext.model(for: identifier)) as? Person
     }
 }
