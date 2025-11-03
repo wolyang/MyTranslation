@@ -5,15 +5,13 @@ import SwiftUI
 struct GlossaryTabView: View {
     @StateObject private var vm: GlossaryViewModel
 
-    @State private var showEditor: Bool = false
-    @State private var editingTermID: PersistentIdentifier? = nil
+    @State private var termSheetTarget: TermSheetTarget? = nil
 
     @State private var showImporter: Bool = false
     @State private var showExporter: Bool = false
 
     // People UI
-    @State private var showPersonEditor: Bool = false
-    @State private var editingPersonID: PersistentIdentifier? = nil
+    @State private var personSheetTarget: PersonSheetTarget? = nil
 
     // Segment
     enum Segment: String, CaseIterable, Identifiable { case terms = "용어"; case people = "인물"; var id: String { rawValue } }
@@ -65,8 +63,7 @@ struct GlossaryTabView: View {
                                 }
                                 Spacer()
                                 Button {
-                                    editingTermID = term.persistentModelID
-                                    showEditor = true
+                                    termSheetTarget = .edit(term.persistentModelID)
                                 } label: {
                                     Image(systemName: "square.and.pencil")
                                 }
@@ -95,8 +92,7 @@ struct GlossaryTabView: View {
                                 }
                                 Spacer()
                                 Button {
-                                    editingPersonID = p.persistentModelID
-                                    showPersonEditor = true
+                                    personSheetTarget = .edit(p.persistentModelID)
                                 } label: {
                                     Image(systemName: "square.and.pencil")
                                 }
@@ -116,24 +112,22 @@ struct GlossaryTabView: View {
                     Button { showExporter = true } label: { Image(systemName: "tray.and.arrow.up") }
                     if segment == .terms {
                         Button {
-                            editingTermID = nil
-                            showEditor = true
+                            termSheetTarget = .create(UUID())
                         } label: { Image(systemName: "plus") }
                     } else {
                         Button {
-                            editingPersonID = nil
-                            showPersonEditor = true
+                            personSheetTarget = .create(UUID())
                         } label: { Image(systemName: "person.crop.circle.badge.plus") }
                     }
                 }
             }
-            .sheet(isPresented: $showEditor, onDismiss: { editingTermID = nil }) {
-                TermEditorSheet(term: vm.term(for: editingTermID)) { term, s, t, c, isEnabled in
+            .sheet(item: $termSheetTarget) { target in
+                TermEditorSheet(term: vm.term(for: target.termID)) { term, s, t, c, isEnabled in
                     vm.upsert(term: term, source: s, target: t, category: c, isEnabled: isEnabled)
                 }
             }
-            .sheet(isPresented: $showPersonEditor, onDismiss: { editingPersonID = nil }) {
-                PersonEditorSheet(person: vm.person(for: editingPersonID)) { action in
+            .sheet(item: $personSheetTarget) { target in
+                PersonEditorSheet(person: vm.person(for: target.personID)) { action in
                     switch action {
                     case let .create(personId, familySources, familyTarget, givenSources, givenTarget, aliases):
                         vm.createPerson(personId: personId,
@@ -172,4 +166,52 @@ struct GlossaryTabView: View {
             }
         }
     }
+}
+
+private enum TermSheetTarget: Identifiable {
+    case create(UUID)
+    case edit(PersistentIdentifier)
+
+    var id: String {
+        switch self {
+        case let .create(uuid):
+            return "create-\(uuid.uuidString)"
+        case let .edit(identifier):
+            return "edit-\(String(describing: identifier))"
+        }
+    }
+
+    var termID: PersistentIdentifier? {
+        switch self {
+        case .create:
+            return nil
+        case let .edit(identifier):
+            return identifier
+        }
+    }
+
+}
+
+private enum PersonSheetTarget: Identifiable {
+    case create(UUID)
+    case edit(PersistentIdentifier)
+
+    var id: String {
+        switch self {
+        case let .create(uuid):
+            return "create-\(uuid.uuidString)"
+        case let .edit(identifier):
+            return "edit-\(String(describing: identifier))"
+        }
+    }
+
+    var personID: PersistentIdentifier? {
+        switch self {
+        case .create:
+            return nil
+        case let .edit(identifier):
+            return identifier
+        }
+    }
+
 }
