@@ -22,6 +22,9 @@ public final class TermMasker {
     // PERSON 큐 언락을 위한 타입
     public typealias PersonQueues = [String: [String]]
 
+    /// 개발자가 토큰 포맷을 전역적으로 전환할 수 있는 테스트용 플래그
+    public static var usePercentTokenFormat: Bool = false
+
     private var nextIndex: Int = 1
     
     // ===== configurable guards =====
@@ -89,7 +92,7 @@ public final class TermMasker {
 
             // === (1) 유니크 토큰 생성 ===
             let tokenPrefix = e.category == .person ? "PERSON" : "ENT"
-            let token = "__\(tokenPrefix)#\(localNextIndex)__"
+            let token = Self.makeToken(prefix: tokenPrefix, index: localNextIndex)
             localNextIndex += 1
 
             let pattern = NSRegularExpression.escapedPattern(for: e.source)
@@ -209,7 +212,23 @@ public final class TermMasker {
     }
 
     // --------------------------------------
-    private let tokenRegex = #"__(?:[^_]|_(?!_))+__"#
+    private static var tokenRegexPattern: String {
+        if usePercentTokenFormat {
+            return #"%%(?:[^%]|%(?!%))+%%"#
+        } else {
+            return #"__(?:[^_]|_(?!_))+__"#
+        }
+    }
+
+    private var tokenRegex: String { Self.tokenRegexPattern }
+
+    private static func makeToken(prefix: String, index: Int) -> String {
+        if usePercentTokenFormat {
+            return "%%\(prefix)\(index)%%"
+        } else {
+            return "__\(prefix)#\(index)__"
+        }
+    }
     
     // - 단일 한자 인물의 오검출 방지 보조들
     private static let baseNegativeBigrams: Set<String> = [
@@ -246,9 +265,12 @@ public final class TermMasker {
         var outParas: [String] = []
         outParas.reserveCapacity(paras.count)
 
-        let stripRx = try! NSRegularExpression(pattern: tokenRegex)
-        let leftRx = try! NSRegularExpression(pattern: #"(?<=[\p{P}\p{S}])(__(?:[^_]|_(?!_))+__)"#)
-        let rightRx = try! NSRegularExpression(pattern: #"(__(?:[^_]|_(?!_))+__)(?=[\p{P}\p{S}])"#)
+        let tokenPattern = Self.tokenRegexPattern
+        let stripRx = try! NSRegularExpression(pattern: tokenPattern)
+        let leftPattern = #"(?<=[\p{P}\p{S}])(\#(tokenPattern))"#
+        let rightPattern = #"(\#(tokenPattern))(?=[\p{P}\p{S}])"#
+        let leftRx = try! NSRegularExpression(pattern: leftPattern)
+        let rightRx = try! NSRegularExpression(pattern: rightPattern)
 
         for p in paras {
             // 1) 단락에서 토큰을 모두 제거한 결과가 문장부호/공백 뿐인지 검사
