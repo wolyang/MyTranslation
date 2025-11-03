@@ -54,27 +54,14 @@ struct BrowserRootView: View {
                     onOpenGlossary: { isGlossaryPresented = true },
                     onOpenSettings: { isSettingsPresented = true }
                 )
-                .navigationTitle("더보기")
             } detail: {
                 NavigationStack {
                     browserScene
-                        .navigationTitle("브라우저")
                 }
             }
         } else {
             NavigationStack {
                 browserScene
-                    .navigationTitle("브라우저")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                isMorePresented = true
-                            } label: {
-                                Image(systemName: "ellipsis.circle")
-                            }
-                            .accessibilityLabel("더보기")
-                        }
-                    }
             }
             .sheet(isPresented: $isMorePresented) {
                 MoreMenuView( // NEW
@@ -119,7 +106,8 @@ struct BrowserRootView: View {
                 },
                 onSelectEngine: { engine, wasShowingOriginal in
                     vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
-                }
+                },
+                onTapMore: horizontalSizeClass == .regular ? nil : { isMorePresented = true }
             )
             .padding(.horizontal, 16)
 

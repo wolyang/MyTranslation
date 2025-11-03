@@ -7,41 +7,60 @@ struct MoreMenuView: View { // NEW
     let onOpenGlossary: () -> Void
     let onOpenSettings: () -> Void
 
+    @State private var path: [Route] = []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
-                if favorites.isEmpty == false {
-                    Section("즐겨찾기") {
-                        ForEach(favorites) { link in
-                            Button {
-                                onSelectFavorite(link)
-                            } label: {
-                                Label(link.title, systemImage: "star")
-                                    .labelStyle(.titleAndIcon)
-                            }
-                        }
-                    }
+                NavigationLink(value: Route.favorites) {
+                    Label("즐겨찾기", systemImage: "star")
+                        .labelStyle(.titleAndIcon)
                 }
 
-                Section("기타") {
-                    Button {
-                        onOpenGlossary()
-                    } label: {
-                        Label("용어집 열기", systemImage: "book")
-                            .labelStyle(.titleAndIcon)
-                    }
+                Button {
+                    onOpenGlossary()
+                } label: {
+                    Label("용어집", systemImage: "book")
+                        .labelStyle(.titleAndIcon)
+                }
 
-                    Button {
-                        onOpenSettings()
-                    } label: {
-                        Label("설정", systemImage: "gearshape")
-                            .labelStyle(.titleAndIcon)
-                    }
+                Button {
+                    onOpenSettings()
+                } label: {
+                    Label("설정", systemImage: "gearshape")
+                        .labelStyle(.titleAndIcon)
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("더보기")
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .favorites:
+                    favoritesList
+                }
+            }
         }
+    }
+
+    private var favoritesList: some View {
+        List {
+            if favorites.isEmpty {
+                Text("등록된 즐겨찾기가 없습니다.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(favorites) { link in
+                    Button {
+                        onSelectFavorite(link)
+                        path.removeAll()
+                    } label: {
+                        Text(link.title)
+                    }
+                }
+            }
+        }
+    }
+
+    private enum Route: Hashable {
+        case favorites
     }
 }
 
@@ -69,7 +88,7 @@ struct MoreSidebarView: View { // NEW
                 Button {
                     onOpenGlossary()
                 } label: {
-                    Label("용어집 열기", systemImage: "book")
+                    Label("용어집", systemImage: "book")
                 }
 
                 Button {

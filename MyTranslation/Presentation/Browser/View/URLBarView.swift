@@ -10,6 +10,7 @@ struct URLBarView: View {
     var currentPageURLString: String
     var onGo: (String) -> Void
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
+    var onTapMore: (() -> Void)? = nil
     @FocusState private var isFocused: Bool
     @AppStorage("recentURLs") private var recentURLsData: Data = Data()
     @State private var fieldHeight: CGFloat = 0
@@ -200,6 +201,29 @@ struct URLBarView: View {
                     onSelectEngine(engine, wasShowingOriginal)
                 }
             )
+
+            if let onTapMore {
+                Button {
+                    onTapMore()
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: "ellipsis.circle")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 20, height: 20)
+                            .foregroundStyle(Color.accentColor)
+                        Text("더보기")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .frame(width: 30)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("더보기 메뉴 열기")
+            }
         }
     }
 
