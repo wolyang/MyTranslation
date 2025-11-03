@@ -24,6 +24,8 @@ public final class TermMasker {
 
     /// 개발자가 토큰 포맷을 전역적으로 전환할 수 있는 테스트용 플래그
     public static var usePercentTokenFormat: Bool = false
+    /// 토큰 좌우 공백 보정을 전역적으로 전환할 수 있는 테스트용 플래그
+    public static var enableTokenSpacingAdjustment: Bool = true
 
     private var nextIndex: Int = 1
     
@@ -261,6 +263,8 @@ public final class TermMasker {
     /// "토큰을 모두 제거하면 문장부호/공백만 남는" 단락에서만
     /// 토큰 양옆(문장부호 인접)에 공백을 삽입한다.
     func insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(_ text: String) -> String {
+        guard Self.enableTokenSpacingAdjustment else { return text }
+
         let paras = text.components(separatedBy: "\n")
         var outParas: [String] = []
         outParas.reserveCapacity(paras.count)
