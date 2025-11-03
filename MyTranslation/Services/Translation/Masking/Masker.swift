@@ -648,22 +648,33 @@ public final class TermMasker {
 
         var resultSegments = segments
         var changed = false
-
-        func hasAuxAdjacent(_ tokenIndex: Int) -> Bool {
-            if tokenIndex > 0 {
-                switch tokens[tokenIndex - 1].kind {
-                case .auxiliary:
-                    return true
-                default:
-                    break
+        
+        func noWhitespaceBetween(_ segA: Int, _ segB: Int) -> Bool {
+            let lo = min(segA, segB), hi = max(segA, segB)
+            // segA와 segB 사이에 '공백 세그먼트'가 하나라도 있으면 false
+            if lo+1 <= hi-1 {
+                for i in (lo+1)...(hi-1) {
+                    if isWhitespace.indices.contains(i), isWhitespace[i] { return false }
                 }
             }
-            if tokenIndex + 1 < tokens.count {
-                switch tokens[tokenIndex + 1].kind {
-                case .auxiliary:
+            return true
+        }
+
+        func hasAuxAdjacent(_ tokenIndex: Int) -> Bool {
+            // 왼쪽 보조사
+            if tokenIndex > 0 {
+                let left = tokens[tokenIndex - 1]
+                if case .auxiliary = left.kind,
+                   noWhitespaceBetween(left.segmentIndex, tokens[tokenIndex].segmentIndex) {
                     return true
-                default:
-                    break
+                }
+            }
+            // 오른쪽 보조사
+            if tokenIndex + 1 < tokens.count {
+                let right = tokens[tokenIndex + 1]
+                if case .auxiliary = right.kind,
+                   noWhitespaceBetween(tokens[tokenIndex].segmentIndex, right.segmentIndex) {
+                    return true
                 }
             }
             return false
@@ -734,18 +745,27 @@ public final class TermMasker {
         let cjkBody = "\\p{L}\\p{N}_"
         let ws = "(?:\\s|\\u00A0)*"
 
+        let wsAny    = "(?:\\s|\\u00A0)*"  // 기존 ws 이름을 바꿔 보관
+        let softPunct = "[\"'“”’»«》〈〉〉》」』】）\\)\\]\\}]"
+        let gap = "(?:" + wsAny + "(?:" + softPunct + ")?" + wsAny + ")"  // 엔터티↔조사 사이 ‘얇은 갭’
+
         let particleTokenAlt = "(?:" + particleTokenAlternation + ")"
-        let josaSequence = particleTokenAlt + "(?:(?:" + ws + ")" + particleTokenAlt + ")*"
+
+        // 조사 시퀀스에는 ‘공백 금지’(필요하면 NBSP만 0~1 허용)
+        let josaJoin = ""                  // 공백 완전 금지
+        // let josaJoin = "(?:\\u00A0)?"   // NBSP만 0~1 허용으로 하고 싶다면 이 줄 사용
+
+        let josaSequence = particleTokenAlt + "(?:" + josaJoin + particleTokenAlt + ")*"
 
         // --- [1] 1패스: [조사 O] 패턴 (조사 ‘뒤’에서 경계 검사) ---
         let patWithJosa =
         "(^|[^" + cjkBody + "])" +                // grp1 prefix
         "(" + entityAlts + ")" +                  // grp2 entity
-        "(" + ws + ")" +                          // grp3 ws between
+        "(" + gap + ")" +                          // grp3 ws between
         "(" + josaSequence + ")" +                // grp4 josa sequence
         "($|[^" + cjkBody + "])"                  // grp5 suffix
         let rxWithJosa = try! NSRegularExpression(
-            pattern: patWithJosa,           // 주석 없는 버전
+            pattern: patWithJosa,
             options: [.caseInsensitive]
         )
 
@@ -774,9 +794,9 @@ public final class TermMasker {
         let patBare =
         "(^|[^" + cjkBody + "])" +                // grp1 prefix
         "(" + entityAlts + ")" +                  // grp2 entity
-        "(?=$|[^" + cjkBody + "]|(?:" + ws + ")" + particleTokenAlt + ")"
+        "(?=$|[^" + cjkBody + "]|(?:" + gap + ")" + particleTokenAlt + ")"
         let rxBare = try! NSRegularExpression(
-            pattern: patBare,               // 주석 없는 버전
+            pattern: patBare,
             options: [.caseInsensitive]
         )
 
