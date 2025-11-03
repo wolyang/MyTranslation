@@ -32,8 +32,9 @@ struct BrowserRootView: View {
 
     var body: some View {
         content
-            .fullScreenCover(isPresented: $isGlossaryPresented) {
+            .sheet(isPresented: $isGlossaryPresented) {
                 GlossaryHost(modelContext: modelContext) // NEW
+                    .presentationDetents([.large])
             }
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView() // NEW
