@@ -1,6 +1,7 @@
 // File: URLBarView.swift
 import SwiftUI
 
+/// 브라우저 상단의 URL 입력·엔진 선택·부가 메뉴를 묶은 바입니다.
 struct URLBarView: View {
     @Binding var urlString: String
     var presetURLs: [BrowserViewModel.PresetLink] = []
@@ -66,6 +67,7 @@ struct URLBarView: View {
         .zIndex(2)
     }
 
+    /// URL 입력 필드와 바로가기 버튼을 감싼 뷰입니다.
     private var field: some View {
         HStack(spacing: 8) {
             TextField("https://…", text: $urlString)
@@ -130,6 +132,7 @@ struct URLBarView: View {
         }
     }
 
+    /// 최근 URL 히스토리 중 입력값과 매칭되는 항목을 보여줍니다.
     private var suggestions: some View {
         let recents = filteredRecents
         return VStack(alignment: .leading, spacing: 0) {
@@ -163,6 +166,7 @@ struct URLBarView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// 테스트 URL, 번역 엔진, 더보기 버튼을 묶은 보조 컨트롤 영역입니다.
     private var controlGroup: some View {
         HStack(spacing: 4) {
             if presetURLs.isEmpty == false {
@@ -227,6 +231,7 @@ struct URLBarView: View {
         }
     }
 
+    /// 입력 중인 문자열을 기반으로 최근 URL을 필터링합니다.
     private var filteredRecents: [String] {
         let query = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let urls = storedRecentURLs
@@ -236,11 +241,13 @@ struct URLBarView: View {
             .map { $0 }
     }
 
+    /// 추천 목록을 표시할지 여부입니다.
     private var shouldShowSuggestions: Bool {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         return isFocused && !trimmed.isEmpty && !filteredRecents.isEmpty
     }
 
+    /// `AppStorage`로 보존된 최근 URL 배열 접근자입니다.
     private var storedRecentURLs: [String] {
         get {
             (try? JSONDecoder().decode([String].self, from: recentURLsData)) ?? []
@@ -250,6 +257,7 @@ struct URLBarView: View {
         }
     }
 
+    /// 텍스트 필드 높이를 측정해 추천 목록 위치를 계산합니다.
     private var fieldHeightReader: some View {
         GeometryReader { proxy in
             Color.clear
@@ -260,6 +268,7 @@ struct URLBarView: View {
         }
     }
 
+    /// 전체 바 높이를 측정해 엔진 옵션 팝업의 위치를 정렬합니다.
     private var barHeightReader: some View {
         GeometryReader { proxy in
             Color.clear
@@ -270,6 +279,7 @@ struct URLBarView: View {
         }
     }
 
+    /// 입력을 확정하고 URL을 로드하면서 최근 목록을 업데이트합니다.
     private func commitGo() {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -280,11 +290,13 @@ struct URLBarView: View {
         onGo(trimmed)
     }
 
+    /// 추천 목록에서 선택한 URL을 즉시 입력에 반영합니다.
     private func applySuggestion(_ url: String) {
         urlString = url
         commitGo()
     }
 
+    /// 테스트 URL 프리셋을 적용하고 중복 입력은 새로고침으로 처리합니다.
     private func applyPreset(_ preset: BrowserViewModel.PresetLink) {
         guard urlString != preset.url else {
             commitGo()
@@ -294,6 +306,7 @@ struct URLBarView: View {
         commitGo()
     }
 
+    /// 최근 방문 목록을 최신 순으로 관리합니다.
     private func updateRecents(with newURL: String) {
         guard !newURL.isEmpty else { return }
         var urls = storedRecentURLs
@@ -305,10 +318,12 @@ struct URLBarView: View {
         storedRecentURLs = urls
     }
 
+    /// 외부 컨트롤에서 키보드를 내릴 때 호출됩니다.
     private func endEditing() {
         isFocused = false
     }
 
+    /// 입력값과 현재 페이지를 비교해 이동/새로고침 아이콘을 결정합니다.
     private var goButtonSymbolName: String {
         let trimmedCurrent = currentPageURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedOriginal = originalURLBeforeEditing.trimmingCharacters(in: .whitespacesAndNewlines)

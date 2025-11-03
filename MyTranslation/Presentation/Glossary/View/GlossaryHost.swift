@@ -2,7 +2,8 @@
 import SwiftUI
 import SwiftData
 
-struct GlossaryHost: View { // NEW
+/// `GlossaryTabView`를 시트나 풀스크린 컨텍스트에서 노출할 때 닫기 버튼을 제공하는 래퍼입니다.
+struct GlossaryHost: View {
     @Environment(\.dismiss) private var dismiss
 
     let modelContext: ModelContext

@@ -11,11 +11,14 @@ struct BrowserRootView: View {
     @StateObject private var vm: BrowserViewModel
     @AppStorage("preferredEngine") private var preferredEngineRawValue: String = EngineTag.afm.rawValue
 
-    // TranslationSession 트리거
+    /// 현재 웹뷰에 연결된 번역 세션을 유지·무효화하는 설정 객체입니다.
     @State private var trConfig: TranslationSession.Configuration? = nil
 
+    /// iPhone 사이즈에서 더보기 메뉴를 시트로 띄울지 여부입니다.
     @State private var isMorePresented: Bool = false
+    /// Glossary 시트 노출 여부입니다.
     @State private var isGlossaryPresented: Bool = false
+    /// 설정 화면 노출 여부입니다.
     @State private var isSettingsPresented: Bool = false
 
     init(container: AppContainer) {
@@ -30,14 +33,15 @@ struct BrowserRootView: View {
         )
     }
 
+    /// 브라우저를 루트 화면으로 구성하고 용어집/설정을 시트로 연결합니다.
     var body: some View {
         content
             .sheet(isPresented: $isGlossaryPresented) {
-                GlossaryHost(modelContext: modelContext) // NEW
+                GlossaryHost(modelContext: modelContext)
                     .presentationDetents([.large])
             }
             .sheet(isPresented: $isSettingsPresented) {
-                SettingsView() // NEW
+                SettingsView()
             }
             .task {
                 // 앱 시작 후 한 번 시드 시도
@@ -45,11 +49,12 @@ struct BrowserRootView: View {
             }
     }
 
+    /// 화면 크기에 따라 iPad는 사이드바, iPhone은 시트를 구성하는 컨테이너 뷰입니다.
     @ViewBuilder
     private var content: some View {
         if horizontalSizeClass == .regular {
             NavigationSplitView {
-                MoreSidebarView( // NEW
+                MoreSidebarView(
                     favorites: vm.presetLinks,
                     onSelectFavorite: handleFavorite(_:),
                     onOpenGlossary: { isGlossaryPresented = true },
@@ -65,7 +70,7 @@ struct BrowserRootView: View {
                 browserScene
             }
             .sheet(isPresented: $isMorePresented) {
-                MoreMenuView( // NEW
+                MoreMenuView(
                     favorites: vm.presetLinks,
                     onSelectFavorite: { link in
                         isMorePresented = false
@@ -86,6 +91,7 @@ struct BrowserRootView: View {
     }
 
     private var preferredEngineBinding: Binding<EngineTag> {
+        /// URL 바에서 선택된 번역 엔진과 `AppStorage` 값을 동기화합니다.
         Binding(
             get: { EngineTag(rawValue: preferredEngineRawValue) ?? .afm },
             set: { preferredEngineRawValue = $0.rawValue }
@@ -93,6 +99,7 @@ struct BrowserRootView: View {
     }
 
     private var browserScene: some View {
+        /// 브라우저 웹뷰와 각종 컨트롤을 묶은 본문 뷰입니다.
         VStack(spacing: 12) {
             URLBarView(
                 urlString: $vm.urlString,
@@ -160,6 +167,7 @@ struct BrowserRootView: View {
     }
 
     private func ensureTranslationSession() {
+        /// 초기 진입 시 번역 세션 구성을 준비합니다.
         if trConfig == nil {
             trConfig = TranslationSession.Configuration(
                 source: .init(identifier: "zh-Hans"),
@@ -169,6 +177,7 @@ struct BrowserRootView: View {
     }
 
     private func triggerTranslationSession() {
+        /// 웹뷰 로드가 반복될 때마다 세션을 무효화하여 새 번역을 시작합니다.
         if trConfig == nil {
             ensureTranslationSession()
         } else {
@@ -177,6 +186,7 @@ struct BrowserRootView: View {
     }
 
     private func handleFavorite(_ link: BrowserViewModel.PresetLink) {
+        /// 즐겨찾기에서 선택한 URL을 로드하고 번역 스트림을 이어갑니다.
         vm.load(urlString: link.url)
         triggerTranslationSession()
     }
