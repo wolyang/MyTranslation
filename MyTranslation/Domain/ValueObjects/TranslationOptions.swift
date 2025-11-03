@@ -9,9 +9,23 @@ public struct TranslationOptions {
     public let preserveFormatting: Bool
     public let style: TranslationStyle
     public let applyGlossary: Bool
-    public init(preserveFormatting: Bool = true, style: TranslationStyle = .neutralDictionaryTone, applyGlossary: Bool = true) {
+    public let sourceLanguage: SourceLanguageSelection
+    public let targetLanguage: AppLanguage
+    public let tokenSpacingBehavior: TokenSpacingBehavior
+
+    public init(
+        preserveFormatting: Bool = true,
+        style: TranslationStyle = .neutralDictionaryTone,
+        applyGlossary: Bool = true,
+        sourceLanguage: SourceLanguageSelection,
+        targetLanguage: AppLanguage,
+        tokenSpacingBehavior: TokenSpacingBehavior = .disabled
+    ) {
         self.preserveFormatting = preserveFormatting
         self.style = style
         self.applyGlossary = applyGlossary
+        self.sourceLanguage = sourceLanguage
+        self.targetLanguage = targetLanguage
+        self.tokenSpacingBehavior = tokenSpacingBehavior
     }
 }

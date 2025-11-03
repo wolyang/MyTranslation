@@ -109,6 +109,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             await Task.yield()
             
             let termMasker = TermMasker()
+            termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
             let maskingContext = prepareMaskingContext(
                 from: pendingSegments,
                 glossaryEntries: glossaryEntries,
@@ -221,7 +222,9 @@ final class DefaultTranslationRouter: TranslationRouter {
 
     /// 캐시 식별을 위한 키를 생성한다.
     func cacheKey(for segment: Segment, options: TranslationOptions, engine: EngineTag) -> String {
-        "\(segment.id)|\(engine.rawValue)|pf=\(options.preserveFormatting)|style=\(options.style)|g=\(options.applyGlossary)"
+        let sourceComponent = options.sourceLanguage.resolved?.normalizedForCacheKey ?? "auto"
+        let targetComponent = options.targetLanguage.normalizedForCacheKey
+        return "\(segment.id)|\(engine.rawValue)|pf=\(options.preserveFormatting)|style=\(options.style)|g=\(options.applyGlossary)|src=\(sourceComponent)|tgt=\(targetComponent)"
     }
 
     /// 용어집 사용 여부에 따라 최신 용어집 스냅샷을 가져온다.

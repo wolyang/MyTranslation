@@ -22,10 +22,9 @@ public final class TermMasker {
     // PERSON 큐 언락을 위한 타입
     public typealias PersonQueues = [String: [String]]
 
-    /// 토큰 좌우 공백 보정을 전역적으로 전환할 수 있는 테스트용 플래그
-    public static var enableTokenSpacingAdjustment: Bool = false
-
     private var nextIndex: Int = 1
+
+    public var tokenSpacingBehavior: TokenSpacingBehavior = .disabled
     
     // ===== configurable guards =====
     /// pid -> 단독 허용 성(예: ["1": ["红"]])
@@ -252,7 +251,7 @@ public final class TermMasker {
     /// "토큰을 모두 제거하면 문장부호/공백만 남는" 단락에서만
     /// 토큰 양옆(문장부호 인접)에 공백을 삽입한다.
     func insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(_ text: String) -> String {
-        guard Self.enableTokenSpacingAdjustment else { return text }
+        guard tokenSpacingBehavior == .isolatedSegments else { return text }
 
         let paras = text.components(separatedBy: "\n")
         var outParas: [String] = []
@@ -330,7 +329,6 @@ public final class TermMasker {
 
     /// 개별 token에 대해 '필요할 때만' NBSP를 주입 (치환 후 호출)
     func surroundTokenWithNBSP(_ text: String, token: String) -> String {
-//        guard Self.enableTokenSpacingAdjustment else { return text }
 
         let sentenceBoundaryCharacters: Set<Character> = Set("。！？；：（、“‘〈《【—\n\r!?;:()[]{}\"'".map { $0 })
 

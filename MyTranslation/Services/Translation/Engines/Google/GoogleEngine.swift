@@ -42,8 +42,8 @@ final class GoogleEngine: TranslationEngine {
 
                         let translations = try await client.translate(
                             texts: texts,
-                            target: "ko",
-                            source: "zh-CN",
+                            target: mapTargetLanguage(options.targetLanguage),
+                            source: mapSourceLanguage(options.sourceLanguage),
                             format: "html",
                             onTask: { task in
                                 bag.insert { task.cancel() }
@@ -88,6 +88,63 @@ final class GoogleEngine: TranslationEngine {
             continuation.onTermination = { _ in
                 worker.cancel()
             }
+        }
+    }
+
+    private func mapTargetLanguage(_ language: AppLanguage) -> String {
+        guard let code = language.languageCode?.lowercased() else { return language.code }
+        switch code {
+        case "zh":
+            if language.scriptCode?.lowercased() == "hant" {
+                return "zh-TW"
+            }
+            return "zh-CN"
+        case "ko":
+            return "ko"
+        case "ja":
+            return "ja"
+        case "en":
+            if let region = language.regionCode?.uppercased() {
+                return "en-\(region)"
+            }
+            return "en"
+        case "fr":
+            return "fr"
+        case "de":
+            return "de"
+        case "es":
+            return "es"
+        default:
+            return language.languageCode ?? language.code
+        }
+    }
+
+    private func mapSourceLanguage(_ selection: SourceLanguageSelection) -> String? {
+        guard let language = selection.resolved else { return nil }
+        guard let code = language.languageCode?.lowercased() else { return language.code }
+        switch code {
+        case "zh":
+            if language.scriptCode?.lowercased() == "hant" {
+                return "zh-TW"
+            }
+            return "zh-CN"
+        case "ko":
+            return "ko"
+        case "ja":
+            return "ja"
+        case "en":
+            if let region = language.regionCode?.uppercased() {
+                return "en-\(region)"
+            }
+            return "en"
+        case "fr":
+            return "fr"
+        case "de":
+            return "de"
+        case "es":
+            return "es"
+        default:
+            return language.languageCode ?? language.code
         }
     }
 }

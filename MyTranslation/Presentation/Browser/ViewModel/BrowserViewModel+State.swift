@@ -2,6 +2,14 @@ import CoreGraphics
 import Foundation
 
 extension BrowserViewModel {
+    struct PageLanguagePreference: Equatable {
+        var source: SourceLanguageSelection
+        var target: AppLanguage
+
+        var sourceDescription: String { source.description }
+        var targetDescription: String { target.displayName }
+    }
+
     struct PageTranslationState {
         var url: URL
         var segments: [Segment]
@@ -12,8 +20,9 @@ extension BrowserViewModel {
         var scheduledSegmentIDs: Set<String>
         var summary: TranslationStreamSummary?
         var lastEngineID: TranslationEngineID?
+        var languagePreference: PageLanguagePreference
 
-        init(url: URL, segments: [Segment]) {
+        init(url: URL, segments: [Segment], languagePreference: PageLanguagePreference) {
             self.url = url
             self.segments = segments
             self.totalSegments = segments.count
@@ -23,6 +32,7 @@ extension BrowserViewModel {
             self.scheduledSegmentIDs = []
             self.summary = nil
             self.lastEngineID = nil
+            self.languagePreference = languagePreference
         }
     }
 

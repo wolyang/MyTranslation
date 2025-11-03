@@ -34,10 +34,10 @@ final class DeepLTranslateClient {
     struct Config {
         let apiKey: String
         let useFreeTier: Bool
-        let defaultTarget: String
+        let defaultTarget: String?
         let defaultSource: String?
 
-        init(apiKey: String, useFreeTier: Bool = true, defaultTarget: String = "KO", defaultSource: String? = "ZH") {
+        init(apiKey: String, useFreeTier: Bool = true, defaultTarget: String? = nil, defaultSource: String? = nil) {
             self.apiKey = apiKey
             self.useFreeTier = useFreeTier
             self.defaultTarget = defaultTarget
@@ -94,7 +94,7 @@ final class DeepLTranslateClient {
 
         let payload = Payload(
             text: texts,
-            target_lang: (target ?? config.defaultTarget).uppercased(),
+            target_lang: (target ?? config.defaultTarget ?? "").uppercased(),
             source_lang: (source ?? config.defaultSource)?.uppercased(),
             preserve_formatting: preserveFormatting,
             formality: formality?.rawValue

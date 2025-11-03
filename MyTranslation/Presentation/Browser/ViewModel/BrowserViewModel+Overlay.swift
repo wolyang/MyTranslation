@@ -159,9 +159,10 @@ private extension BrowserViewModel {
         overlayTranslationTasks[key]?.cancel()
         RouterCancellationCenter.shared.cancel(runID: key)
 
-        let options = TranslationOptions()
+        let preference = currentPageTranslation?.languagePreference ?? languagePreference
+        let options = makeTranslationOptions(using: preference)
         let bag = RouterCancellationCenter.shared.bag(for: key)
-        
+
         let worker = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             

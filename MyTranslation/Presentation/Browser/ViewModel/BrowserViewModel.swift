@@ -33,6 +33,7 @@ final class BrowserViewModel: ObservableObject {
     @Published var translationProgress: Double = 0
     @Published var failedSegmentIDs: Set<String> = []
     @Published private(set) var favoriteLinks: [UserSettings.FavoriteLink]
+    @Published var languagePreference: PageLanguagePreference
 
     weak var attachedWebView: WKWebView?
     var currentURL: URL? { URL(string: urlString) }
@@ -52,6 +53,7 @@ final class BrowserViewModel: ObservableObject {
     var noBodyTextRetryCount = 0
     var selectedSegment: Segment?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
+    private var languagePreferenceByURL: [URL: PageLanguagePreference] = [:]
 
     let extractor: ContentExtractor
     let router: TranslationRouter
@@ -82,12 +84,85 @@ final class BrowserViewModel: ObservableObject {
 
         let resolvedFavorites = favoriteLinks ?? settings.favoriteLinks
         self._favoriteLinks = Published(initialValue: resolvedFavorites)
+
+        let defaultPreference = PageLanguagePreference(
+            source: LanguageCatalog.defaultSourceSelection(),
+            target: LanguageCatalog.defaultTargetLanguage()
+        )
+
+        if let initialURLString = initialURL, let url = URL(string: initialURLString) {
+            languagePreferenceByURL[url] = defaultPreference
+            self._languagePreference = Published(initialValue: defaultPreference)
+        } else {
+            self._languagePreference = Published(initialValue: defaultPreference)
+        }
     }
 
     func normalizedURL(from string: String) -> URL? {
         guard string.isEmpty == false else { return nil }
         if let url = URL(string: string), url.scheme != nil { return url }
         return URL(string: "https://" + string)
+    }
+
+    private func languagePreference(for url: URL) -> PageLanguagePreference {
+        if let stored = languagePreferenceByURL[url] {
+            return stored
+        }
+        let defaultPreference = PageLanguagePreference(
+            source: LanguageCatalog.defaultSourceSelection(),
+            target: LanguageCatalog.defaultTargetLanguage()
+        )
+        languagePreferenceByURL[url] = defaultPreference
+        return defaultPreference
+    }
+
+    private func persistLanguagePreference(for url: URL) {
+        languagePreferenceByURL[url] = languagePreference
+    }
+
+    func updateSourceLanguage(_ selection: SourceLanguageSelection, triggeredByUser: Bool) {
+        languagePreference.source = selection
+        if let url = currentPageTranslation?.url {
+            languagePreferenceByURL[url] = languagePreference
+            currentPageTranslation?.languagePreference = languagePreference
+        } else if let currentURL = attachedWebView?.url {
+            languagePreferenceByURL[currentURL] = languagePreference
+        }
+        if triggeredByUser {
+            resetTranslationStateForLanguageChange()
+            retranslateCurrentPage()
+        }
+    }
+
+    func updateTargetLanguage(_ language: AppLanguage, triggeredByUser: Bool) {
+        languagePreference.target = language
+        if let url = currentPageTranslation?.url {
+            languagePreferenceByURL[url] = languagePreference
+            currentPageTranslation?.languagePreference = languagePreference
+        } else if let currentURL = attachedWebView?.url {
+            languagePreferenceByURL[currentURL] = languagePreference
+        }
+        if triggeredByUser {
+            resetTranslationStateForLanguageChange()
+            retranslateCurrentPage()
+        }
+    }
+
+    private func resetTranslationStateForLanguageChange() {
+        currentPageTranslation?.buffersByEngine.removeAll()
+        currentPageTranslation?.failedSegmentIDs.removeAll()
+        currentPageTranslation?.finalizedSegmentIDs.removeAll()
+        currentPageTranslation?.scheduledSegmentIDs.removeAll()
+        currentPageTranslation?.summary = nil
+        currentPageTranslation?.lastEngineID = nil
+        failedSegmentIDs.removeAll()
+        translationProgress = 0
+        lastStreamPayloads = []
+    }
+
+    private func retranslateCurrentPage() {
+        guard showOriginal == false, let webView = attachedWebView else { return }
+        requestTranslation(on: webView)
     }
 
     func load(urlString: String) {

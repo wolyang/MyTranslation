@@ -44,6 +44,8 @@ final class DeepLEngine: TranslationEngine {
 
                         let translations = try await client.translate(
                             texts: texts,
+                            target: mapTargetLanguage(options.targetLanguage),
+                            source: mapSourceLanguage(options.sourceLanguage),
                             preserveFormatting: options.preserveFormatting,
                             formality: mapFormality(style: options.style),
                             onTask: { task in
@@ -97,6 +99,69 @@ final class DeepLEngine: TranslationEngine {
             return .preferLess
         case .neutralDictionaryTone:
             return .defaultTone
+        }
+    }
+
+    private func mapTargetLanguage(_ language: AppLanguage) -> String {
+        guard let code = language.languageCode?.lowercased() else { return language.code.uppercased() }
+        switch code {
+        case "ko":
+            return "KO"
+        case "ja":
+            return "JA"
+        case "zh":
+            if language.scriptCode?.lowercased() == "hant" {
+                return "ZH-HANT"
+            }
+            return "ZH"
+        case "en":
+            if let region = language.regionCode?.uppercased() {
+                if region == "GB" { return "EN-GB" }
+                if region == "US" { return "EN-US" }
+            }
+            return "EN-US"
+        case "de":
+            return "DE"
+        case "fr":
+            return "FR"
+        case "es":
+            return "ES"
+        case "it":
+            return "IT"
+        default:
+            return code.uppercased()
+        }
+    }
+
+    private func mapSourceLanguage(_ selection: SourceLanguageSelection) -> String? {
+        guard let language = selection.resolved else { return nil }
+        guard let code = language.languageCode?.lowercased() else { return language.code.uppercased() }
+        switch code {
+        case "ko":
+            return "KO"
+        case "ja":
+            return "JA"
+        case "zh":
+            if language.scriptCode?.lowercased() == "hant" {
+                return "ZH-HANT"
+            }
+            return "ZH"
+        case "en":
+            if let region = language.regionCode?.uppercased() {
+                if region == "GB" { return "EN-GB" }
+                if region == "US" { return "EN-US" }
+            }
+            return "EN"
+        case "de":
+            return "DE"
+        case "fr":
+            return "FR"
+        case "es":
+            return "ES"
+        case "it":
+            return "IT"
+        default:
+            return code.uppercased()
         }
     }
 }
