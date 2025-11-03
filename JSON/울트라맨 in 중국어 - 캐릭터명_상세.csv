@@ -1,8 +1,8 @@
 person_id,part,source,target,variants
 1,family,红,쿠레나이,홍
-1,given,凯,가이,"카이,개"
-2,family,伽古拉斯,쟈그라스,가굴라스
-2,given,伽古拉,쟈그라,"가골라,깔라구라,가굴라,가구라,가고라"
+1,given,凯,가이,카이
+2,family,伽古拉斯,쟈그라스,"가굴라스,가구라스"
+2,given,伽古拉,쟈그라,"가골라,깔라구라,가굴라,가구라,가고라,가그라,재거"
 2,alias,伽古伽古,쟈그쟈그,
 2,alias,伽古,쟈그,
 2,alias,伽,쟈,
@@ -10,18 +10,18 @@ person_id,part,source,target,variants
 2,alias,尖角星人,뾰족뾰족성인,
 2,alias,刺刺星人,뾰족뾰족성인,
 3,family,梦野,유메노,
-3,given,奈绪美,나오미,
+3,given,奈绪美,나오미,나수미
 4,family,早见,하야미,
-4,given,善太,젯타,
+4,given,善太,젯타,선태
 5,family,涉川,시부카와,
 5,given,一彻,잇테츠,
 6,family,朝仓,아사쿠라,
 6,given,陆,리쿠,
 9,family,夏川,나츠카와,
-9,given,遥辉,하루키,요휘
+9,given,遥辉,하루키,"요휘, 야오키, 야오후이"
 9,given,姚辉,하루키,
 9,given,春树,하루키,
-10,family,蛇仓,헤비쿠라,
+10,family,蛇仓,헤비쿠라,"뱀창, 사창"
 10,given,正太,쇼타,
 10,given,翔太,쇼타,
 11,family,中岛,나카시마,
@@ -31,3 +31,4 @@ person_id,part,source,target,variants
 12,alias,叶虎,바코,
 13,family,大田,오오타,
 13,given,结花,유카,매듭꽃
+14,given,碧兰琪,비란키,빌란치

@@ -1514,6 +1514,30 @@
       "target": "시쇼",
       "category": "기타",
       "variants": []
+    },
+    {
+      "source": "奥特",
+      "target": "울트라",
+      "category": "기타",
+      "variants": []
+    },
+    {
+      "source": "凯桑",
+      "target": "가이 씨",
+      "category": "기타",
+      "variants": []
+    },
+    {
+      "source": "魔人",
+      "target": "마인",
+      "category": "기타",
+      "variants": []
+    },
+    {
+      "source": "队长",
+      "target": "대장",
+      "category": "기타",
+      "variants": []
     }
   ],
   "people": [
@@ -1535,8 +1559,7 @@
           ],
           "target": "가이",
           "variants": [
-            "카이",
-            "개"
+            "카이"
           ]
         }
       },
@@ -1551,6 +1574,7 @@
           ],
           "target": "쟈그라스",
           "variants": [
+            "가구라스",
             "가굴라스"
           ]
         },
@@ -1564,7 +1588,9 @@
             "가고라",
             "가골라",
             "가구라",
-            "가굴라"
+            "가굴라",
+            "가그라",
+            "재거"
           ]
         }
       },
@@ -1622,7 +1648,9 @@
             "奈绪美"
           ],
           "target": "나오미",
-          "variants": []
+          "variants": [
+            "나수미"
+          ]
         }
       },
       "aliases": []
@@ -1642,7 +1670,9 @@
             "善太"
           ],
           "target": "젯타",
-          "variants": []
+          "variants": [
+            "선태"
+          ]
         }
       },
       "aliases": []
@@ -1705,6 +1735,8 @@
           ],
           "target": "하루키",
           "variants": [
+            "야오후이",
+            "야오키",
             "요휘"
           ]
         }
@@ -1719,7 +1751,10 @@
             "蛇仓"
           ],
           "target": "헤비쿠라",
-          "variants": []
+          "variants": [
+            "뱀창",
+            "사창"
+          ]
         },
         "given": {
           "source": [
@@ -1797,6 +1832,26 @@
           "target": "유카",
           "variants": [
             "매듭꽃"
+          ]
+        }
+      },
+      "aliases": []
+    },
+    {
+      "person_id": "14",
+      "name": {
+        "family": {
+          "source": [],
+          "target": null,
+          "variants": []
+        },
+        "given": {
+          "source": [
+            "碧兰琪"
+          ],
+          "target": "비란키",
+          "variants": [
+            "빌란치"
           ]
         }
       },

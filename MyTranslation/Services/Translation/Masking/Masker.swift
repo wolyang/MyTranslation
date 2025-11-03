@@ -706,8 +706,8 @@ public final class TermMasker {
     }
     
     private let damagedTokenRx = try! NSRegularExpression(
-        pattern: "(?<![A-Za-z0-9_])(?:_{1,2})?ENT[#＃](\\d+)(?:_{1,2})?(?![A-Za-z0-9_])",
-        options: [.caseInsensitive]
+        pattern: "(?i)(?:_{0,2})ENT\\s*[#＃]\\s*(\\d+)(?:_{0,2})",
+        options: []
     )
 
     func normalizeDamagedTokens(_ text: String) -> String {
