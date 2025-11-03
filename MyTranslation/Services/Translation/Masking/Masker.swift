@@ -747,7 +747,6 @@ public final class TermMasker {
         names: [NameGlossary],
         mode: EntityMode = .both
     ) -> String {
-
         // --- [0] 준비: 소스 정규화 & 엔터티/조사 alternation 구성 ---
         let textNFC = text.precomposedStringWithCompatibilityMapping
         func esc(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
@@ -768,11 +767,12 @@ public final class TermMasker {
 
         // 유니코드 '단어' 경계 집합: 모든 Letter/Number + '_'. (이전엔 Hangul 누락)
         let cjkBody = "\\p{L}\\p{N}_"
-        let ws = "(?:\\s|\\u00A0)*"
-
-        let wsAny    = "(?:\\s|\\u00A0)*"  // 기존 ws 이름을 바꿔 보관
+        let pre = "(?<![" + cjkBody + "])"
+        let suf = "(?![" + cjkBody + "])"
+        
+        let wsZ = "(?:\\s|\\u00A0|\\u200B|\\u200C|\\u200D|\\uFEFF)*" // ← ZWSP/ZWJ/ZWNJ/BOM 추가
         let softPunct = "[\"'“”’»«》〈〉〉》」』】）\\)\\]\\}]"
-        let gap = "(?:" + wsAny + "(?:" + softPunct + ")?" + wsAny + ")"  // 엔터티↔조사 사이 ‘얇은 갭’
+        let gap = "(?:" + wsZ + "(?:" + softPunct + ")?" + wsZ + ")"  // 엔터티↔조사 사이 ‘얇은 갭’
 
         let particleTokenAlt = "(?:" + particleTokenAlternation + ")"
 
@@ -784,62 +784,67 @@ public final class TermMasker {
 
         // --- [1] 1패스: [조사 O] 패턴 (조사 ‘뒤’에서 경계 검사) ---
         let patWithJosa =
-        "(^|[^" + cjkBody + "])" +                // grp1 prefix
-        "(" + entityAlts + ")" +                  // grp2 entity
-        "(" + gap + ")" +                          // grp3 ws between
-        "(" + josaSequence + ")" +                // grp4 josa sequence
-        "($|[^" + cjkBody + "])"                  // grp5 suffix
+        pre +
+        "(" + entityAlts + ")" +                  // grp1 entity
+        "(" + gap + ")" +                          // grp2 ws between
+        "(" + josaSequence + ")" +                // grp3 josa sequence
+        suf                  // grp5 suffix
         let rxWithJosa = try! NSRegularExpression(
             pattern: patWithJosa,
             options: [.caseInsensitive]
         )
 
         var out = textNFC
-        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange, g4:NSRange, g5:NSRange)] = []
+        var matches1: [(whole:NSRange, g1:NSRange, g2:NSRange, g3:NSRange)] = []
         let ns1 = out as NSString
         rxWithJosa.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns1.length)) { m, _, _ in
             guard let m = m else { return }
-            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3), m.range(at: 4), m.range(at: 5)))
+            matches1.append((m.range(at: 0), m.range(at: 1), m.range(at: 2), m.range(at: 3)))
         }
 
         for m in matches1.reversed() {
             let ns = out as NSString
-            let prefix = ns.substring(with: m.g1)
-            let name   = ns.substring(with: m.g2)
-            let spacing = ns.substring(with: m.g3)
-            let josa   = ns.substring(with: m.g4)
-            let suffix = ns.substring(with: m.g5)
+            let entity  = ns.substring(with: m.g1)
+            let spacing = ns.substring(with: m.g2)
+            let josa    = ns.substring(with: m.g3)
 
-            let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: josa,
-                                                       locksByToken: locksByToken, names: names, mode: mode)
-            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + spacing + chosen + suffix)
+            let (canon, chosen) = resolveEntityAndJosa(
+                nameText: entity, josaCandidate: josa,
+                locksByToken: locksByToken, names: names, mode: mode
+            )
+            out = ns.replacingCharacters(in: m.whole, with: canon + spacing + chosen)
         }
 
         // --- [2] 2패스: [조사 X] 패턴 (엔터티 ‘바로 뒤’에서 경계 검사) ---
         let patBare =
-        "(^|[^" + cjkBody + "])" +                // grp1 prefix
-        "(" + entityAlts + ")" +                  // grp2 entity
-        "(?=$|[^" + cjkBody + "]|(?:" + gap + ")" + particleTokenAlt + ")"
+        pre +
+        "(" + entityAlts + ")" +                  // grp1 entity
+        "(?=" +                       // lookahead으로 조사 존재/경계만 확인
+            "$|[^" + cjkBody + "]|(?:" + gap + ")" + particleTokenAlt +
+        ")"
         let rxBare = try! NSRegularExpression(
             pattern: patBare,
             options: [.caseInsensitive]
         )
 
-        var matches2: [(whole:NSRange, g1:NSRange, g2:NSRange)] = []
+        var matches2: [(whole:NSRange, g1:NSRange)] = []
         let ns2 = out as NSString
         rxBare.enumerateMatches(in: out, options: [], range: NSRange(location: 0, length: ns2.length)) { m, _, _ in
             guard let m = m else { return }
-            matches2.append((m.range(at: 0), m.range(at: 1), m.range(at: 2)))
+            matches2.append((m.range(at: 0), m.range(at: 1)))
         }
 
         for m in matches2.reversed() {
             let ns = out as NSString
-            let prefix = ns.substring(with: m.g1)
-            let name   = ns.substring(with: m.g2)
+            let name = ns.substring(with: m.g1)
 
-            let (canon, chosen) = resolveEntityAndJosa(nameText: name, josaCandidate: nil,
-                                                       locksByToken: locksByToken, names: names, mode: mode)
-            out = ns.replacingCharacters(in: m.whole, with: prefix + canon + chosen)
+            let (canon, chosen) = resolveEntityAndJosa(
+                nameText: name, josaCandidate: nil,
+                locksByToken: locksByToken, names: names, mode: mode
+            )
+
+            // prefix 캡처가 없으므로, 바로 엔티티 범위 전체를 교체
+            out = ns.replacingCharacters(in: m.whole, with: canon + chosen)
         }
 
         return out
