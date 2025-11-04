@@ -40,6 +40,19 @@ enum LanguageCatalog {
 
     static func defaultTargetLanguage() -> AppLanguage {
         let preferred = Locale.preferredLanguages.first ?? Locale.current.identifier
+        let components = Locale.Components(identifier: preferred)
+
+        if let languageCode = components.languageComponents.languageCode?.identifier {
+            var identifier = languageCode
+
+            if languageCode.lowercased() == "zh",
+               let script = components.languageComponents.script?.identifier {
+                identifier += "-\(script)"
+            }
+
+            return AppLanguage(code: identifier)
+        }
+
         return AppLanguage(code: preferred)
     }
 

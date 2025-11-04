@@ -28,16 +28,20 @@ public struct AppLanguage: Hashable, Codable, Sendable, Identifiable {
         return code
     }
 
+    private var localeComponents: Locale.Components {
+        Locale.Components(identifier: code)
+    }
+
     public var languageCode: String? {
-        Locale.components(fromIdentifier: code)[NSLocale.Key.languageCode.rawValue]
+        localeComponents.languageComponents.languageCode?.identifier
     }
 
     public var scriptCode: String? {
-        Locale.components(fromIdentifier: code)[NSLocale.Key.scriptCode.rawValue]
+        localeComponents.languageComponents.script?.identifier
     }
 
     public var regionCode: String? {
-        Locale.components(fromIdentifier: code)[NSLocale.Key.countryCode.rawValue]
+        localeComponents.region?.identifier
     }
 
     public var normalizedForCacheKey: String {

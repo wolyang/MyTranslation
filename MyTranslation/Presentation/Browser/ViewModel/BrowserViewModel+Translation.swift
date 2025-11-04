@@ -539,7 +539,7 @@ private extension BrowserViewModel {
     private func detectSourceLanguage(in segments: [Segment]) -> AppLanguage? {
         guard segments.isEmpty == false else { return nil }
         let recognizer = NLLanguageRecognizer()
-        recognizer.languageConstraints = nil
+        recognizer.languageConstraints = []
 
         let samples = segments.prefix(40).map { $0.originalText }.filter { !$0.isEmpty }
         guard samples.isEmpty == false else { return nil }
