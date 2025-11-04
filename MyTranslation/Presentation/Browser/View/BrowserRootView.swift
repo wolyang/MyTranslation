@@ -150,6 +150,8 @@ struct BrowserRootView: View {
                 showOriginal: $vm.showOriginal,
                 isEditing: $vm.isEditingURL,
                 isTranslating: $vm.isTranslating,
+                sourceLanguage: .init(get: { vm.languagePreference.source }, set: { _ in }),
+                targetLanguage: .init(get: { vm.languagePreference.target }, set: { _ in }),
                 currentPageURLString: vm.currentPageURLString,
                 onGo: { url in
                     vm.load(urlString: url)
@@ -157,6 +159,12 @@ struct BrowserRootView: View {
                 },
                 onSelectEngine: { engine, wasShowingOriginal in
                     vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
+                },
+                onSelectSourceLanguage: { selection in
+                    vm.updateSourceLanguage(selection, triggeredByUser: true)
+                },
+                onSelectTargetLanguage: { language in
+                    vm.updateTargetLanguage(language, triggeredByUser: true)
                 },
                 onTapMore: horizontalSizeClass == .regular ? nil : { isMorePresented = true }
             )
@@ -195,6 +203,9 @@ struct BrowserRootView: View {
         .onChange(of: vm.showOriginal) { _, newValue in
             vm.onShowOriginalChanged(newValue)
         }
+        .onChange(of: vm.languagePreference) { _, _ in
+            updateTranslationSessionConfiguration()
+        }
         .onChange(of: preferredEngineRawValue) { _, newValue in
             let engine = EngineTag(rawValue: newValue) ?? .afm
             vm.settings.preferredEngine = engine
@@ -210,10 +221,7 @@ struct BrowserRootView: View {
     private func ensureTranslationSession() {
         /// 초기 진입 시 번역 세션 구성을 준비합니다.
         if trConfig == nil {
-            trConfig = TranslationSession.Configuration(
-                source: .init(identifier: "zh-Hans"),
-                target: .init(identifier: "ko")
-            )
+            updateTranslationSessionConfiguration()
         }
     }
 
@@ -224,6 +232,16 @@ struct BrowserRootView: View {
         } else {
             trConfig?.invalidate()
         }
+    }
+
+    private func updateTranslationSessionConfiguration() {
+        trConfig?.invalidate()
+        let sourceIdentifier = vm.languagePreference.source.effectiveLanguage.code
+        let targetIdentifier = vm.languagePreference.target.code
+        trConfig = TranslationSession.Configuration(
+            source: .init(identifier: sourceIdentifier),
+            target: .init(identifier: targetIdentifier)
+        )
     }
 
     private func handleFavorite(_ link: UserSettings.FavoriteLink) {

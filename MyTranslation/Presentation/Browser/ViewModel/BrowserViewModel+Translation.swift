@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import WebKit
 
 private func _id(_ id: UUID?) -> String { id?.uuidString ?? "nil" }
@@ -22,7 +23,7 @@ extension BrowserViewModel {
         let curURLString = url.absoluteString
         settings.lastVisitedURL = curURLString
         let isNewPage = (prevEffectiveURL != curURLString)
-        
+
         print("[T] didFinish url=\(curURLString) isNew=\(isNewPage) curPage(before)=\(prevEffectiveURL) act=\(_id(activeTranslationID))")
 
         // 주소창 업데이트
@@ -41,6 +42,10 @@ extension BrowserViewModel {
             lastStreamPayloads = []
             failedSegmentIDs = []
             translationProgress = 0
+        }
+
+        if isNewPage {
+            languagePreference = languagePreference(for: url)
         }
 
         if !showOriginal {
@@ -240,6 +245,9 @@ extension BrowserViewModel {
         print(
             "[T] willNavigate url=\(_url(webView.url)) act=\(_id(activeTranslationID))"
         )
+        if let url = currentPageTranslation?.url {
+            persistLanguagePreference(for: url)
+        }
         cancelActiveTranslation()
         if let coordinator = webView.navigationDelegate as? WebContainerView.Coordinator {
             coordinator.resetMarks()
@@ -365,10 +373,17 @@ private extension BrowserViewModel {
             noBodyTextRetryCount = 0
             
             // 상태 초기화
-            var state = currentPageTranslation ?? PageTranslationState(url: url, segments: [])
+            if case .auto(let detected) = languagePreference.source, detected == nil {
+                if let detectedLanguage = detectSourceLanguage(in: segments) {
+                    updateSourceLanguage(.auto(detected: detectedLanguage), triggeredByUser: false)
+                }
+            }
+
+            var state = currentPageTranslation ?? PageTranslationState(url: url, segments: [], languagePreference: languagePreference)
             state.url = url
             state.segments = segments
             state.totalSegments = segments.count
+            state.languagePreference = languagePreference
             state.buffersByEngine[engineID] = state.buffersByEngine[engineID] ?? .init()
             state.lastEngineID = engineID
             state.failedSegmentIDs.removeAll()
@@ -376,7 +391,7 @@ private extension BrowserViewModel {
             state.scheduledSegmentIDs.removeAll()
             state.summary = nil
             currentPageTranslation = state
-            
+
             lastSegments = segments
             lastStreamPayloads = []
             translationProgress = segments.isEmpty ? 1.0 : 0.0
@@ -402,6 +417,7 @@ private extension BrowserViewModel {
             state.lastEngineID = engineID
             state.failedSegmentIDs.removeAll()
             state.scheduledSegmentIDs.removeAll()
+            state.languagePreference = languagePreference
             currentPageTranslation = state
             failedSegmentIDs = state.failedSegmentIDs
             updateProgress(for: engineID)
@@ -430,10 +446,12 @@ private extension BrowserViewModel {
         webView: WKWebView
     ) async throws -> TranslationStreamSummary {
         print("[T] runTranslationStream START reqID: \(requestID.uuidString)")
+        let preference = currentPageTranslation?.languagePreference ?? languagePreference
+        let options = makeTranslationOptions(using: preference)
         let summary = try await router.translateStream(
             runID: runID,
             segments: segments,
-            options: TranslationOptions(),
+            options: options,
             preferredEngine: engineID
         ) { [weak self, weak webView] event in
             Task { @MainActor in
@@ -516,6 +534,24 @@ private extension BrowserViewModel {
         let ex = WKWebViewScriptAdapter(webView: webView)
         replacer.restore(using: ex)
         _ = try? await ex.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
+    }
+
+    private func detectSourceLanguage(in segments: [Segment]) -> AppLanguage? {
+        guard segments.isEmpty == false else { return nil }
+        let recognizer = NLLanguageRecognizer()
+        recognizer.languageConstraints = []
+
+        let samples = segments.prefix(40).map { $0.originalText }.filter { !$0.isEmpty }
+        guard samples.isEmpty == false else { return nil }
+
+        for text in samples {
+            recognizer.processString(text)
+        }
+
+        guard let dominant = recognizer.dominantLanguage else { return nil }
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
+        guard let confidence = hypotheses[dominant], confidence >= 0.2 else { return nil }
+        return AppLanguage(code: dominant.rawValue)
     }
 
     /// 스트림으로 전달된 번역 결과를 캐시에 반영하고 웹뷰에 적용한다.
@@ -641,6 +677,23 @@ private extension BrowserViewModel {
 }
 
 extension BrowserViewModel {
+    /// 페이지별 언어 선호를 기반으로 엔진 호출 옵션을 조립한다.
+    func makeTranslationOptions(using preference: PageLanguagePreference) -> TranslationOptions {
+        TranslationOptions(
+            preserveFormatting: true,
+            style: .neutralDictionaryTone,
+            applyGlossary: true,
+            sourceLanguage: preference.source,
+            targetLanguage: preference.target,
+            tokenSpacingBehavior: spacingBehavior(for: preference)
+        )
+    }
+
+    /// 대상 언어가 CJK인지에 따라 토큰 간 공백 삽입 여부를 결정한다.
+    private func spacingBehavior(for preference: PageLanguagePreference) -> TokenSpacingBehavior {
+        preference.target.isCJK ? .disabled : .isolatedSegments
+    }
+
     private struct PreparedState: Sendable {
         let url: URL
         let engineID: TranslationEngineID

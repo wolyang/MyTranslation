@@ -8,10 +8,14 @@ struct URLBarView: View {
     @Binding var showOriginal: Bool
     @Binding var isEditing: Bool
     @Binding var isTranslating: Bool
+    @Binding var sourceLanguage: SourceLanguageSelection
+    @Binding var targetLanguage: AppLanguage
 
     var currentPageURLString: String
     var onGo: (String) -> Void
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
+    var onSelectSourceLanguage: (SourceLanguageSelection) -> Void = { _ in }
+    var onSelectTargetLanguage: (AppLanguage) -> Void = { _ in }
     var onTapMore: (() -> Void)? = nil
 
     @FocusState var isFocused: Bool
@@ -48,6 +52,8 @@ struct URLBarView: View {
                     showOriginal: $showOriginal,
                     isShowingEngineOptions: $isShowingEngineOptions,
                     isTranslating: $isTranslating,
+                    sourceLanguage: $sourceLanguage,
+                    targetLanguage: $targetLanguage,
                     onInteract: endEditing,
                     onTapMore: onTapMore
                 )
@@ -58,15 +64,19 @@ struct URLBarView: View {
         .overlay(alignment: .topLeading) {
             if isShowingEngineOptions {
                 EnginePickerOptionsContainer {
-                    EnginePickerOptionsView(
-                        selectedEngine: $selectedEngine,
-                        showOriginal: $showOriginal,
-                        onInteract: endEditing,
-                        onSelectEngine: { engine, wasShowingOriginal in
-                            onSelectEngine(engine, wasShowingOriginal)
-                        },
-                        dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
-                    )
+                EnginePickerOptionsView(
+                    selectedEngine: $selectedEngine,
+                    showOriginal: $showOriginal,
+                    sourceLanguage: $sourceLanguage,
+                    targetLanguage: $targetLanguage,
+                    onInteract: endEditing,
+                    onSelectEngine: { engine, wasShowingOriginal in
+                        onSelectEngine(engine, wasShowingOriginal)
+                    },
+                    onSelectSourceLanguage: onSelectSourceLanguage,
+                    onSelectTargetLanguage: onSelectTargetLanguage,
+                    dismiss: { withAnimation(.easeInOut(duration: 0.2)) { isShowingEngineOptions = false } }
+                )
                 }
                 .offset(y: barHeight + 6)
                 .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))

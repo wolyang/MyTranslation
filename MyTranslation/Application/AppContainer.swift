@@ -36,9 +36,7 @@ final class AppContainer: ObservableObject {
         self.deeplClient = DeepLTranslateClient(
             config: .init(
                 apiKey: APIKeys.deepl,
-                useFreeTier: true, // 필요 시 유료 엔드포인트 사용으로 변경
-                defaultTarget: "KO",
-                defaultSource: "ZH"
+                useFreeTier: true // 필요 시 유료 엔드포인트 사용으로 변경
             )
         )
         self.deeplEngine = DeepLEngine(client: deeplClient)

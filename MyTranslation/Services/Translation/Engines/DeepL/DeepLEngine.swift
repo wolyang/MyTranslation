@@ -44,6 +44,8 @@ final class DeepLEngine: TranslationEngine {
 
                         let translations = try await client.translate(
                             texts: texts,
+                            target: mapTargetLanguage(options.targetLanguage),
+                            source: mapSourceLanguage(options.sourceLanguage),
                             preserveFormatting: options.preserveFormatting,
                             formality: mapFormality(style: options.style),
                             onTask: { task in
@@ -97,6 +99,49 @@ final class DeepLEngine: TranslationEngine {
             return .preferLess
         case .neutralDictionaryTone:
             return .defaultTone
+        }
+    }
+
+    /// 애플 언어 코드를 DeepL의 대상 언어 코드로 변환한다.
+    private func mapTargetLanguage(_ language: AppLanguage) -> String {
+        mapLanguage(language, englishDefault: "EN-US")
+    }
+
+    /// 출발 언어가 수동으로 지정된 경우 DeepL 코드로 변환한다. 자동 감지면 nil.
+    private func mapSourceLanguage(_ selection: SourceLanguageSelection) -> String? {
+        guard let language = selection.resolved else { return nil }
+        return mapLanguage(language, englishDefault: "EN")
+    }
+
+    /// DeepL에서 사용하는 언어 코드 매핑의 공통 로직.
+    private func mapLanguage(_ language: AppLanguage, englishDefault: String) -> String {
+        guard let code = language.languageCode?.lowercased() else { return language.code.uppercased() }
+        switch code {
+        case "ko":
+            return "KO"
+        case "ja":
+            return "JA"
+        case "zh":
+            if language.scriptCode?.lowercased() == "hant" {
+                return "ZH-HANT"
+            }
+            return "ZH"
+        case "en":
+            if let region = language.regionCode?.uppercased() {
+                if region == "GB" { return "EN-GB" }
+                if region == "US" { return "EN-US" }
+            }
+            return englishDefault
+        case "de":
+            return "DE"
+        case "fr":
+            return "FR"
+        case "es":
+            return "ES"
+        case "it":
+            return "IT"
+        default:
+            return code.uppercased()
         }
     }
 }

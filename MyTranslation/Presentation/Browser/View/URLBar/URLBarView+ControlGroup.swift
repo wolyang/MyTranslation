@@ -6,6 +6,8 @@ struct URLBarControlGroup: View {
     @Binding var showOriginal: Bool
     @Binding var isShowingEngineOptions: Bool
     @Binding var isTranslating: Bool
+    @Binding var sourceLanguage: SourceLanguageSelection
+    @Binding var targetLanguage: AppLanguage
 
     var onInteract: () -> Void
     var onTapMore: (() -> Void)?
@@ -17,6 +19,8 @@ struct URLBarControlGroup: View {
                 showOriginal: $showOriginal,
                 isShowingOptions: $isShowingEngineOptions,
                 isTranslating: $isTranslating,
+                sourceLanguage: $sourceLanguage,
+                targetLanguage: $targetLanguage,
                 onInteract: onInteract
             )
 
@@ -31,8 +35,9 @@ struct URLBarControlGroup: View {
                         Text("더보기")
                             .font(.caption2)
                             .foregroundStyle(Color.accentColor)
+                            .frame(height: 16)
                     }
-                    .frame(width: 30)
+                    .frame(width: 32)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 4)
                     .contentShape(Rectangle())
