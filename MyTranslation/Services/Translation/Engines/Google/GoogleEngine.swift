@@ -93,36 +93,17 @@ final class GoogleEngine: TranslationEngine {
 
     /// 애플 언어 코드를 Google 번역의 대상 언어 코드로 변환한다.
     private func mapTargetLanguage(_ language: AppLanguage) -> String {
-        guard let code = language.languageCode?.lowercased() else { return language.code }
-        switch code {
-        case "zh":
-            if language.scriptCode?.lowercased() == "hant" {
-                return "zh-TW"
-            }
-            return "zh-CN"
-        case "ko":
-            return "ko"
-        case "ja":
-            return "ja"
-        case "en":
-            if let region = language.regionCode?.uppercased() {
-                return "en-\(region)"
-            }
-            return "en"
-        case "fr":
-            return "fr"
-        case "de":
-            return "de"
-        case "es":
-            return "es"
-        default:
-            return language.languageCode ?? language.code
-        }
+        mapLanguage(language)
     }
 
     /// 출발 언어가 고정된 경우 Google 번역 코드로 변환한다. 자동 감지면 nil.
     private func mapSourceLanguage(_ selection: SourceLanguageSelection) -> String? {
         guard let language = selection.resolved else { return nil }
+        return mapLanguage(language)
+    }
+
+    /// Google 번역 언어 코드 매핑의 공통 로직.
+    private func mapLanguage(_ language: AppLanguage) -> String {
         guard let code = language.languageCode?.lowercased() else { return language.code }
         switch code {
         case "zh":
