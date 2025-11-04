@@ -33,6 +33,7 @@ final class BrowserViewModel: ObservableObject {
     @Published var translationProgress: Double = 0
     @Published var failedSegmentIDs: Set<String> = []
     @Published private(set) var favoriteLinks: [UserSettings.FavoriteLink]
+    /// 현재 페이지에 적용 중인 출발/도착 언어 설정.
     @Published var languagePreference: PageLanguagePreference
 
     weak var attachedWebView: WKWebView?
@@ -53,6 +54,7 @@ final class BrowserViewModel: ObservableObject {
     var noBodyTextRetryCount = 0
     var selectedSegment: Segment?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
+    /// 페이지 URL별로 사용자가 선택한 언어를 기억해 동일 페이지 재방문 시 재사용한다.
     private var languagePreferenceByURL: [URL: PageLanguagePreference] = [:]
 
     let extractor: ContentExtractor
@@ -104,6 +106,7 @@ final class BrowserViewModel: ObservableObject {
         return URL(string: "https://" + string)
     }
 
+    /// 전달된 URL에 저장된 언어 선호를 반환하고, 없으면 기본값을 생성해 저장한다.
     func languagePreference(for url: URL) -> PageLanguagePreference {
         if let stored = languagePreferenceByURL[url] {
             return stored
@@ -116,10 +119,12 @@ final class BrowserViewModel: ObservableObject {
         return defaultPreference
     }
 
+    /// 현재 languagePreference를 전달된 URL에 매핑해 뷰 재구성 후에도 유지한다.
     func persistLanguagePreference(for url: URL) {
         languagePreferenceByURL[url] = languagePreference
     }
 
+    /// 사용자가 출발 언어를 변경했을 때 상태를 갱신하고 필요 시 재번역한다.
     func updateSourceLanguage(_ selection: SourceLanguageSelection, triggeredByUser: Bool) {
         languagePreference.source = selection
         if let url = currentPageTranslation?.url {
@@ -134,6 +139,7 @@ final class BrowserViewModel: ObservableObject {
         }
     }
 
+    /// 사용자가 도착 언어를 변경했을 때 상태를 갱신하고 필요 시 재번역한다.
     func updateTargetLanguage(_ language: AppLanguage, triggeredByUser: Bool) {
         languagePreference.target = language
         if let url = currentPageTranslation?.url {
@@ -148,6 +154,7 @@ final class BrowserViewModel: ObservableObject {
         }
     }
 
+    /// 언어 변경 시 기존 번역/스트림 상태를 초기화한다.
     private func resetTranslationStateForLanguageChange() {
         currentPageTranslation?.buffersByEngine.removeAll()
         currentPageTranslation?.failedSegmentIDs.removeAll()
@@ -160,6 +167,7 @@ final class BrowserViewModel: ObservableObject {
         lastStreamPayloads = []
     }
 
+    /// 현재 페이지가 보이는 경우 새 언어 설정으로 즉시 번역을 재요청한다.
     private func retranslateCurrentPage() {
         guard showOriginal == false, let webView = attachedWebView else { return }
         requestTranslation(on: webView)

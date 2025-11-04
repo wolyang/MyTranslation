@@ -91,6 +91,7 @@ final class GoogleEngine: TranslationEngine {
         }
     }
 
+    /// 애플 언어 코드를 Google 번역의 대상 언어 코드로 변환한다.
     private func mapTargetLanguage(_ language: AppLanguage) -> String {
         guard let code = language.languageCode?.lowercased() else { return language.code }
         switch code {
@@ -119,6 +120,7 @@ final class GoogleEngine: TranslationEngine {
         }
     }
 
+    /// 출발 언어가 고정된 경우 Google 번역 코드로 변환한다. 자동 감지면 nil.
     private func mapSourceLanguage(_ selection: SourceLanguageSelection) -> String? {
         guard let language = selection.resolved else { return nil }
         guard let code = language.languageCode?.lowercased() else { return language.code }

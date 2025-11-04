@@ -677,6 +677,7 @@ private extension BrowserViewModel {
 }
 
 extension BrowserViewModel {
+    /// 페이지별 언어 선호를 기반으로 엔진 호출 옵션을 조립한다.
     func makeTranslationOptions(using preference: PageLanguagePreference) -> TranslationOptions {
         TranslationOptions(
             preserveFormatting: true,
@@ -688,6 +689,7 @@ extension BrowserViewModel {
         )
     }
 
+    /// 대상 언어가 CJK인지에 따라 토큰 간 공백 삽입 여부를 결정한다.
     private func spacingBehavior(for preference: PageLanguagePreference) -> TokenSpacingBehavior {
         preference.target.isCJK ? .disabled : .isolatedSegments
     }

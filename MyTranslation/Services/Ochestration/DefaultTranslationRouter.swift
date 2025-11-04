@@ -109,6 +109,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             await Task.yield()
             
             let termMasker = TermMasker()
+            // 페이지 언어에 맞춰 토큰 주변 공백 삽입 정책을 적용한다.
             termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
             let maskingContext = prepareMaskingContext(
                 from: pendingSegments,

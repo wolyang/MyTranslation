@@ -24,6 +24,7 @@ public final class TermMasker {
 
     private var nextIndex: Int = 1
 
+    /// 번역 대상 언어에 맞춰 토큰 주변 공백 삽입 정책을 제어한다.
     public var tokenSpacingBehavior: TokenSpacingBehavior = .disabled
     
     // ===== configurable guards =====

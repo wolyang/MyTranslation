@@ -102,6 +102,7 @@ final class DeepLEngine: TranslationEngine {
         }
     }
 
+    /// 애플 언어 코드를 DeepL의 대상 언어 코드로 변환한다.
     private func mapTargetLanguage(_ language: AppLanguage) -> String {
         guard let code = language.languageCode?.lowercased() else { return language.code.uppercased() }
         switch code {
@@ -133,6 +134,7 @@ final class DeepLEngine: TranslationEngine {
         }
     }
 
+    /// 출발 언어가 수동으로 지정된 경우 DeepL 코드로 변환한다. 자동 감지면 nil.
     private func mapSourceLanguage(_ selection: SourceLanguageSelection) -> String? {
         guard let language = selection.resolved else { return nil }
         guard let code = language.languageCode?.lowercased() else { return language.code.uppercased() }
