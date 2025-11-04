@@ -104,7 +104,7 @@ final class BrowserViewModel: ObservableObject {
         return URL(string: "https://" + string)
     }
 
-    private func languagePreference(for url: URL) -> PageLanguagePreference {
+    func languagePreference(for url: URL) -> PageLanguagePreference {
         if let stored = languagePreferenceByURL[url] {
             return stored
         }
@@ -116,7 +116,7 @@ final class BrowserViewModel: ObservableObject {
         return defaultPreference
     }
 
-    private func persistLanguagePreference(for url: URL) {
+    func persistLanguagePreference(for url: URL) {
         languagePreferenceByURL[url] = languagePreference
     }
 
