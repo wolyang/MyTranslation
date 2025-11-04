@@ -554,21 +554,6 @@ private extension BrowserViewModel {
         return AppLanguage(code: dominant.rawValue)
     }
 
-    func makeTranslationOptions(using preference: PageLanguagePreference) -> TranslationOptions {
-        TranslationOptions(
-            preserveFormatting: true,
-            style: .neutralDictionaryTone,
-            applyGlossary: true,
-            sourceLanguage: preference.source,
-            targetLanguage: preference.target,
-            tokenSpacingBehavior: spacingBehavior(for: preference)
-        )
-    }
-
-    private func spacingBehavior(for preference: PageLanguagePreference) -> TokenSpacingBehavior {
-        preference.target.isCJK ? .disabled : .isolatedSegments
-    }
-
     /// 스트림으로 전달된 번역 결과를 캐시에 반영하고 웹뷰에 적용한다.
     func applyStreamPayload(
         _ payload: TranslationStreamPayload,
@@ -692,6 +677,21 @@ private extension BrowserViewModel {
 }
 
 extension BrowserViewModel {
+    func makeTranslationOptions(using preference: PageLanguagePreference) -> TranslationOptions {
+        TranslationOptions(
+            preserveFormatting: true,
+            style: .neutralDictionaryTone,
+            applyGlossary: true,
+            sourceLanguage: preference.source,
+            targetLanguage: preference.target,
+            tokenSpacingBehavior: spacingBehavior(for: preference)
+        )
+    }
+
+    private func spacingBehavior(for preference: PageLanguagePreference) -> TokenSpacingBehavior {
+        preference.target.isCJK ? .disabled : .isolatedSegments
+    }
+
     private struct PreparedState: Sendable {
         let url: URL
         let engineID: TranslationEngineID
