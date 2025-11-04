@@ -23,6 +23,7 @@ struct EnginePickerButton: View {
                     ProgressView()
                         .controlSize(.small)
                         .frame(width: 20, height: 20)
+                        .tint(Color.accentColor)
                 } else {
                     Image(systemName: "globe")
                         .resizable()
@@ -34,17 +35,21 @@ struct EnginePickerButton: View {
                     Text("원문")
                         .font(.caption2)
                         .foregroundStyle(Color.gray)
+                        .frame(height: 16)
                 } else {
                     VStack(spacing: 0) {
                         Text(selectedEngine.shortLabel)
                             .font(.caption2)
+                            .minimumScaleFactor(0.5)
                         Text("\(sourceAbbreviation)→\(targetAbbreviation)")
                             .font(.caption2)
+                            .minimumScaleFactor(0.5)
                     }
                     .foregroundStyle(Color.accentColor)
+                    .frame(height: 16)
                 }
             }
-            .frame(width: 30)
+            .frame(width: 32)
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
             .contentShape(Rectangle())
