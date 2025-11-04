@@ -11,7 +11,7 @@ public struct AppLanguage: Hashable, Codable, Sendable, Identifiable {
     public let code: String
 
     public init(code: String) {
-        let canonical = Locale.canonicalIdentifier(from: code) ?? code
+        let canonical = Locale.identifier(.icu, from: code)
         self.code = canonical
     }
 
