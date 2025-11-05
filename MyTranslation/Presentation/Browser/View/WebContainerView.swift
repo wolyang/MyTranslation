@@ -73,23 +73,40 @@ struct WebContainerView: UIViewRepresentable {
                     guard let self else { return }
                     let exec = WKWebViewScriptAdapter(webView: web)
                     struct R: Decodable { let x: CGFloat; let y: CGFloat; let width: CGFloat; let height: CGFloat }
-                    let rect: CGRect
+                    let rawRect: CGRect
                     if let rectJSON: String = try? await exec.runJS(#"window.MT_GET_RECT(\#(String(reflecting: segId)))"#),
                        let data = rectJSON.data(using: .utf8),
                        let r = try? JSONDecoder().decode(R.self, from: data)
                     {
-                        rect = CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
+                        rawRect = CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
                     } else {
-                        rect = .zero
+                        rawRect = .zero
                     }
-                    await MainActor.run {
-                        self.parent.onSelectSegment?(segId, rect)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        let convertedRect = self.viewportRect(from: rawRect, in: web)
+                        self.parent.onSelectSegment?(segId, convertedRect)
                     }
                 }
             default:
                 break
             }
 
+        }
+
+        private func viewportRect(from rect: CGRect, in webView: WKWebView) -> CGRect {
+            let scrollView = webView.scrollView
+            let scale = scrollView.zoomScale > 0 ? scrollView.zoomScale : 1
+            let inset = scrollView.adjustedContentInset
+            var scaled = CGRect(
+                x: rect.origin.x * scale,
+                y: rect.origin.y * scale,
+                width: rect.width * scale,
+                height: rect.height * scale
+            )
+            scaled.origin.x += inset.left
+            scaled.origin.y += inset.top
+            return scaled
         }
 
         func resetMarks() {
