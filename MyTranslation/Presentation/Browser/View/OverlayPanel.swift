@@ -34,7 +34,7 @@ private struct OverlayPanelPositioner: View {
     let onFrameChange: (CGRect) -> Void
 
     @State private var panelSize: CGSize = .zero
-    @State private var lastReportedFrame: CGRect = .null
+    @StateObject private var frameReporter = FrameReporter()
 
     private let margin: CGFloat = 8
     private let maxWidth: CGFloat = 320
@@ -84,12 +84,16 @@ private struct OverlayPanelPositioner: View {
     }
 
     private func reportFrameIfNeeded(_ frame: CGRect) {
-        guard lastReportedFrame != frame else { return }
-        lastReportedFrame = frame
+        guard frameReporter.lastFrame != frame else { return }
+        frameReporter.lastFrame = frame
         DispatchQueue.main.async {
             onFrameChange(frame)
         }
     }
+}
+
+private final class FrameReporter: ObservableObject {
+    var lastFrame: CGRect = .null
 }
 
 private struct OverlayPanelView: View {
