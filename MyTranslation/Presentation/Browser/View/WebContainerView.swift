@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import UIKit
 
 @MainActor
 struct WebContainerView: UIViewRepresentable {
@@ -8,6 +9,7 @@ struct WebContainerView: UIViewRepresentable {
     var onDidFinish: ((WKWebView, URL) -> Void)? = nil
     var onSelectSegment: ((String, CGRect) -> Void)? = nil
     var onNavigate: (() -> Void)? = nil
+    var onUserInteraction: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -32,16 +34,27 @@ struct WebContainerView: UIViewRepresentable {
 
     // MARK: - Coordinator
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIGestureRecognizerDelegate {
         private let parent: WebContainerView
         var bridge: SelectionBridge?
         private weak var webView: WKWebView?
         private var markedSegmentIDs: Set<String> = []
+        private weak var interactionTap: UITapGestureRecognizer?
+        private var hasAttachedPanHandler: Bool = false
         
         init(parent: WebContainerView) { self.parent = parent }
         
         
         func install(on webView: WKWebView) {
+            if let current = self.webView, current !== webView {
+                current.scrollView.panGestureRecognizer.removeTarget(self, action: #selector(handleScrollPan(_:)))
+                if let tap = interactionTap {
+                    current.removeGestureRecognizer(tap)
+                }
+                hasAttachedPanHandler = false
+                interactionTap = nil
+            }
+
             self.webView = webView
             webView.isInspectable = true
             self.bridge = SelectionBridge(webView: webView)
@@ -51,6 +64,24 @@ struct WebContainerView: UIViewRepresentable {
             webView.configuration.userContentController.removeScriptMessageHandler(forName: "mtconsole")
             webView.configuration.userContentController.add(self, name: "selection")
             webView.configuration.userContentController.add(self, name: "mtconsole")
+            attachInteractionHandlers(to: webView)
+        }
+
+        private func attachInteractionHandlers(to webView: WKWebView) {
+            if hasAttachedPanHandler == false {
+                webView.scrollView.panGestureRecognizer.addTarget(self, action: #selector(handleScrollPan(_:)))
+                hasAttachedPanHandler = true
+            }
+            if interactionTap == nil || interactionTap?.view !== webView {
+                if let existingTap = interactionTap, existingTap.view !== webView {
+                    existingTap.view?.removeGestureRecognizer(existingTap)
+                }
+                let tap = UITapGestureRecognizer(target: self, action: #selector(handleContentTap(_:)))
+                tap.cancelsTouchesInView = false
+                tap.delegate = self
+                webView.addGestureRecognizer(tap)
+                interactionTap = tap
+            }
         }
 
         func userContentController(_ ucc: WKUserContentController, didReceive msg: WKScriptMessage) {
@@ -163,6 +194,22 @@ struct WebContainerView: UIViewRepresentable {
         
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             parent.onNavigate?()
+        }
+
+        @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
+            if recognizer.state == .began {
+                parent.onUserInteraction?()
+            }
+        }
+
+        @objc private func handleContentTap(_ recognizer: UITapGestureRecognizer) {
+            if recognizer.state == .ended {
+                parent.onUserInteraction?()
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
         }
     }
 }

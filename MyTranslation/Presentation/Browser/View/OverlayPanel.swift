@@ -12,77 +12,65 @@ struct OverlayPanelContainer: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onClose: () -> Void
-
-    @State private var panelFrame: CGRect = .zero
+    var onFrameChange: (CGRect) -> Void = { _ in }
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                OverlayDismissArea(panelFrame: panelFrame, onClose: onClose)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                OverlayPanelPositioner(
-                    state: state,
-                    containerSize: geo.size,
-                    onAsk: onAsk,
-                    onClose: onClose,
-                    panelFrame: $panelFrame
-                )
-            }
+        OverlayPanelPositioner(
+            state: state,
+            onAsk: onAsk,
+            onClose: onClose,
+            onFrameChange: onFrameChange
+        )
+        .onDisappear {
+            onFrameChange(.null)
         }
     }
 }
 
 private struct OverlayPanelPositioner: View {
     let state: BrowserViewModel.OverlayState
-    let containerSize: CGSize
     let onAsk: () -> Void
     let onClose: () -> Void
-    @Binding var panelFrame: CGRect
+    let onFrameChange: (CGRect) -> Void
 
     @State private var panelSize: CGSize = .zero
+    @State private var lastReportedFrame: CGRect = .null
 
     private let margin: CGFloat = 8
     private let maxWidth: CGFloat = 320
 
     var body: some View {
-        let widthLimit = max(80, min(maxWidth, containerSize.width - margin * 2))
-        OverlayPanelView(
-            state: state,
-            onAsk: onAsk,
-            onClose: onClose
-        )
-        .frame(maxWidth: widthLimit, alignment: .leading)
-        .background(
-            GeometryReader { panelGeo in
-                Color.clear
-                    .preference(key: OverlayPanelSizePreferenceKey.self, value: panelGeo.size)
+        GeometryReader { geo in
+            let containerSize = geo.size
+            let containerOrigin = geo.frame(in: .global).origin
+            let widthLimit = max(80, min(maxWidth, containerSize.width - margin * 2))
+            OverlayPanelView(
+                state: state,
+                onAsk: onAsk,
+                onClose: onClose
+            )
+            .frame(maxWidth: widthLimit, alignment: .leading)
+            .background(
+                GeometryReader { panelGeo in
+                    Color.clear
+                        .preference(key: OverlayPanelSizePreferenceKey.self, value: panelGeo.size)
+                }
+            )
+            .onPreferenceChange(OverlayPanelSizePreferenceKey.self) { size in
+                self.panelSize = size
             }
-        )
-        .onPreferenceChange(OverlayPanelSizePreferenceKey.self) { size in
-            self.panelSize = size
+            .position(position(in: containerSize, containerOrigin: containerOrigin, fallbackWidth: widthLimit))
         }
-        .position(position(in: containerSize, fallbackWidth: widthLimit))
     }
 
-    private func position(in containerSize: CGSize, fallbackWidth: CGFloat) -> CGPoint {
+    private func position(in containerSize: CGSize, containerOrigin: CGPoint, fallbackWidth: CGFloat) -> CGPoint {
         let size = panelSize == .zero ? CGSize(width: fallbackWidth, height: 120) : panelSize
+        var x = state.anchor.minX
+        var y = state.anchor.minY - size.height - margin
 
-        let preferredTop = state.anchor.minY - size.height - margin
-        let preferredBottom = state.anchor.maxY + margin
-        let fitsAbove = preferredTop >= margin
-        let fitsBelow = preferredBottom + size.height <= containerSize.height - margin
-
-        let y: CGFloat
-        if fitsAbove && (!fitsBelow || state.anchor.minY > containerSize.height / 2) {
-            y = preferredTop
-        } else if fitsBelow {
-            y = preferredBottom
-        } else {
-            let ideal = state.anchor.midY - size.height / 2
-            y = min(max(ideal, margin), containerSize.height - margin - size.height)
+        if y < margin {
+            y = state.anchor.maxY + margin
         }
-
-        var x = state.anchor.midX - size.width / 2
         if x + size.width > containerSize.width - margin {
             x = containerSize.width - margin - size.width
         }
@@ -90,81 +78,16 @@ private struct OverlayPanelPositioner: View {
             x = margin
         }
 
-        let origin = CGPoint(x: x, y: y)
-        let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-        updatePanelFrameIfNeeded(CGRect(origin: origin, size: size))
-        return center
+        let frame = CGRect(origin: CGPoint(x: x + containerOrigin.x, y: y + containerOrigin.y), size: size)
+        reportFrameIfNeeded(frame)
+        return CGPoint(x: x + size.width / 2, y: y + size.height / 2)
     }
 
-    private func updatePanelFrameIfNeeded(_ frame: CGRect) {
-        guard panelFrame != frame else { return }
+    private func reportFrameIfNeeded(_ frame: CGRect) {
+        guard lastReportedFrame != frame else { return }
+        lastReportedFrame = frame
         DispatchQueue.main.async {
-            if panelFrame != frame {
-                panelFrame = frame
-            }
-        }
-    }
-}
-
-private struct OverlayDismissArea: UIViewRepresentable {
-    var panelFrame: CGRect
-    var onClose: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onClose: onClose)
-    }
-
-    func makeUIView(context: Context) -> PassthroughView {
-        let view = PassthroughView()
-        view.backgroundColor = .clear
-
-        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
-        tap.cancelsTouchesInView = false
-        tap.delegate = context.coordinator
-        view.addGestureRecognizer(tap)
-
-        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        pan.cancelsTouchesInView = false
-        pan.delegate = context.coordinator
-        view.addGestureRecognizer(pan)
-
-        return view
-    }
-
-    func updateUIView(_ uiView: PassthroughView, context: Context) {
-        context.coordinator.panelFrame = panelFrame
-        context.coordinator.onClose = onClose
-    }
-
-    final class PassthroughView: UIView { }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var panelFrame: CGRect = .zero
-        var onClose: () -> Void
-
-        init(onClose: @escaping () -> Void) {
-            self.onClose = onClose
-        }
-
-        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-            guard recognizer.state == .ended else { return }
-            onClose()
-        }
-
-        @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
-            if recognizer.state == .began {
-                onClose()
-            }
-        }
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            guard let view = gestureRecognizer.view else { return false }
-            let location = touch.location(in: view)
-            return panelFrame.contains(location) == false
-        }
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            true
+            onFrameChange(frame)
         }
     }
 }

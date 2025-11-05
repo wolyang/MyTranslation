@@ -22,6 +22,8 @@ struct BrowserRootView: View {
     @State private var isSettingsPresented: Bool = false
     /// 즐겨찾기 관리 화면 노출 여부입니다.
     @State private var isFavoritesManagerPresented: Bool = false
+    /// 오버레이 패널의 화면 내 위치입니다.
+    @State private var overlayPanelFrame: CGRect = .null
 
     init(container: AppContainer) {
         _vm = StateObject(
@@ -182,16 +184,29 @@ struct BrowserRootView: View {
                             await vm.onSegmentSelected(id: sid, anchor: anchor)
                         }
                     },
-                    onNavigate: { vm.willNavigate() }
+                    onNavigate: { vm.willNavigate() },
+                    onUserInteraction: {
+                        if vm.overlayState != nil {
+                            vm.closeOverlay()
+                        }
+                    }
                 )
                 if let overlayState = vm.overlayState {
                     OverlayPanelContainer(
                         state: overlayState,
                         onAsk: { Task { await vm.askAIForSelected() } },
-                        onClose: { vm.closeOverlay() }
+                        onClose: { vm.closeOverlay() },
+                        onFrameChange: { frame in overlayPanelFrame = frame }
                     )
                 }
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        handleOverlayDismissAttempt(at: value.startLocation)
+                    },
+                including: .all
+            )
         }
         .onAppear {
             ensureTranslationSession()
@@ -242,6 +257,14 @@ struct BrowserRootView: View {
             source: .init(identifier: sourceIdentifier),
             target: .init(identifier: targetIdentifier)
         )
+    }
+
+    private func handleOverlayDismissAttempt(at location: CGPoint) {
+        guard vm.overlayState != nil else { return }
+        if overlayPanelFrame.isNull == false && overlayPanelFrame.isEmpty == false && overlayPanelFrame.contains(location) {
+            return
+        }
+        vm.closeOverlay()
     }
 
     private func handleFavorite(_ link: UserSettings.FavoriteLink) {
