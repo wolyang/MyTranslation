@@ -261,16 +261,78 @@ private struct TranslationSectionView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let text, text.isEmpty == false {
-                Text(text)
-                    .font(.callout)
+                SelectableTextView(text: text)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .multilineTextAlignment(.leading)
             } else {
                 Text("표시할 내용이 없습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+}
+
+private struct SelectableTextView: UIViewRepresentable {
+    var text: String
+    var textStyle: UIFont.TextStyle = .callout
+    var textColor: UIColor = .label
+    var adjustsFontForContentSizeCategory: Bool = true
+
+    func makeUIView(context: Context) -> SelectableUITextView {
+        let textView = SelectableUITextView()
+        configureStaticProperties(of: textView)
+        applyContent(to: textView)
+        return textView
+    }
+
+    func updateUIView(_ uiView: SelectableUITextView, context: Context) {
+        applyContent(to: uiView)
+        uiView.invalidateIntrinsicContentSize()
+    }
+
+    @available(iOS 16.0, *)
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: SelectableUITextView, context: Context) -> CGSize {
+        applyContent(to: uiView)
+
+        let proposedWidth = proposal.width ?? uiView.bounds.width
+        let fittingWidth = proposedWidth.isFinite && proposedWidth > 0
+            ? proposedWidth
+            : UIScreen.main.bounds.width
+
+        let targetSize = CGSize(width: fittingWidth, height: .greatestFiniteMagnitude)
+        let measured = uiView.sizeThatFits(targetSize)
+        return CGSize(width: measured.width, height: measured.height)
+    }
+
+    private func configureStaticProperties(of textView: SelectableUITextView) {
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textAlignment = .left
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.dataDetectorTypes = []
+        textView.allowsEditingTextAttributes = false
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    private func applyContent(to textView: SelectableUITextView) {
+        if textView.text != text {
+            textView.text = text
+        }
+        textView.font = UIFont.preferredFont(forTextStyle: textStyle)
+        textView.textColor = textColor
+        textView.adjustsFontForContentSizeCategory = adjustsFontForContentSizeCategory
+    }
+
+    final class SelectableUITextView: UITextView {
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            if action == #selector(paste(_:)) || action == #selector(cut(_:)) || action == #selector(delete(_:)) {
+                return false
+            }
+            return super.canPerformAction(action, withSender: sender)
         }
     }
 }
