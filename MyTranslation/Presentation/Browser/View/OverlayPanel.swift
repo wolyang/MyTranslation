@@ -197,7 +197,8 @@ private struct OverlayPanelView: View {
                     title: "원문",
                     text: state.selectedText,
                     isLoading: false,
-                    errorMessage: nil
+                    errorMessage: nil,
+                    availableWidth: contentWidth
                 )
             }
             if let improved = state.improvedText, improved.isEmpty == false {
@@ -205,7 +206,8 @@ private struct OverlayPanelView: View {
                     title: "AI 개선 번역",
                     text: improved,
                     isLoading: false,
-                    errorMessage: nil
+                    errorMessage: nil,
+                    availableWidth: contentWidth
                 )
             }
             ForEach(state.translations) { translation in
@@ -213,7 +215,8 @@ private struct OverlayPanelView: View {
                     title: translation.title,
                     text: translation.text,
                     isLoading: translation.isLoading,
-                    errorMessage: translation.errorMessage
+                    errorMessage: translation.errorMessage,
+                    availableWidth: contentWidth
                 )
             }
         }
@@ -243,6 +246,7 @@ private struct TranslationSectionView: View {
     let text: String?
     let isLoading: Bool
     let errorMessage: String?
+    let availableWidth: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -266,7 +270,8 @@ private struct TranslationSectionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let text, text.isEmpty == false {
                 SelectableTextView(text: text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: availableWidth, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("표시할 내용이 없습니다.")
                     .font(.callout)
@@ -287,6 +292,8 @@ private struct SelectableTextView: UIViewRepresentable {
         let textView = SelectableUITextView()
         configureStaticProperties(of: textView)
         applyContent(to: textView)
+        textView.setContentHuggingPriority(.required, for: .vertical)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
         return textView
     }
 
@@ -299,14 +306,14 @@ private struct SelectableTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SelectableUITextView, context: Context) -> CGSize {
         applyContent(to: uiView)
 
-        let proposedWidth = proposal.width ?? uiView.bounds.width
-        let fittingWidth = proposedWidth.isFinite && proposedWidth > 0
-            ? proposedWidth
-            : UIScreen.main.bounds.width
+        // SwiftUI 사용처에서 .frame(width: availableWidth)를 꼭 주고,
+        // 여기서는 그 폭을 캐시에 전달
+        if let w = proposal.width, w.isFinite, w > 0 {
+            uiView.constrainedWidth = w
+        }
 
-        let targetSize = CGSize(width: fittingWidth, height: .greatestFiniteMagnitude)
-        let measured = uiView.sizeThatFits(targetSize)
-        return CGSize(width: measured.width, height: measured.height)
+        // intrinsicContentSize 경로도 쓰이므로 여기선 적당히 패스
+        return uiView.intrinsicContentSize
     }
 
     private func configureStaticProperties(of textView: SelectableUITextView) {
@@ -320,6 +327,8 @@ private struct SelectableTextView: UIViewRepresentable {
         textView.dataDetectorTypes = []
         textView.allowsEditingTextAttributes = false
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.lineBreakMode = .byCharWrapping
     }
 
     private func applyContent(to textView: SelectableUITextView) {
@@ -332,6 +341,34 @@ private struct SelectableTextView: UIViewRepresentable {
     }
 
     final class SelectableUITextView: UITextView {
+        // SwiftUI가 제안한 폭을 브리징하기 위한 캐시
+            var constrainedWidth: CGFloat?
+
+            private var lastWidth: CGFloat = 0
+
+            override func layoutSubviews() {
+                super.layoutSubviews()
+                // 폭이 바뀌면 intrinsic 재계산
+                let w = bounds.width
+                if w > 0, abs(w - lastWidth) > .ulpOfOne {
+                    lastWidth = w
+                    invalidateIntrinsicContentSize()
+                }
+            }
+
+            override var intrinsicContentSize: CGSize {
+                // 1) 우선 SwiftUI가 내려준 폭(있다면) 사용
+                let w = (constrainedWidth ?? bounds.width)
+                let width = w > 0 ? w : UIScreen.main.bounds.width
+
+                // 2) 이 폭으로 줄바꿈/측정
+                textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+                // 스크롤 끄고 패딩 제거되어 있음
+                let fitted = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+                // 가로는 자동, 세로만 정확히 리턴
+                return CGSize(width: UIView.noIntrinsicMetric, height: ceil(fitted.height))
+            }
+        
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
             if action == #selector(paste(_:)) || action == #selector(cut(_:)) || action == #selector(delete(_:)) {
                 return false
