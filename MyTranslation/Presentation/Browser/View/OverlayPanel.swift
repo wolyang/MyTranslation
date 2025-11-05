@@ -57,12 +57,23 @@ private struct OverlayPanelPositioner: View {
 
     private func position(in containerSize: CGSize, fallbackWidth: CGFloat) -> CGPoint {
         let size = panelSize == .zero ? CGSize(width: fallbackWidth, height: 120) : panelSize
-        var x = state.anchor.minX
-        var y = state.anchor.minY - size.height - margin
 
-        if y < margin {
-            y = state.anchor.maxY + margin
+        let preferredTop = state.anchor.minY - size.height - margin
+        let preferredBottom = state.anchor.maxY + margin
+        let fitsAbove = preferredTop >= margin
+        let fitsBelow = preferredBottom + size.height <= containerSize.height - margin
+
+        let y: CGFloat
+        if fitsAbove && (!fitsBelow || state.anchor.minY > containerSize.height / 2) {
+            y = preferredTop
+        } else if fitsBelow {
+            y = preferredBottom
+        } else {
+            let ideal = state.anchor.midY - size.height / 2
+            y = min(max(ideal, margin), containerSize.height - margin - size.height)
         }
+
+        var x = state.anchor.midX - size.width / 2
         if x + size.width > containerSize.width - margin {
             x = containerSize.width - margin - size.width
         }
