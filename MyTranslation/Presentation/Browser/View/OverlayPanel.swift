@@ -12,13 +12,18 @@ struct OverlayPanelContainer: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onClose: () -> Void
+    var onFrameChange: (CGRect) -> Void = { _ in }
 
     var body: some View {
         OverlayPanelPositioner(
             state: state,
             onAsk: onAsk,
-            onClose: onClose
+            onClose: onClose,
+            onFrameChange: onFrameChange
         )
+        .onDisappear {
+            onFrameChange(.null)
+        }
     }
 }
 
@@ -26,8 +31,10 @@ private struct OverlayPanelPositioner: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onClose: () -> Void
+    let onFrameChange: (CGRect) -> Void
 
     @State private var panelSize: CGSize = .zero
+    @StateObject private var frameReporter = FrameReporter()
 
     private let margin: CGFloat = 8
     private let maxWidth: CGFloat = 320
@@ -35,6 +42,7 @@ private struct OverlayPanelPositioner: View {
     var body: some View {
         GeometryReader { geo in
             let containerSize = geo.size
+            let containerOrigin = geo.frame(in: .global).origin
             let widthLimit = max(80, min(maxWidth, containerSize.width - margin * 2))
             OverlayPanelView(
                 state: state,
@@ -51,11 +59,11 @@ private struct OverlayPanelPositioner: View {
             .onPreferenceChange(OverlayPanelSizePreferenceKey.self) { size in
                 self.panelSize = size
             }
-            .position(position(in: containerSize, fallbackWidth: widthLimit))
+            .position(position(in: containerSize, containerOrigin: containerOrigin, fallbackWidth: widthLimit))
         }
     }
 
-    private func position(in containerSize: CGSize, fallbackWidth: CGFloat) -> CGPoint {
+    private func position(in containerSize: CGSize, containerOrigin: CGPoint, fallbackWidth: CGFloat) -> CGPoint {
         let size = panelSize == .zero ? CGSize(width: fallbackWidth, height: 120) : panelSize
         var x = state.anchor.minX
         var y = state.anchor.minY - size.height - margin
@@ -70,8 +78,22 @@ private struct OverlayPanelPositioner: View {
             x = margin
         }
 
+        let frame = CGRect(origin: CGPoint(x: x + containerOrigin.x, y: y + containerOrigin.y), size: size)
+        reportFrameIfNeeded(frame)
         return CGPoint(x: x + size.width / 2, y: y + size.height / 2)
     }
+
+    private func reportFrameIfNeeded(_ frame: CGRect) {
+        guard frameReporter.lastFrame != frame else { return }
+        frameReporter.lastFrame = frame
+        DispatchQueue.main.async {
+            onFrameChange(frame)
+        }
+    }
+}
+
+private final class FrameReporter: ObservableObject {
+    var lastFrame: CGRect = .null
 }
 
 private struct OverlayPanelView: View {
@@ -175,7 +197,8 @@ private struct OverlayPanelView: View {
                     title: "원문",
                     text: state.selectedText,
                     isLoading: false,
-                    errorMessage: nil
+                    errorMessage: nil,
+                    availableWidth: contentWidth
                 )
             }
             if let improved = state.improvedText, improved.isEmpty == false {
@@ -183,7 +206,8 @@ private struct OverlayPanelView: View {
                     title: "AI 개선 번역",
                     text: improved,
                     isLoading: false,
-                    errorMessage: nil
+                    errorMessage: nil,
+                    availableWidth: contentWidth
                 )
             }
             ForEach(state.translations) { translation in
@@ -191,7 +215,8 @@ private struct OverlayPanelView: View {
                     title: translation.title,
                     text: translation.text,
                     isLoading: translation.isLoading,
-                    errorMessage: translation.errorMessage
+                    errorMessage: translation.errorMessage,
+                    availableWidth: contentWidth
                 )
             }
         }
@@ -221,6 +246,7 @@ private struct TranslationSectionView: View {
     let text: String?
     let isLoading: Bool
     let errorMessage: String?
+    let availableWidth: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -243,16 +269,111 @@ private struct TranslationSectionView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let text, text.isEmpty == false {
-                Text(text)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .multilineTextAlignment(.leading)
+                SelectableTextView(text: text)
+                    .frame(width: availableWidth, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("표시할 내용이 없습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+}
+
+private struct SelectableTextView: UIViewRepresentable {
+    var text: String
+    var textStyle: UIFont.TextStyle = .callout
+    var textColor: UIColor = .label
+    var adjustsFontForContentSizeCategory: Bool = true
+
+    func makeUIView(context: Context) -> SelectableUITextView {
+        let textView = SelectableUITextView()
+        configureStaticProperties(of: textView)
+        applyContent(to: textView)
+        textView.setContentHuggingPriority(.required, for: .vertical)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        return textView
+    }
+
+    func updateUIView(_ uiView: SelectableUITextView, context: Context) {
+        applyContent(to: uiView)
+        uiView.invalidateIntrinsicContentSize()
+    }
+
+    @available(iOS 16.0, *)
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: SelectableUITextView, context: Context) -> CGSize {
+        applyContent(to: uiView)
+
+        // SwiftUI 사용처에서 .frame(width: availableWidth)를 꼭 주고,
+        // 여기서는 그 폭을 캐시에 전달
+        if let w = proposal.width, w.isFinite, w > 0 {
+            uiView.constrainedWidth = w
+        }
+
+        // intrinsicContentSize 경로도 쓰이므로 여기선 적당히 패스
+        return uiView.intrinsicContentSize
+    }
+
+    private func configureStaticProperties(of textView: SelectableUITextView) {
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textAlignment = .left
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.dataDetectorTypes = []
+        textView.allowsEditingTextAttributes = false
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.lineBreakMode = .byCharWrapping
+    }
+
+    private func applyContent(to textView: SelectableUITextView) {
+        if textView.text != text {
+            textView.text = text
+        }
+        textView.font = UIFont.preferredFont(forTextStyle: textStyle)
+        textView.textColor = textColor
+        textView.adjustsFontForContentSizeCategory = adjustsFontForContentSizeCategory
+    }
+
+    final class SelectableUITextView: UITextView {
+        // SwiftUI가 제안한 폭을 브리징하기 위한 캐시
+            var constrainedWidth: CGFloat?
+
+            private var lastWidth: CGFloat = 0
+
+            override func layoutSubviews() {
+                super.layoutSubviews()
+                // 폭이 바뀌면 intrinsic 재계산
+                let w = bounds.width
+                if w > 0, abs(w - lastWidth) > .ulpOfOne {
+                    lastWidth = w
+                    invalidateIntrinsicContentSize()
+                }
+            }
+
+            override var intrinsicContentSize: CGSize {
+                // 1) 우선 SwiftUI가 내려준 폭(있다면) 사용
+                let w = (constrainedWidth ?? bounds.width)
+                let width = w > 0 ? w : UIScreen.main.bounds.width
+
+                // 2) 이 폭으로 줄바꿈/측정
+                textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+                // 스크롤 끄고 패딩 제거되어 있음
+                let fitted = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+                // 가로는 자동, 세로만 정확히 리턴
+                return CGSize(width: UIView.noIntrinsicMetric, height: ceil(fitted.height))
+            }
+        
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            if action == #selector(paste(_:)) || action == #selector(cut(_:)) || action == #selector(delete(_:)) {
+                return false
+            }
+            return super.canPerformAction(action, withSender: sender)
         }
     }
 }
