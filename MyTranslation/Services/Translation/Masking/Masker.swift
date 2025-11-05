@@ -734,6 +734,10 @@ public final class TermMasker {
         let rxB0 = try! NSRegularExpression(pattern: "(?i)(?<!_)E#" + d + "_?__?(?!_)")
         // B) 언더스코어 과다/부족 케이스: "___E#56__", "__E#56_", "_E#56__" 등
         let rxB  = try! NSRegularExpression(pattern: "(?i)(?<!_)_?__?E#" + d + "_?__?(?!_)")
+        // B1) 뒤쪽 언더스코어가 아예 없는 케이스: "__E#56" → "__E#56__"
+        let rxB1 = try! NSRegularExpression(pattern: "(?i)(?<!_)_?__?E#" + d + "(?![A-Za-z0-9_])")
+        // B2) 앞뒤 언더스코어가 모두 없는 케이스: "E#56" → "__E#56__"
+        let rxB2 = try! NSRegularExpression(pattern: "(?i)(?<!_)E#" + d + "(?![A-Za-z0-9_])")
 
         @inline(__always)
         func halfwidth(_ s: String) -> String {
@@ -752,7 +756,6 @@ public final class TermMasker {
                 for m in ms.reversed() {
                     let idRaw = ns.substring(with: m.range(at: 1))
                     let id = halfwidth(idRaw)
-                    // 실제 존재하는 id일 때만 표준화
                     if validIDs.contains(id) {
                         tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
                         tmpNS = tmp as NSString
@@ -771,7 +774,7 @@ public final class TermMasker {
                 var tmpNS = tmp as NSString
                 for m in ms.reversed() {
                     let idRaw = ns.substring(with: m.range(at: 1))
-                    let id = idRaw.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? idRaw
+                    let id = halfwidth(idRaw)
                     if validIDs.contains(id) {
                         tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
                         tmpNS = tmp as NSString
@@ -790,7 +793,45 @@ public final class TermMasker {
                 var tmpNS = tmp as NSString
                 for m in ms.reversed() {
                     let idRaw = ns.substring(with: m.range(at: 1))
-                    let id = idRaw.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? idRaw
+                    let id = halfwidth(idRaw)
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+        }
+
+        // --- B1 ---
+        do {
+            let ns = out as NSString
+            let ms = rxB1.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !ms.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in ms.reversed() {
+                    let idRaw = ns.substring(with: m.range(at: 1))
+                    let id = halfwidth(idRaw)
+                    if validIDs.contains(id) {
+                        tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
+                        tmpNS = tmp as NSString
+                    }
+                }
+                out = tmp
+            }
+        }
+
+        // --- B2 ---
+        do {
+            let ns = out as NSString
+            let ms = rxB2.matches(in: out, options: [], range: NSRange(location: 0, length: ns.length))
+            if !ms.isEmpty {
+                var tmp = out
+                var tmpNS = tmp as NSString
+                for m in ms.reversed() {
+                    let idRaw = ns.substring(with: m.range(at: 1))
+                    let id = halfwidth(idRaw)
                     if validIDs.contains(id) {
                         tmp = tmpNS.replacingCharacters(in: m.range(at: 0), with: "__E#\(id)__")
                         tmpNS = tmp as NSString
