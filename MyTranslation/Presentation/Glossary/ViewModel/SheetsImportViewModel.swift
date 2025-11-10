@@ -65,7 +65,17 @@ final class SheetsImportViewModel {
         isProcessing = true
         defer { isProcessing = false }
         do {
-            try await adapter.importData(urlString: spreadsheetURL, report: report, context: context)
+            let selection = Selection(
+                termTitles: selectedTermTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
+                patternTitles: selectedPatternTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
+                markerTitles: selectedMarkerTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title }
+            )
+            try await adapter.importData(
+                urlString: spreadsheetURL,
+                selection: selection,
+                report: report,
+                context: context
+            )
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -98,12 +108,19 @@ struct SheetImportAdapter {
         return bundle
     }
 
-    func importData(urlString: String, report: Glossary.SDModel.ImportDryRunReport, context: ModelContext) async throws {
+    func importData(
+        urlString: String,
+        selection: SheetsImportViewModel.Selection,
+        report: Glossary.SDModel.ImportDryRunReport,
+        context: ModelContext
+    ) async throws {
         enum ImportError: LocalizedError {
             case invalidURL
             case spreadsheetIdMissing
             case missingAPIKey
             case noRecognizedSheets
+            case emptySelection
+            case malformedSheet(String)
 
             var errorDescription: String? {
                 switch self {
@@ -115,49 +132,28 @@ struct SheetImportAdapter {
                     return "Google API 키가 설정되지 않았습니다."
                 case .noRecognizedSheets:
                     return "가져올 수 있는 시트 구성을 찾지 못했습니다."
+                case .emptySelection:
+                    return "가져올 시트를 선택하세요."
+                case let .malformedSheet(title):
+                    return "\(title) 시트의 헤더 구성을 해석할 수 없습니다."
                 }
             }
         }
 
-        struct SheetClient {
-            func extractSpreadsheetID(from urlString: String) throws -> String {
-                guard let url = URL(string: urlString) else { throw ImportError.invalidURL }
-                if let id = url.pathComponents.drop { $0 != "d" }.dropFirst().first, !id.isEmpty {
-                    return id
-                }
-                // fallback: 정규식 탐색
-                let pattern = #"/spreadsheets/d/([a-zA-Z0-9-_]+)"#
-                if let range = url.absoluteString.range(of: pattern, options: .regularExpression) {
-                    let match = url.absoluteString[range]
-                    if let idRange = match.range(of: "([a-zA-Z0-9-_]+)", options: .regularExpression) {
-                        let id = match[idRange]
-                        if !id.isEmpty { return String(id) }
-                    }
-                }
-                throw ImportError.spreadsheetIdMissing
+        func extractSpreadsheetID(from urlString: String) throws -> String {
+            guard let url = URL(string: urlString) else { throw ImportError.invalidURL }
+            if let id = url.pathComponents.drop { $0 != "d" }.dropFirst().first, !id.isEmpty {
+                return id
             }
-
-            func fetchTabs(spreadsheetId: String) async throws -> [(title: String, id: Int)] {
-                guard !APIKeys.google.isEmpty else { throw ImportError.missingAPIKey }
-                let fields = "sheets.properties(title,sheetId)"
-                guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)?fields=\(fields)&key=\(APIKeys.google)") else {
-                    throw ImportError.invalidURL
+            let pattern = #"/spreadsheets/d/([a-zA-Z0-9-_]+)"#
+            if let range = url.absoluteString.range(of: pattern, options: .regularExpression) {
+                let match = url.absoluteString[range]
+                if let idRange = match.range(of: "([a-zA-Z0-9-_]+)", options: .regularExpression) {
+                    let id = match[idRange]
+                    if !id.isEmpty { return String(id) }
                 }
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let metadata = try JSONDecoder().decode(Glossary.Sheet.SheetsMetadata.self, from: data)
-                return metadata.sheets.map { sheet in (sheet.properties.title, sheet.properties.sheetId) }
             }
-
-            func fetchRows(spreadsheetId: String, sheetTitle: String) async throws -> [[String]] {
-                guard !APIKeys.google.isEmpty else { throw ImportError.missingAPIKey }
-                let encoded = sheetTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sheetTitle
-                guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/\(encoded)?majorDimension=ROWS&key=\(APIKeys.google)") else {
-                    throw ImportError.invalidURL
-                }
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let response = try JSONDecoder().decode(Glossary.Sheet.ValuesResponse.self, from: data)
-                return response.values ?? []
-            }
+            throw ImportError.spreadsheetIdMissing
         }
 
         struct HeaderMap<Column: Hashable> {
@@ -211,12 +207,15 @@ struct SheetImportAdapter {
             return ["1", "y", "yes", "true", "t", "on"].contains(lowered)
         }
 
+        guard !selection.termTitles.isEmpty || !selection.patternTitles.isEmpty || !selection.markerTitles.isEmpty else {
+            throw ImportError.emptySelection
+        }
+
+        guard !APIKeys.google.isEmpty else { throw ImportError.missingAPIKey }
+
         _ = report
 
-        let client = SheetClient()
-        let spreadsheetId = try client.extractSpreadsheetID(from: urlString)
-        let tabs = try await client.fetchTabs(spreadsheetId: spreadsheetId)
-
+        let spreadsheetId = try extractSpreadsheetID(from: urlString)
         var termSheets: [String: [TermRow]] = [:]
         var patternRows: [PatternRow] = []
         var markerRows: [AppellationRow] = []
@@ -278,72 +277,86 @@ struct SheetImportAdapter {
             "prohibit_standalone": .prohibit
         ]
 
-        for tab in tabs {
-            let rows = try await client.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: tab.title)
+        func resolveRows(for title: String) async throws -> [[String]] {
+            return try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
+        }
+
+        for title in selection.termTitles {
+            let rows = try await resolveRows(for: title)
             guard !rows.isEmpty else { continue }
             let headerRow = rows[0]
-            if let header = HeaderMap(header: headerRow, mapping: termMapping) {
-                let entries = rows.dropFirst().compactMap { row -> TermRow? in
-                    let target = header.value(in: row, for: .target) ?? ""
-                    let sourcesOK = header.value(in: row, for: .sourcesOK) ?? ""
-                    let sourcesNG = header.value(in: row, for: .sourcesNG) ?? ""
-                    if target.isEmpty && sourcesOK.isEmpty && sourcesNG.isEmpty { return nil }
-                    return TermRow(
-                        sourcesOK: sourcesOK,
-                        sourcesProhibit: sourcesNG,
-                        target: target,
-                        variants: header.value(in: row, for: .variants) ?? "",
-                        tags: header.value(in: row, for: .tags) ?? "",
-                        components: header.value(in: row, for: .components) ?? "",
-                        isAppellation: parseBool(header.value(in: row, for: .isAppellation)),
-                        preMask: parseBool(header.value(in: row, for: .preMask))
-                    )
-                }
-                if !entries.isEmpty { termSheets[tab.title] = entries }
-                continue
+            guard let header = HeaderMap(header: headerRow, mapping: termMapping) else {
+                throw ImportError.malformedSheet(title)
             }
+            let entries = rows.dropFirst().compactMap { row -> TermRow? in
+                let target = header.value(in: row, for: .target) ?? ""
+                let sourcesOK = header.value(in: row, for: .sourcesOK) ?? ""
+                let sourcesNG = header.value(in: row, for: .sourcesNG) ?? ""
+                if target.isEmpty && sourcesOK.isEmpty && sourcesNG.isEmpty { return nil }
+                return TermRow(
+                    sourcesOK: sourcesOK,
+                    sourcesProhibit: sourcesNG,
+                    target: target,
+                    variants: header.value(in: row, for: .variants) ?? "",
+                    tags: header.value(in: row, for: .tags) ?? "",
+                    components: header.value(in: row, for: .components) ?? "",
+                    isAppellation: parseBool(header.value(in: row, for: .isAppellation)),
+                    preMask: parseBool(header.value(in: row, for: .preMask))
+                )
+            }
+            if !entries.isEmpty { termSheets[title] = entries }
+        }
 
-            if let header = HeaderMap<PatternColumn>(header: headerRow, mapping: patternMapping) {
-                let entries = rows.dropFirst().compactMap { row -> PatternRow? in
-                    guard let name = header.value(in: row, for: .name), !name.isEmpty else { return nil }
-                    return PatternRow(
-                        name: name,
-                        displayName: header.value(in: row, for: .displayName) ?? "",
-                        roles: header.value(in: row, for: .roles) ?? "",
-                        grouping: header.value(in: row, for: .grouping) ?? "",
-                        groupLabel: header.value(in: row, for: .groupLabel) ?? "",
-                        sourceJoiners: header.value(in: row, for: .sourceJoiners) ?? "",
-                        sourceTemplates: header.value(in: row, for: .sourceTemplates) ?? "",
-                        targetTemplates: header.value(in: row, for: .targetTemplates) ?? "",
-                        left: header.value(in: row, for: .left) ?? "",
-                        right: header.value(in: row, for: .right) ?? "",
-                        skipSame: parseBool(header.value(in: row, for: .skipSame)),
-                        isAppellation: parseBool(header.value(in: row, for: .isAppellation)),
-                        preMask: parseBool(header.value(in: row, for: .preMask)),
-                        defProhibit: parseBool(header.value(in: row, for: .defaultProhibit)),
-                        defIsAppellation: parseBool(header.value(in: row, for: .defaultIsAppellation)),
-                        defPreMask: parseBool(header.value(in: row, for: .defaultPreMask)),
-                        needPairCheck: parseBool(header.value(in: row, for: .needPairCheck))
-                    )
-                }
-                patternRows.append(contentsOf: entries)
-                continue
+        for title in selection.patternTitles {
+            let rows = try await resolveRows(for: title)
+            guard !rows.isEmpty else { continue }
+            let headerRow = rows[0]
+            guard let header = HeaderMap<PatternColumn>(header: headerRow, mapping: patternMapping) else {
+                throw ImportError.malformedSheet(title)
             }
+            let entries = rows.dropFirst().compactMap { row -> PatternRow? in
+                guard let name = header.value(in: row, for: .name), !name.isEmpty else { return nil }
+                return PatternRow(
+                    name: name,
+                    displayName: header.value(in: row, for: .displayName) ?? "",
+                    roles: header.value(in: row, for: .roles) ?? "",
+                    grouping: header.value(in: row, for: .grouping) ?? "",
+                    groupLabel: header.value(in: row, for: .groupLabel) ?? "",
+                    sourceJoiners: header.value(in: row, for: .sourceJoiners) ?? "",
+                    sourceTemplates: header.value(in: row, for: .sourceTemplates) ?? "",
+                    targetTemplates: header.value(in: row, for: .targetTemplates) ?? "",
+                    left: header.value(in: row, for: .left) ?? "",
+                    right: header.value(in: row, for: .right) ?? "",
+                    skipSame: parseBool(header.value(in: row, for: .skipSame)),
+                    isAppellation: parseBool(header.value(in: row, for: .isAppellation)),
+                    preMask: parseBool(header.value(in: row, for: .preMask)),
+                    defProhibit: parseBool(header.value(in: row, for: .defaultProhibit)),
+                    defIsAppellation: parseBool(header.value(in: row, for: .defaultIsAppellation)),
+                    defPreMask: parseBool(header.value(in: row, for: .defaultPreMask)),
+                    needPairCheck: parseBool(header.value(in: row, for: .needPairCheck))
+                )
+            }
+            patternRows.append(contentsOf: entries)
+        }
 
-            if let header = HeaderMap<MarkerColumn>(header: headerRow, mapping: markerMapping) {
-                let entries = rows.dropFirst().compactMap { row -> AppellationRow? in
-                    guard let source = header.value(in: row, for: .source), !source.isEmpty else { return nil }
-                    return AppellationRow(
-                        source: source,
-                        target: header.value(in: row, for: .target) ?? "",
-                        variants: header.value(in: row, for: .variants) ?? "",
-                        position: header.value(in: row, for: .position) ?? "",
-                        prohibit: parseBool(header.value(in: row, for: .prohibit))
-                    )
-                }
-                markerRows.append(contentsOf: entries)
-                continue
+        for title in selection.markerTitles {
+            let rows = try await resolveRows(for: title)
+            guard !rows.isEmpty else { continue }
+            let headerRow = rows[0]
+            guard let header = HeaderMap<MarkerColumn>(header: headerRow, mapping: markerMapping) else {
+                throw ImportError.malformedSheet(title)
             }
+            let entries = rows.dropFirst().compactMap { row -> AppellationRow? in
+                guard let source = header.value(in: row, for: .source), !source.isEmpty else { return nil }
+                return AppellationRow(
+                    source: source,
+                    target: header.value(in: row, for: .target) ?? "",
+                    variants: header.value(in: row, for: .variants) ?? "",
+                    position: header.value(in: row, for: .position) ?? "",
+                    prohibit: parseBool(header.value(in: row, for: .prohibit))
+                )
+            }
+            markerRows.append(contentsOf: entries)
         }
 
         guard !termSheets.isEmpty || !patternRows.isEmpty || !markerRows.isEmpty else {
