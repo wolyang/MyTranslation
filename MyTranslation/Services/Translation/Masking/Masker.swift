@@ -52,13 +52,119 @@ public final class TermMasker {
         self.extraNegativeBigrams = extraNegativeBigrams
         self.contextWindow = contextWindow
     }
+    
+    /// 이번 세그먼트에서 예외적으로 허용해야 하는 GlossaryEntry 배열을 리턴한다.
+    public func promoteProhibitedEntries(
+        in segmentText: String,
+        entries: [GlossaryEntry],
+        markers: [GlossaryAppellationMarker]
+    ) -> [GlossaryEntry] {// ---- 유틸
+        func allOccurrences(of needle: String, in hay: String) -> [Int] {
+            guard !needle.isEmpty, !hay.isEmpty else { return [] }
+            var out: [Int] = []; var from = hay.startIndex
+            while from < hay.endIndex, let r = hay.range(of: needle, range: from..<hay.endIndex) {
+                out.append(hay.distance(from: hay.startIndex, to: r.lowerBound))
+                from = hay.index(after: r.lowerBound) // 겹치기 허용
+            }
+            return out
+        }
+        func slice(_ s: String, start: Int, len: Int) -> Substring {
+            let st = max(0, min(start, s.count))
+            let en = max(st, min(st + len, s.count))
+            let a = s.index(s.startIndex, offsetBy: st)
+            let b = s.index(s.startIndex, offsetBy: en)
+            return s[a..<b]
+        }
+        
+        // 1) composer 엔트리에서 (leftId,rightId) 쌍 수집
+        struct Pair { let left: String; let right: String }
+            var composerPairs: [Pair] = []
+            for e in entries {
+                if case let .composer(_, leftId, rightId, needPairCheck) = e.origin {
+                    if needPairCheck, let rightId {
+                        composerPairs.append(.init(left: leftId, right: rightId))
+                    }
+                }
+            }
+            guard !composerPairs.isEmpty else { return [] }
+        
+        // 2) termId -> prohibited 단독 GlossaryEntry 목록
+        var prohibTerms: [String: [GlossaryEntry]] = [:]
+        for e in entries where e.prohibitStandalone {
+            if case let .termStandalone(termId) = e.origin {
+                prohibTerms[termId, default: []].append(e)
+            }
+        }
+        
+        var promoted: [GlossaryEntry] = []
+        
+        if !composerPairs.isEmpty && !prohibTerms.isEmpty {
+            // 3) termId -> source 출현 오프셋 목록
+            var occ: [String: [Int]] = [:]
+            for (tid, termEntries) in prohibTerms {
+                var offsets: [Int] = []
+                for e in termEntries {
+                    offsets += allOccurrences(of: e.source, in: segmentText)
+                }
+                if !offsets.isEmpty { occ[tid] = offsets.sorted() }
+            }
+            if occ.isEmpty { return [] }
+            
+            // 4) composer 쌍마다 거리 판정, 짝 성립 시 두 Term 엔트리를 승격 목록에 추가
+            for p in composerPairs {
+                guard let lOcc = occ[p.left], let rOcc = occ[p.right] else { continue }
+                var ok = false
+                for lp in lOcc {
+                    for rp in rOcc where abs(lp - rp) <= contextWindow {
+                        ok = true; break
+                    }
+                    if ok { break }
+                }
+                if ok {
+                    if let lefts = prohibTerms[p.left] { promoted.append(contentsOf: lefts) }
+                    if let rights = prohibTerms[p.right] { promoted.append(contentsOf: rights) }
+                }
+            }
+        }
+        
+        if !markers.isEmpty {
+            // isAppellation && prohibit 소스만 대상
+                    let candidates = entries.filter { $0.isAppellation && $0.prohibitStandalone }
+                    for e in candidates {
+                        let srcOcc = allOccurrences(of: e.source, in: segmentText)
+                        guard !srcOcc.isEmpty else { continue }
+
+                        var ok = false
+                        for m in markers {
+                            switch m.position {
+                            case .prefix:
+                                // [marker][source]
+                                for p in srcOcc {
+                                    let pre = slice(segmentText, start: p - m.source.count, len: m.source.count)
+                                    if pre == Substring(m.source) { ok = true; break }
+                                }
+                            case .suffix:
+                                // [source][marker]
+                                for p in srcOcc {
+                                    let tail = p + e.source.count
+                                    let suf = slice(segmentText, start: tail, len: m.source.count)
+                                    if suf == Substring(m.source) { ok = true; break }
+                                }
+                            }
+                            if ok { break }
+                        }
+                        if ok { promoted.append(e) }
+                    }
+        }
+
+        return promoted
+    }
 
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
     public func maskWithLocks(
         segment: Segment,
-        glossary entries: [GlossaryEntry],
-        maskPerson: Bool
+        glossary entries: [GlossaryEntry]
     ) -> MaskedPack {
         let text = segment.originalText
         guard !text.isEmpty, !entries.isEmpty else {
@@ -72,23 +178,10 @@ public final class TermMasker {
         var locks: [String: LockInfo] = [:]
         var localNextIndex = self.nextIndex
 
-        // === 단일 한자 검증용 사전 구축
-        var fullSourcesByPid: [String: Set<String>] = [:]
-        var singleSourcesByPid: [String: Set<String>] = [:]
-        for e in sorted where e.category == .person {
-            guard let pid = e.personId, !pid.isEmpty else { continue }
-            let sources = e.sourceForms.isEmpty ? [e.source] : e.sourceForms
-            for src in sources {
-                if src.count >= 2 { fullSourcesByPid[pid, default: []].insert(src) }
-                else { singleSourcesByPid[pid, default: []].insert(src) }
-            }
-        }
-        var lastMentionIndexByPid: [String: Int] = [:]
-
         for e in sorted {
             guard !e.source.isEmpty, out.contains(e.source) else { continue }
-            // 일단 상세 인물명만 엔진에 따라 마스킹하지 않음
-            if !maskPerson && e.category == .person && e.personId != nil { continue }
+            // 호칭, 인물명 등은 마스킹하지 않음
+            if e.isAppellation { continue }
 
             // === (1) 유니크 토큰 생성 ===
             let tokenPrefix = "E"
@@ -109,47 +202,7 @@ public final class TermMasker {
                 if last < m.range.location {
                     newOut += ns.substring(with: NSRange(location: last, length: m.range.location - last))
                 }
-
-                var shouldMask = true
-                if e.category == .person,
-                   let pid = e.personId,
-                   !pid.isEmpty,
-                   e.source.count == 1
-                {
-                    // ---- 단일 한자 인물: 네거티브 → 화이트리스트 → 최근언급 → 짝검증 ----
-                    if isNegativeBigram(ns: ns, matchRange: m.range, center: e.source) {
-                        shouldMask = false
-                    } else if (soloFamilyAllow[pid]?.contains(e.source) == true)
-                        || (soloGivenAllow[pid]?.contains(e.source) == true)
-                        || (soloAliasAllow[pid]?.contains(e.source) == true)
-                    {
-                        shouldMask = true
-                    } else if let last = lastMentionIndexByPid[pid],
-                              (m.range.location - last) <= contextWindow
-                    {
-                        shouldMask = true
-                    } else {
-                        let prev1 = Self.substringSafe(ns, m.range.location - 1, 1)
-                        let prev2 = Self.substringSafe(ns, m.range.location - 2, 2)
-                        let next1 = Self.substringSafe(ns, m.range.location + m.range.length, 1)
-                        let next2 = Self.substringSafe(ns, m.range.location + m.range.length, 2)
-                        let fulls = fullSourcesByPid[pid] ?? []
-                        shouldMask = fulls.contains(prev1 + e.source)
-                            || fulls.contains(prev2)
-                            || fulls.contains(e.source + next1)
-                            || fulls.contains(e.source + next2)
-                    }
-                }
-
-                if shouldMask {
-                    newOut += token
-                    if e.category == .person, let pid = e.personId {
-                        lastMentionIndexByPid[pid] = m.range.location
-                    }
-                } else {
-                    newOut += ns.substring(with: m.range)
-                }
-
+                newOut += token
                 last = m.range.location + m.range.length
             }
 
@@ -159,7 +212,7 @@ public final class TermMasker {
             out = newOut
 
             // (2) 사람일 때만 NBSP 힌트 주입
-            if e.category == .person {
+            if e.isAppellation {
                 out = surroundTokenWithNBSP(out, token: token)
             }
 
@@ -173,7 +226,7 @@ public final class TermMasker {
                 target: e.target,
                 endsWithBatchim: b,
                 endsWithRieul: r,
-                category: e.category
+                isAppellation: e.isAppellation
             )
         }
 
@@ -477,19 +530,22 @@ public final class TermMasker {
     ///   - original: 용어 검사를 수행할 원문 텍스트
     ///   - entries: 용어집 엔트리 목록
     /// - Returns: 원문에 등장한 인물 용어의 target/variants 정보 배열
-    func makeNameGlossaries(forOriginalText original: String, entries: [GlossaryEntry]) -> [NameGlossary] {
+    func makeNameGlossaries(forOriginalText original: String, entries: [GlossaryEntry], markers: [GlossaryAppellationMarker]) -> [NameGlossary] {
         guard !original.isEmpty else { return [] }
 
         let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
+        
+        var standaloneEntries = entries.filter { !$0.prohibitStandalone }
+        var promotedEntries = promoteProhibitedEntries(in: original, entries: entries, markers: markers)
+        var allowedEntries = standaloneEntries + promotedEntries
 
         var variantsByTarget: [String: [String]] = [:]
         var seenVariantKeysByTarget: [String: Set<String>] = [:]
 
-        for entry in entries where entry.category == .person {
+        for entry in allowedEntries {
             guard !entry.target.isEmpty else { continue }
-            let sourceForms = entry.sourceForms.isEmpty ? [entry.source] : entry.sourceForms
-            let normalizedSources = sourceForms.map { $0.precomposedStringWithCompatibilityMapping.lowercased() }
-            guard normalizedSources.contains(where: { !$0.isEmpty && normalizedOriginal.contains($0) }) else { continue }
+            let normalizedSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
+            guard normalizedOriginal.contains(normalizedSource) else { continue }
 
             if !entry.variants.isEmpty {
                 var bucket = variantsByTarget[entry.target, default: []]

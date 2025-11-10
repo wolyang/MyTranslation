@@ -73,10 +73,10 @@ struct BrowserRootView: View {
                 }
                 .presentationDetents([.medium, .large])
             }
-            .task {
-                // 앱 시작 후 한 번 시드 시도
-                GlossarySeeder.seedIfNeeded(modelContext)
-            }
+//            .task {
+//                // 앱 시작 후 한 번 시드 시도
+//                GlossarySeeder.seedIfNeeded(modelContext)
+//            }
     }
 
     /// 화면 크기에 따라 iPad는 사이드바, iPhone은 시트를 구성하는 컨테이너 뷰입니다.

@@ -1526,18 +1526,6 @@
       "target": "가이 씨",
       "category": "기타",
       "variants": []
-    },
-    {
-      "source": "魔人",
-      "target": "마인",
-      "category": "기타",
-      "variants": []
-    },
-    {
-      "source": "队长",
-      "target": "대장",
-      "category": "기타",
-      "variants": []
     }
   ],
   "people": [
@@ -1632,6 +1620,20 @@
           ],
           "target": "쟈",
           "variants": []
+        },
+        {
+            "source": [
+                "魔人"
+            ],
+              "target": "마인",
+              "variants": ["악마"]
+        },
+        {
+            "source": [
+                "队长"
+            ],
+            "target": "대장",
+            "variants": ["선장"]
         }
       ]
     },

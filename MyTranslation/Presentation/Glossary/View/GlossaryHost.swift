@@ -9,7 +9,7 @@ struct GlossaryHost: View {
     let modelContext: ModelContext
 
     var body: some View {
-        GlossaryTabView(modelContext: modelContext)
+        GlossaryTabView(/*modelContext: modelContext*/)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("완료") {

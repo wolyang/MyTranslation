@@ -8,7 +8,7 @@
 import Foundation
 
 enum APIKeys {
-    static var googleTranslate: String {
+    static var google: String {
         Bundle.main.object(forInfoDictionaryKey: "GoogleAPIKey") as? String ?? ""
     }
 
