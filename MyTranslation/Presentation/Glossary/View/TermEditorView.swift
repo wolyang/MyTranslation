@@ -55,6 +55,7 @@ struct TermEditorView: View {
         }
     }
 
+    @ViewBuilder
     private var generalForm: some View {
         Section("원문") {
             TextEditor(text: $viewModel.generalDraft.sourcesOK)
@@ -75,6 +76,7 @@ struct TermEditorView: View {
         }
     }
 
+    @ViewBuilder
     private var patternForm: some View {
         Section(header: Text("그룹")) {
             TextField(viewModel.pattern?.groupLabel ?? "그룹", text: $viewModel.groupName)
@@ -101,6 +103,7 @@ struct TermEditorView: View {
         }
     }
 
+    @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button("취소") { dismiss() }
