@@ -280,6 +280,7 @@ private struct TermRowView: View {
 
 #if DEBUG
 enum PreviewData {
+    @MainActor
     static let container: ModelContainer = {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try! ModelContainer(

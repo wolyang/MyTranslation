@@ -97,7 +97,7 @@ final class TermEditorViewModel {
         } else if let pattern {
             mode = .pattern
             let defaults = PatternReference(pattern: pattern.pattern, meta: pattern.meta)
-            roleDrafts = defaults.roles.map { role in
+            let rds = defaults.roles.map { role in
                 var draft = RoleDraft(roleName: role,
                                       sourcesOK: "",
                                       sourcesProhibit: "",
@@ -110,7 +110,8 @@ final class TermEditorViewModel {
                 draft.applyDefaults(from: defaults)
                 return draft
             }
-            if roleDrafts.isEmpty {
+            roleDrafts = rds
+            if rds.isEmpty {
                 roleDrafts = [RoleDraft(roleName: "기본", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask)]
             }
             generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask)

@@ -91,8 +91,18 @@ final class SheetsImportViewModel {
 struct SheetImportAdapter {
     func fetchTabs(urlString: String) async throws -> [(title: String, id: Int)] {
         guard !urlString.isEmpty else { throw NSError(domain: "Sheets", code: 0, userInfo: [NSLocalizedDescriptionKey: "URL을 입력하세요."]) }
-        // Stubbed list for offline previews
-        return ["Terms", "Patterns", "Markers"].enumerated().map { (idx, title) in (title: title, id: idx) }
+        guard let spreadsheetId = extractSpreadsheetId(from: urlString) else {
+            throw NSError(domain: "Sheets", code: 0, userInfo: [NSLocalizedDescriptionKey: "올바른 URL을 입력하세요."])
+        }
+        return try await Glossary.Sheet.fetchSheetTabs(spreadsheetId: spreadsheetId)
+    }
+    
+    func extractSpreadsheetId(from urlString: String) -> String? {
+        guard let range1 = urlString.range(of: "/d/"),
+              let range2 = urlString.range(of: "/edit", range: range1.upperBound..<urlString.endIndex) else {
+            return nil
+        }
+        return String(urlString[range1.upperBound..<range2.lowerBound])
     }
 
     func performDryRun(urlString: String, selection: SheetsImportViewModel.Selection, context: ModelContext) async throws -> Glossary.SDModel.ImportDryRunReport {
@@ -140,21 +150,7 @@ struct SheetImportAdapter {
             }
         }
 
-        func extractSpreadsheetID(from urlString: String) throws -> String {
-            guard let url = URL(string: urlString) else { throw ImportError.invalidURL }
-            if let id = url.pathComponents.drop { $0 != "d" }.dropFirst().first, !id.isEmpty {
-                return id
-            }
-            let pattern = #"/spreadsheets/d/([a-zA-Z0-9-_]+)"#
-            if let range = url.absoluteString.range(of: pattern, options: .regularExpression) {
-                let match = url.absoluteString[range]
-                if let idRange = match.range(of: "([a-zA-Z0-9-_]+)", options: .regularExpression) {
-                    let id = match[idRange]
-                    if !id.isEmpty { return String(id) }
-                }
-            }
-            throw ImportError.spreadsheetIdMissing
-        }
+        
 
         struct HeaderMap<Column: Hashable> {
             let index: [Column: Int]
@@ -178,7 +174,7 @@ struct SheetImportAdapter {
                 var snake = ""
                 for ch in trimmed {
                     if ch.isUppercase {
-                        if let last = snake.last, last != '_' {
+                        if let last = snake.last, last != "_" {
                             snake += "_"
                         }
                         snake.append(contentsOf: ch.lowercased())
@@ -215,7 +211,9 @@ struct SheetImportAdapter {
 
         _ = report
 
-        let spreadsheetId = try extractSpreadsheetID(from: urlString)
+        guard let spreadsheetId = extractSpreadsheetId(from: urlString) else {
+            throw ImportError.spreadsheetIdMissing
+        }
         var termSheets: [String: [TermRow]] = [:]
         var patternRows: [PatternRow] = []
         var markerRows: [AppellationRow] = []
@@ -364,9 +362,9 @@ struct SheetImportAdapter {
         }
 
         let bundle = try buildGlossaryJSON(termsBySheet: termSheets, patterns: patternRows, markers: markerRows)
-        let upserter = Glossary.SDModel.GlossaryUpserter(context: context, merge: .overwrite)
-        let result = try upserter.apply(bundle: bundle)
-        Glossary.SDModel.ToastHub.shared.show(
+        let upserter = await Glossary.SDModel.GlossaryUpserter(context: context, merge: .overwrite)
+        let result = try await upserter.apply(bundle: bundle)
+        await Glossary.SDModel.ToastHub.shared.show(
             "용어 +\(result.terms.newCount + result.terms.updateCount), 패턴 +\(result.patterns.newCount + result.patterns.updateCount), 호칭 +\(result.markers.newCount + result.markers.updateCount) 가져왔습니다."
         )
     }

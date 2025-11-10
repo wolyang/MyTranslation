@@ -21,7 +21,7 @@ extension Glossary.Sheet {
     }
 
     struct ValuesResponse: Decodable { let values: [[String]]? }
-
+    
     static func fetchSheetTabs(spreadsheetId: String) async throws -> [(title: String, id: Int)] {
         let fields = "sheets.properties(title,sheetId)"
         let urlStr = "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)?fields=\(fields)&key=\(APIKeys.google)"
@@ -29,7 +29,7 @@ extension Glossary.Sheet {
         let meta = try JSONDecoder().decode(SheetsMetadata.self, from: data)
         return meta.sheets.map { ($0.properties.title, $0.properties.sheetId) }
     }
-
+    
     static func fetchRows(spreadsheetId: String, sheetTitle: String) async throws -> [[String]] {
         // 전체 시트를 행 기준으로 조회: majorDimension=ROWS
         let range = sheetTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sheetTitle

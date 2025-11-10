@@ -78,6 +78,7 @@ struct PatternEditorView: View {
         }
     }
 
+    @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button("닫기") { dismiss() }

@@ -51,10 +51,10 @@ final class GlossaryHomeViewModel {
             let tplIndex = comp.tgtTemplateIndex ?? 0
             let template = pattern.pattern.targetTemplates.indices.contains(tplIndex) ? pattern.pattern.targetTemplates[tplIndex] : pattern.pattern.targetTemplates.first ?? "{L}"
             if pattern.rightRoles.isEmpty {
-                return Glossary.Matcher.renderTarget(template, L: L, R: nil)
+                return Glossary.Util.renderTarget(template, L: L, R: nil)
             }
             // 그룹 내 다른 Term 탐색은 외부에서 처리되므로 우선 자기 자신만 반영
-            return Glossary.Matcher.renderTarget(template, L: L, R: nil)
+            return Glossary.Util.renderTarget(template, L: L, R: nil)
         }
     }
 
@@ -272,7 +272,7 @@ final class GlossaryHomeViewModel {
                     }
                 }
             }
-            let display = Glossary.Matcher.renderTarget(tpl, L: leftTerm ?? firstRow.rawTerm, R: rightTerm)
+            let display = Glossary.Util.renderTarget(tpl, L: leftTerm ?? firstRow.rawTerm, R: rightTerm)
             groups.append(PatternGroupRow(id: uid, name: name, displayName: display, componentTerms: bucket.terms, badgeTargets: bucket.terms.map { $0.target }))
         }
         patternGroups = groups.sorted { $0.name < $1.name }
