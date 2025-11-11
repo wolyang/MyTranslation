@@ -137,25 +137,48 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
         var srcIdx: Int? = nil
         var tgtIdx: Int? = nil
 
-        var core = token
-        // extract #sN / #tM
-        let parts = core.split(separator: "#").map(String.init)
+        var core = token.trimmingCharacters(in: .whitespaces)
+        // extract #sN / #tM / #N
+        let parts = core.split(separator: "#", omittingEmptySubsequences: false).map(String.init)
         if let head = parts.first { core = head }
-        for p in parts.dropFirst() {
-            if p.hasPrefix("s"), let v = Int(p.dropFirst()) { srcIdx = v }
-            else if p.hasPrefix("t"), let v = Int(p.dropFirst()) { tgtIdx = v }
+        for fragment in parts.dropFirst() {
+            let trimmed = fragment.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            if trimmed.hasPrefix("s"), let value = Int(trimmed.dropFirst()) {
+                srcIdx = value
+            } else if trimmed.hasPrefix("t"), let value = Int(trimmed.dropFirst()) {
+                tgtIdx = value
+            } else if let value = Int(trimmed) {
+                srcIdx = value
+                tgtIdx = value
+            }
         }
         // pattern[:role][-groups]
-        let roleSplit = core.split(separator: ":", maxSplits: 1).map(String.init)
-        let pg = roleSplit[0]
-        pattern = pg.split(separator: "-", maxSplits: 1).map(String.init)[0]
-        if pg.contains("-") {
-            let g = String(pg.split(separator: "-", maxSplits: 1).map(String.init)[1])
-            groups = g.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let roleSplit = core.split(separator: ":", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+        let patternSegment = roleSplit[0]
+        let patternParts = patternSegment.split(separator: "-", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+        pattern = patternParts.first ?? ""
+        var parsedGroups: [String] = []
+        if patternParts.count == 2 {
+            parsedGroups.append(contentsOf: patternParts[1].split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
         }
         if roleSplit.count == 2 {
-            let rolePart = roleSplit[1].split(separator: "-", maxSplits: 1).map(String.init)[0]
-            roles = [rolePart]
+            let roleSection = roleSplit[1]
+            let roleParts = roleSection.split(separator: "-", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+            if let roleName = roleParts.first, !roleName.isEmpty {
+                roles = [roleName]
+            }
+            if roleParts.count == 2 {
+                parsedGroups.append(contentsOf: roleParts[1].split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+            }
+        }
+        if !parsedGroups.isEmpty {
+            var seen: Set<String> = []
+            var ordered: [String] = []
+            for name in parsedGroups where !name.isEmpty {
+                if seen.insert(name).inserted { ordered.append(name) }
+            }
+            groups = ordered
         }
         return JSComponent(pattern: pattern, roles: roles, groups: groups, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx)
     }

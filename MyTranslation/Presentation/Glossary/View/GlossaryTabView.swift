@@ -6,11 +6,7 @@ struct GlossaryTabView: View {
     private let modelContext: ModelContext
 
     @State private var homeViewModel: GlossaryHomeViewModel
-    @State private var termEditorViewModel: TermEditorViewModel? = nil
-    @State private var showTermEditor: Bool = false
-    @State private var patternEditorViewModel: PatternEditorViewModel? = nil
-    @State private var showPatternEditor: Bool = false
-    @State private var showImportSheet: Bool = false
+    @State private var activeSheet: ActiveSheet? = nil
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -24,28 +20,25 @@ struct GlossaryTabView: View {
                 onCreateTerm: { pattern in presentTermEditor(patternID: pattern?.id) },
                 onEditTerm: { row in presentTermEditor(termID: row.id) },
                 onOpenPatternEditor: { pattern in presentPatternEditor(pattern?.id) },
-                onOpenImport: { showImportSheet = true }
+                onOpenImport: { activeSheet = ActiveSheet.importSheet() }
             )
         }
-        .sheet(isPresented: $showTermEditor, onDismiss: { Task { await homeViewModel.reloadAll() } }) {
-            if let vm = termEditorViewModel {
-                TermEditorView(viewModel: vm)
+        .sheet(item: $activeSheet, onDismiss: { Task { await homeViewModel.reloadAll() } }) { sheet in
+            switch sheet {
+            case .term(let viewModel, _):
+                TermEditorView(viewModel: viewModel)
+            case .pattern(let viewModel, _):
+                PatternEditorView(viewModel: viewModel)
+            case .importSheet(_):
+                SheetsImportCoordinatorView(modelContext: modelContext)
             }
-        }
-        .sheet(isPresented: $showPatternEditor, onDismiss: { Task { await homeViewModel.reloadAll() } }) {
-            if let vm = patternEditorViewModel {
-                PatternEditorView(viewModel: vm)
-            }
-        }
-        .sheet(isPresented: $showImportSheet, onDismiss: { Task { await homeViewModel.reloadAll() } }) {
-            SheetsImportCoordinatorView(modelContext: modelContext)
         }
     }
 
     private func presentTermEditor(termID: PersistentIdentifier? = nil, patternID: String? = nil) {
         do {
-            termEditorViewModel = try TermEditorViewModel(context: modelContext, termID: termID, patternID: patternID)
-            showTermEditor = true
+            let viewModel = try TermEditorViewModel(context: modelContext, termID: termID, patternID: patternID)
+            activeSheet = ActiveSheet.term(viewModel)
         } catch {
             print("TermEditor init error: \(error)")
         }
@@ -57,10 +50,28 @@ struct GlossaryTabView: View {
 
     private func presentPatternEditor(_ id: String?) {
         do {
-            patternEditorViewModel = try PatternEditorViewModel(context: modelContext, patternID: id)
-            showPatternEditor = true
+            let viewModel = try PatternEditorViewModel(context: modelContext, patternID: id)
+            activeSheet = ActiveSheet.pattern(viewModel)
         } catch {
             print("PatternEditor init error: \(error)")
+        }
+    }
+
+    private enum ActiveSheet: Identifiable {
+        case term(TermEditorViewModel, UUID)
+        case pattern(PatternEditorViewModel, UUID)
+        case importSheet(UUID)
+
+        static func term(_ viewModel: TermEditorViewModel) -> ActiveSheet { .term(viewModel, UUID()) }
+        static func pattern(_ viewModel: PatternEditorViewModel) -> ActiveSheet { .pattern(viewModel, UUID()) }
+        static func importSheet() -> ActiveSheet { .importSheet(UUID()) }
+
+        var id: UUID {
+            switch self {
+            case .term(_, let id): return id
+            case .pattern(_, let id): return id
+            case .importSheet(let id): return id
+            }
         }
     }
 }
