@@ -6,7 +6,6 @@ struct GlossaryHomeView: View {
 
     let onCreateTerm: (GlossaryHomeViewModel.PatternSummary?) -> Void
     let onEditTerm: (GlossaryHomeViewModel.TermRow) -> Void
-    let onOpenPatternEditor: (GlossaryHomeViewModel.PatternSummary?) -> Void
     let onOpenImport: () -> Void
 
     @State private var showDeleteConfirm: Bool = false
@@ -16,7 +15,6 @@ struct GlossaryHomeView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            picker
             content
         }
         .background(Color(uiColor: .systemGroupedBackground))
@@ -106,7 +104,6 @@ struct GlossaryHomeView: View {
                     .font(.headline)
                     .accessibilityHidden(true)
                 Spacer()
-                Button("패턴 편집") { onOpenPatternEditor(pattern) }
                 Button("패턴으로 용어 생성") { onCreateTerm(pattern) }
             } else {
                 Spacer()
@@ -116,28 +113,12 @@ struct GlossaryHomeView: View {
         .padding(.horizontal)
     }
 
-    private var picker: some View {
-        Group {
-            if viewModel.pattern(for: viewModel.selectedPatternID) != nil {
-                Picker("보기", selection: $viewModel.segment) {
-                    ForEach(GlossaryHomeViewModel.Segment.allCases) { segment in
-                        Text(segment.rawValue).tag(segment)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.bottom, viewModel.pattern(for: viewModel.selectedPatternID) != nil ? 12 : 0)
-    }
-
     @ViewBuilder
     private var content: some View {
-        switch viewModel.segment {
-        case .terms:
-            termsList
-        case .groups:
+        if viewModel.shouldShowGroupList {
             groupsList
+        } else {
+            termsList
         }
     }
 
@@ -205,7 +186,6 @@ struct GlossaryHomeView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
             Button("Google 시트 가져오기") { onOpenImport() }
-            Button("패턴 추가") { onOpenPatternEditor(nil) }
             if viewModel.pattern(for: viewModel.selectedPatternID) == nil {
                 Button("새 용어") { onCreateTerm(nil) }
             }
@@ -274,7 +254,7 @@ private struct TermRowView: View {
     let vm = GlossaryHomeViewModel(context: context)
     Task { @MainActor in await vm.reloadAll() }
     return NavigationStack {
-        GlossaryHomeView(viewModel: vm, onCreateTerm: { _ in }, onEditTerm: { _ in }, onOpenPatternEditor: { _ in }, onOpenImport: {})
+        GlossaryHomeView(viewModel: vm, onCreateTerm: { _ in }, onEditTerm: { _ in }, onOpenImport: {})
     }
 }
 
@@ -364,6 +344,9 @@ enum PreviewData {
         context.insert(givenTagLink)
         family.termTagLinks = [familyTagLink]
         given.termTagLinks = [givenTagLink]
+
+        let marker = Glossary.SDModel.SDAppellationMarker(source: "Mr.", target: "홍 선생", position: "prefix", prohibitStandalone: true)
+        context.insert(marker)
 
         try? context.save()
     }

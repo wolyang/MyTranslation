@@ -58,12 +58,18 @@ struct TermEditorView: View {
     @ViewBuilder
     private var generalForm: some View {
         Section("원문") {
-            TextEditor(text: $viewModel.generalDraft.sourcesOK)
-                .frame(minHeight: 80)
-                .accessibilityLabel("허용 원문")
-            TextEditor(text: $viewModel.generalDraft.sourcesProhibit)
-                .frame(minHeight: 80)
-                .accessibilityLabel("금지 원문")
+            sourceEditor(
+                text: $viewModel.generalDraft.sourcesOK,
+                instruction: "단독 번역을 허용할 원문을 세미콜론(;)으로 구분해 입력하세요.",
+                accessibilityLabel: "허용 원문",
+                minHeight: 80
+            )
+            sourceEditor(
+                text: $viewModel.generalDraft.sourcesProhibit,
+                instruction: "단독 번역을 금지할 원문을 세미콜론(;)으로 구분해 입력하세요.",
+                accessibilityLabel: "금지 원문",
+                minHeight: 80
+            )
         }
         Section("번역") {
             TextField("번역", text: $viewModel.generalDraft.target)
@@ -88,18 +94,40 @@ struct TermEditorView: View {
         }
         ForEach($viewModel.roleDrafts) { $draft in
             Section(header: Text(draft.roleName.isEmpty ? "항목" : draft.roleName)) {
-                TextEditor(text: $draft.sourcesOK)
-                    .frame(minHeight: 70)
-                    .accessibilityLabel("허용 원문")
-                TextEditor(text: $draft.sourcesProhibit)
-                    .frame(minHeight: 70)
-                    .accessibilityLabel("금지 원문")
+                sourceEditor(
+                    text: $draft.sourcesOK,
+                    instruction: "단독 번역을 허용할 원문을 세미콜론(;)으로 구분해 입력하세요.",
+                    accessibilityLabel: "허용 원문",
+                    minHeight: 70
+                )
+                sourceEditor(
+                    text: $draft.sourcesProhibit,
+                    instruction: "단독 번역을 금지할 원문을 세미콜론(;)으로 구분해 입력하세요.",
+                    accessibilityLabel: "금지 원문",
+                    minHeight: 70
+                )
                 TextField("번역", text: $draft.target)
                 TextField("변형 (세미콜론)", text: $draft.variants)
                 TextField("태그 (세미콜론)", text: $draft.tags)
                 Toggle("호칭", isOn: $draft.isAppellation)
                 Toggle("Pre-mask", isOn: $draft.preMask)
             }
+        }
+    }
+
+    private func sourceEditor(
+        text: Binding<String>,
+        instruction: String,
+        accessibilityLabel: String,
+        minHeight: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(instruction)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            TextEditor(text: text)
+                .frame(minHeight: minHeight)
+                .accessibilityLabel(accessibilityLabel)
         }
     }
 

@@ -66,9 +66,13 @@ final class GlossaryHomeViewModel {
         let badgeTargets: [String]
     }
 
-    enum Segment: String, CaseIterable, Identifiable { case terms = "용어"; case groups = "그룹"; var id: String { rawValue } }
-
-    var segment: Segment = .terms
+    struct AppellationMarkerRow: Identifiable, Hashable {
+        let id: String
+        let source: String
+        let target: String
+        let position: String
+        let prohibitStandalone: Bool
+    }
     var searchText: String = "" { didSet { applyFilters() } }
     var selectedTagNames: Set<String> = [] { didSet { applyFilters() } }
     var selectedPatternID: String? { didSet { updateGroups(); applyFilters() } }
@@ -82,6 +86,7 @@ final class GlossaryHomeViewModel {
     private(set) var filteredPatternGroups: [PatternGroupRow] = []
     private(set) var patterns: [PatternSummary] = []
     private(set) var availableTags: [String] = []
+    private(set) var markers: [AppellationMarkerRow] = []
     private(set) var isLoading: Bool = false
     private(set) var errorMessage: String? = nil
     private var termRowMap: [PersistentIdentifier: TermRow] = [:]
@@ -106,8 +111,10 @@ final class GlossaryHomeViewModel {
             let metas = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>())
             let tags = try context.fetch(FetchDescriptor<Glossary.SDModel.SDTag>())
             let groups = try context.fetch(FetchDescriptor<Glossary.SDModel.SDGroup>())
+            let markers = try context.fetch(FetchDescriptor<Glossary.SDModel.SDAppellationMarker>())
             mapPatterns(patterns: patterns, metas: metas)
             mapTerms(terms: terms, groups: groups)
+            mapMarkers(markers: markers)
             availableTags = tags.map { $0.name }.sorted()
             updateGroups()
             applyFilters()
@@ -124,11 +131,10 @@ final class GlossaryHomeViewModel {
     }
 
     func setPattern(_ pattern: PatternSummary?) {
-        selectedPatternID = pattern?.id
-        if pattern == nil {
+        if selectedPatternID != pattern?.id {
             selectedGroupUIDs = []
-            segment = .terms
         }
+        selectedPatternID = pattern?.id
     }
 
     func pattern(for id: String?) -> PatternSummary? {
@@ -234,6 +240,28 @@ final class GlossaryHomeViewModel {
         termRowMap = Dictionary(uniqueKeysWithValues: termRows.map { ($0.id, $0) })
     }
 
+    private func mapMarkers(markers: [Glossary.SDModel.SDAppellationMarker]) {
+        self.markers = markers
+            .sorted { lhs, rhs in
+                if lhs.source == rhs.source {
+                    if lhs.target == rhs.target {
+                        return lhs.position < rhs.position
+                    }
+                    return lhs.target < rhs.target
+                }
+                return lhs.source < rhs.source
+            }
+            .map { marker in
+                AppellationMarkerRow(
+                    id: marker.uid,
+                    source: marker.source,
+                    target: marker.target,
+                    position: marker.position,
+                    prohibitStandalone: marker.prohibitStandalone
+                )
+            }
+    }
+
     private func updateGroups() {
         guard let patternID = selectedPatternID,
               let pattern = pattern(for: patternID) else {
@@ -312,6 +340,11 @@ final class GlossaryHomeViewModel {
         } else {
             filteredPatternGroups = patternGroups.filter { selectedGroupUIDs.contains($0.id) }
         }
+    }
+
+    var shouldShowGroupList: Bool {
+        guard selectedPatternID != nil else { return false }
+        return patternGroups.isEmpty == false
     }
 
     private func matchesSearch(row: TermRow, query: String) -> Bool {
