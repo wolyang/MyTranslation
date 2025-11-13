@@ -137,6 +137,7 @@ final class GlossaryHomeViewModel {
     }
 
     func delete(term row: TermRow) throws {
+        try Glossary.SDModel.SourceIndexMaintainer.deleteAll(for: row.rawTerm, in: context)
         context.delete(row.rawTerm)
         try context.save()
         try refreshAfterMutation()
@@ -273,7 +274,7 @@ final class GlossaryHomeViewModel {
                 }
             }
             let display = Glossary.Util.renderTarget(tpl, L: leftTerm ?? firstRow.rawTerm, R: rightTerm)
-            groups.append(PatternGroupRow(id: uid, name: name, displayName: display, componentTerms: bucket.terms, badgeTargets: bucket.terms.map { $0.target }))
+            groups.append(PatternGroupRow(id: uid, name: name, displayName: name, componentTerms: bucket.terms, badgeTargets: bucket.terms.map { $0.target }))
         }
         patternGroups = groups.sorted { $0.name < $1.name }
         filteredPatternGroups = patternGroups

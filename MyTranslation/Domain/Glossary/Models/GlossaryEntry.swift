@@ -43,9 +43,13 @@ public enum ScriptKind: Int16, Sendable { case unknown=0, hangul=1, cjk=2, latin
 
 public struct RecallOptions: Sendable {
     public var gram: Int = 2
-    public var minHitPerTerm: Int = 2
+    public var minHitPerTerm: Int = 1
     public var allowedScripts: Set<ScriptKind>? = nil
     public var allowedLenBuckets: Set<Int16>? = nil
+    
+    public var enableUnigramRecall: Bool = true           // 1-gram도 조회
+    public var unigramScripts: Set<ScriptKind> = [.cjk]   // 1-gram은 CJK만
+    public var maxDistinctUnigrams: Int = 256             // 과리콜 방지 상한
     public init() {}
 }
 
@@ -88,14 +92,12 @@ extension Glossary {
             for h in hits {
                 guard let owner = acBundle.pidToOwner[h.pid] else { continue }
                 matchedSourcesByKey[owner.termKey, default: []].insert(acBundle.sources[h.pid])
-                if !owner.prohibitStandalone { matchedStandaloneByKey.insert(owner.termKey) }
+                /*if !owner.prohibitStandalone { */matchedStandaloneByKey.insert(owner.termKey) /*}*/
             }
             if matchedSourcesByKey.isEmpty { return ([], []) }
 
             // 5) 단독 엔트리
-            let sdMarkers = try Store.fetchMarkers(ctx: context)
             var entries: [GlossaryEntry] = []
-            var markers: [GlossaryAppellationMarker] = []
             for key in matchedStandaloneByKey {
                 guard let t = termByKey[key] else { continue }
                 for s in t.sources {
@@ -116,11 +118,12 @@ extension Glossary {
             let composed = try Composer.composeEntriesForMatched(pageText: pageText,
                                                                  patterns: patterns,
                                                                  termsByKey: termByKey,
-                                                                 matchedSourcesByKey: matchedSourcesByKey,
-                                                                 markers: sdMarkers)
+                                                                 matchedSourcesByKey: matchedSourcesByKey)
             entries.append(contentsOf: composed)
             
             // 7) 호칭 마커
+            let sdMarkers = try Store.fetchMarkers(ctx: context)
+            var markers: [GlossaryAppellationMarker] = []
             for marker in sdMarkers {
                 if pageText.contains(marker.source) {
                     markers.append(GlossaryAppellationMarker(
@@ -183,31 +186,52 @@ extension Glossary {
         
         @MainActor
         static func recallTermKeys(for pageText: String, ctx: ModelContext, opt: RecallOptions) throws -> [String] {
-            let grams = Set(Util.qgrams(pageText, n: opt.gram))
+            var grams = Set(Util.qgrams(pageText, n: opt.gram))
+            
+            if opt.enableUnigramRecall {
+                var uni: [String] = []
+                uni.reserveCapacity(min(pageText.count, opt.maxDistinctUnigrams))
+//                var seen: Set<Character> = []
+                var freq: [Character:Int] = [:]
+                for ch in pageText {
+//                    if seen.contains(ch) { continue }
+//                    seen.insert(ch)
+                    // CJK 범위만 허용
+                    if Util.char(ch, isIn: opt.unigramScripts) {
+                        freq[ch, default: 0] += 1
+//                        uni.append(String(ch))
+//                        if uni.count >= opt.maxDistinctUnigrams { break }
+                    }
+                }
+                let topK = freq.sorted { $0.value > $1.value }
+                    .prefix(opt.maxDistinctUnigrams)
+                    .map { String($0.key) }
+                grams.formUnion(topK)
+            }
+            
             if grams.isEmpty { return [] }
 
-            var scriptFilter = opt.allowedScripts
-            var lenFilter = opt.allowedLenBuckets
-            if scriptFilter == nil || lenFilter == nil {
-                let sk = Util.detectScriptKind(pageText)
-                if scriptFilter == nil { scriptFilter = [sk] }
-                if lenFilter == nil { lenFilter = [Util.lengthBucket(pageText.count)] }
-            }
-
+            let scripts = opt.allowedScripts
+            let lens = opt.allowedLenBuckets
+            
             var freq: [String:Int] = [:]
-            let scripts = scriptFilter!
-            let lens = lenFilter!
+            
+            let all = try ctx.fetch(FetchDescriptor<SDSourceIndex>())
 
-            // Predicate는 최소 조건만(글로벌 호출 금지)
             for g in grams {
                 let pred = #Predicate<SDSourceIndex> { idx in idx.qgram == g }
                 let fetched = try ctx.fetch(FetchDescriptor<SDSourceIndex>(predicate: pred))
-                for row in fetched where scripts.contains(ScriptKind(rawValue: row.script) ?? .unknown) && lens.contains(row.len) {
+                for row in fetched {
+                    if let scripts, !scripts.contains(ScriptKind(rawValue: row.script) ?? .unknown) { continue }
+                    if let lens, !lens.contains(row.len) { continue }
                     let key = row.term.key
                     freq[key, default: 0] += 1
                 }
             }
-            return freq.filter { $0.value >= opt.minHitPerTerm }.map { $0.key }
+            let minHit = max(1, opt.minHitPerTerm)
+            let recall = freq.filter { $0.value >= minHit }.map { $0.key }
+            
+            return recall
         }
     }
 
@@ -245,8 +269,7 @@ extension Glossary {
         static func composeEntriesForMatched(pageText: String,
                                              patterns: [SDPattern],
                                              termsByKey: [String: SDTerm],
-                                             matchedSourcesByKey: [String: Set<String>],
-                                             markers: [SDAppellationMarker]) throws -> [GlossaryEntry] {
+                                             matchedSourcesByKey: [String: Set<String>]) throws -> [GlossaryEntry] {
             let matchedTerms: Set<String> = Set(matchedSourcesByKey.keys)
             let allTerms = termsByKey.values
             var entries: [GlossaryEntry] = []
@@ -366,6 +389,20 @@ extension Glossary {
     enum Util {
         typealias SDTerm = Glossary.SDModel.SDTerm
         typealias SDSource = Glossary.SDModel.SDSource
+        
+        
+        static func scriptKind(of ch: Character) -> ScriptKind {
+            guard let u = ch.unicodeScalars.first else { return .unknown }
+            switch u.value {
+            case 0xAC00...0xD7A3: return .hangul
+            case 0x4E00...0x9FFF: return .cjk
+            case 0x0041...0x007A, 0x0030...0x0039: return .latin
+            default: return .unknown
+            }
+        }
+        static func char(_ ch: Character, isIn scripts: Set<ScriptKind>) -> Bool {
+            scripts.contains(scriptKind(of: ch))
+        }
         
         static func detectScriptKind(_ s: String) -> ScriptKind {
             var hasH=false, hasC=false, hasL=false

@@ -172,7 +172,7 @@ public final class TermMasker {
         }
 
         let sorted = entries.sorted { $0.source.count > $1.source.count }
-
+        
         var out = text
         var tags: [String] = []
         var locks: [String: LockInfo] = [:]
@@ -181,7 +181,7 @@ public final class TermMasker {
         for e in sorted {
             guard !e.source.isEmpty, out.contains(e.source) else { continue }
             // 호칭, 인물명 등은 마스킹하지 않음
-            if e.isAppellation { continue }
+            if !e.preMask { continue }
 
             // === (1) 유니크 토큰 생성 ===
             let tokenPrefix = "E"
