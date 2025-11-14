@@ -17,14 +17,13 @@ final class PatternEditorViewModel {
 
     var patternID: String
     var displayName: String
-    var rolesText: String
+    var leftRole: String
+    var rightRole: String
     var grouping: Glossary.SDModel.SDPatternGrouping
     var groupLabel: String
     var sourceJoiners: String
     var sourceTemplates: String
     var targetTemplates: String
-    var leftRoles: Set<String>
-    var rightRoles: Set<String>
     var skipPairsIfSameTerm: Bool
     var isAppellation: Bool
     var preMask: Bool
@@ -44,14 +43,19 @@ final class PatternEditorViewModel {
             originalID = pattern.name
             self.patternID = pattern.name
             displayName = meta?.displayName ?? pattern.name
-            rolesText = (meta?.roles ?? []).joined(separator: ";")
+            let metaRoles = meta?.roles ?? []
+            if metaRoles.count >= 2 {
+                leftRole = metaRoles[0]
+                rightRole = metaRoles[1]
+            } else {
+                leftRole = pattern.leftRoles.first ?? metaRoles.first ?? ""
+                rightRole = pattern.rightRoles.first ?? (metaRoles.count == 2 ? metaRoles[1] : "")
+            }
             grouping = meta?.grouping ?? .none
             groupLabel = meta?.groupLabel ?? "그룹"
             sourceJoiners = pattern.sourceJoiners.joined(separator: ";")
             sourceTemplates = pattern.sourceTemplates.joined(separator: ";")
             targetTemplates = pattern.targetTemplates.joined(separator: ";")
-            leftRoles = Set(pattern.leftRoles)
-            rightRoles = Set(pattern.rightRoles)
             skipPairsIfSameTerm = pattern.skipPairsIfSameTerm
             isAppellation = pattern.isAppellation
             preMask = pattern.preMask
@@ -62,14 +66,13 @@ final class PatternEditorViewModel {
             originalID = nil
             self.patternID = ""
             displayName = ""
-            rolesText = ""
+            leftRole = ""
+            rightRole = ""
             grouping = .none
             groupLabel = "그룹"
             sourceJoiners = ""
             sourceTemplates = ""
             targetTemplates = ""
-            leftRoles = []
-            rightRoles = []
             skipPairsIfSameTerm = true
             isAppellation = false
             preMask = false
@@ -105,10 +108,13 @@ final class PatternEditorViewModel {
         }
         let sourceJoinerArray = sourceJoiners.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let sourceTemplateArray = sourceTemplates.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let roleList = rolesText.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let roleSet = Set(roleList)
-        leftRoles = leftRoles.intersection(roleSet)
-        rightRoles = rightRoles.intersection(roleSet)
+        let trimmedLeftRole = leftRole.trimmingCharacters(in: .whitespaces)
+        let trimmedRightRole = rightRole.trimmingCharacters(in: .whitespaces)
+        if trimmedLeftRole.isEmpty != trimmedRightRole.isEmpty {
+            errorMessage = "좌우 역할은 모두 입력하거나 모두 비워야 합니다."
+            return
+        }
+        let roleList: [String] = trimmedLeftRole.isEmpty ? [] : [trimmedLeftRole, trimmedRightRole]
         let pattern: Glossary.SDModel.SDPattern
         if let originalID,
            let existing = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPattern>(predicate: #Predicate { $0.name == originalID })).first {
@@ -128,14 +134,14 @@ final class PatternEditorViewModel {
         pattern.sourceTemplates = sourceTemplateArray
         pattern.targetTemplates = trimmedTargetTemplates
         pattern.sourceJoiners = sourceJoinerArray
-        pattern.leftRoles = Array(leftRoles)
-        pattern.rightRoles = Array(rightRoles)
+        pattern.leftRoles = trimmedLeftRole.isEmpty ? [] : [trimmedLeftRole]
+        pattern.rightRoles = trimmedRightRole.isEmpty ? [] : [trimmedRightRole]
 
         let meta: Glossary.SDModel.SDPatternMeta
         if let existing = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>(predicate: #Predicate { $0.name == trimmedID })).first {
             meta = existing
         } else {
-            meta = Glossary.SDModel.SDPatternMeta(name: trimmedID, displayName: displayName.isEmpty ? trimmedID : displayName, roles: rolesText.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }, grouping: grouping, groupLabel: groupLabel, defaultProhibitStandalone: defaultProhibit, defaultIsAppellation: defaultIsAppellation, defaultPreMask: defaultPreMask)
+            meta = Glossary.SDModel.SDPatternMeta(name: trimmedID, displayName: displayName.isEmpty ? trimmedID : displayName, roles: roleList, grouping: grouping, groupLabel: groupLabel, defaultProhibitStandalone: defaultProhibit, defaultIsAppellation: defaultIsAppellation, defaultPreMask: defaultPreMask)
             context.insert(meta)
         }
         meta.displayName = displayName.isEmpty ? trimmedID : displayName
@@ -163,14 +169,4 @@ final class PatternEditorViewModel {
         didSave = true
     }
 
-    func set(role: String, side: Side, active: Bool) {
-        switch side {
-        case .left:
-            if active { leftRoles.insert(role) } else { leftRoles.remove(role) }
-        case .right:
-            if active { rightRoles.insert(role) } else { rightRoles.remove(role) }
-        }
-    }
-
-    enum Side { case left, right }
 }

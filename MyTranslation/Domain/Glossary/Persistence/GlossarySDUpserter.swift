@@ -192,10 +192,12 @@ extension Glossary.SDModel {
         }
         
         private func upsertPatterns(_ items: [JSPattern]) throws {
-            var map: [String: SDPattern] = [:]
-            for p in try context.fetch(FetchDescriptor<SDPattern>()) { map[p.name] = p }
+            var patternMap: [String: SDPattern] = [:]
+            for p in try context.fetch(FetchDescriptor<SDPattern>()) { patternMap[p.name] = p }
+            var metaMap: [String: SDPatternMeta] = [:]
+            for meta in try context.fetch(FetchDescriptor<SDPatternMeta>()) { metaMap[meta.name] = meta }
             for js in items {
-                let dst = map[js.name] ?? SDPattern(name: js.name)
+                let dst = patternMap[js.name] ?? SDPattern(name: js.name)
                 if let l = js.left {
                     dst.leftRoles = l.roles ?? []
                     dst.leftTagsAll = l.tagsAll ?? []
@@ -229,7 +231,49 @@ extension Glossary.SDModel {
                 dst.isAppellation = js.isAppellation
                 dst.preMask = js.preMask
                 dst.needPairCheck = js.needPairCheck
-                if map[js.name] == nil { context.insert(dst); map[js.name] = dst }
+                if patternMap[js.name] == nil { context.insert(dst); patternMap[js.name] = dst }
+                try upsertPatternMeta(js, metaMap: &metaMap)
+            }
+        }
+
+        private func upsertPatternMeta(_ js: JSPattern, metaMap: inout [String: SDPatternMeta]) throws {
+            let grouping = SDPatternGrouping(rawValue: js.grouping.rawValue) ?? .optional
+            let trimmedDisplay = js.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = trimmedDisplay.isEmpty ? js.name : trimmedDisplay
+            let trimmedLabel = js.groupLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let groupLabel = trimmedLabel.isEmpty ? "그룹" : trimmedLabel
+            if let meta = metaMap[js.name] {
+                if merge == .overwrite {
+                    meta.displayName = displayName
+                    meta.roles = js.roles
+                    meta.grouping = grouping
+                    meta.groupLabel = groupLabel
+                    meta.defaultProhibitStandalone = js.defaultProhibitStandalone
+                    meta.defaultIsAppellation = js.defaultIsAppellation
+                    meta.defaultPreMask = js.defaultPreMask
+                } else {
+                    if meta.displayName == meta.name || meta.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        meta.displayName = displayName
+                    }
+                    if meta.roles.isEmpty { meta.roles = js.roles }
+                    meta.grouping = grouping
+                    if meta.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || meta.groupLabel == "그룹" {
+                        meta.groupLabel = groupLabel
+                    }
+                }
+            } else {
+                let created = SDPatternMeta(
+                    name: js.name,
+                    displayName: displayName,
+                    roles: js.roles,
+                    grouping: grouping,
+                    groupLabel: groupLabel,
+                    defaultProhibitStandalone: js.defaultProhibitStandalone,
+                    defaultIsAppellation: js.defaultIsAppellation,
+                    defaultPreMask: js.defaultPreMask
+                )
+                context.insert(created)
+                metaMap[js.name] = created
             }
         }
         

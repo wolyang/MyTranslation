@@ -7,7 +7,7 @@ import SwiftData
 final class TermEditorViewModel {
     struct RoleDraft: Identifiable, Hashable {
         let id: UUID = UUID()
-        let roleName: String
+        var roleName: String
         var sourcesOK: String
         var sourcesProhibit: String
         var target: String
@@ -40,15 +40,42 @@ final class TermEditorViewModel {
         }
     }
 
+    struct GroupOption: Identifiable, Hashable {
+        let id: String
+        let name: String
+    }
+
+    struct ComponentDraft: Identifiable, Hashable {
+        let id: PersistentIdentifier?
+        let patternID: String
+        let patternDisplayName: String
+        let grouping: Glossary.SDModel.SDPatternGrouping
+        let groupLabel: String
+        let availableGroups: [GroupOption]
+        let availableRoles: [String]
+        var roleName: String
+        var selectedGroupUID: String?
+        var customGroupName: String
+
+        var displayRoleOptions: [String] { availableRoles }
+    }
+
     struct PatternReference {
         let pattern: Glossary.SDModel.SDPattern
         let meta: Glossary.SDModel.SDPatternMeta?
+        let groups: [Glossary.SDModel.SDGroup]
         var roles: [String] { meta?.roles ?? [] }
         var defaultProhibitStandalone: Bool { meta?.defaultProhibitStandalone ?? true }
         var defaultIsAppellation: Bool { meta?.defaultIsAppellation ?? false }
         var defaultPreMask: Bool { meta?.defaultPreMask ?? false }
         var grouping: Glossary.SDModel.SDPatternGrouping { meta?.grouping ?? .none }
         var groupLabel: String { meta?.groupLabel ?? "그룹" }
+        var roleOptions: [String] {
+            let metaRoles = roles
+            if !metaRoles.isEmpty { return metaRoles }
+            let combined = pattern.leftRoles + pattern.rightRoles
+            return combined
+        }
     }
 
     enum Mode { case general, pattern }
@@ -61,10 +88,17 @@ final class TermEditorViewModel {
     var mode: Mode
     var generalDraft: RoleDraft
     var roleDrafts: [RoleDraft]
-    var groupName: String
+    var selectedGroupID: String?
+    var newGroupName: String
+    var patternGroups: [GroupOption]
+    var componentDrafts: [ComponentDraft]
     var errorMessage: String?
     var mergeCandidate: Glossary.SDModel.SDTerm?
     var didSave: Bool = false
+
+    var roleOptions: [String] {
+        pattern?.roleOptions ?? []
+    }
 
     init(context: ModelContext, termID: PersistentIdentifier?, patternID: String?) throws {
         self.context = context
@@ -93,10 +127,31 @@ final class TermEditorViewModel {
                 preMask: term.preMask
             )
             roleDrafts = []
-            groupName = ""
+            patternGroups = []
+            selectedGroupID = nil
+            newGroupName = ""
+            componentDrafts = term.components.compactMap { comp in
+                guard let ref = try? TermEditorViewModel.fetchPattern(id: comp.pattern, context: context) else { return nil }
+                let options = ref.groups.map { GroupOption(id: $0.uid, name: $0.name) }.sorted { $0.name < $1.name }
+                let existingGroups = comp.groupLinks.map { $0.group }
+                let selectedUID = existingGroups.first?.uid
+                let customName = selectedUID == nil ? (existingGroups.first?.name ?? "") : ""
+                return ComponentDraft(
+                    id: comp.persistentModelID,
+                    patternID: comp.pattern,
+                    patternDisplayName: ref.meta?.displayName ?? comp.pattern,
+                    grouping: ref.grouping,
+                    groupLabel: ref.groupLabel,
+                    availableGroups: options,
+                    availableRoles: ref.roleOptions,
+                    roleName: comp.roles?.first ?? "",
+                    selectedGroupUID: selectedUID,
+                    customGroupName: customName
+                )
+            }
         } else if let pattern {
             mode = .pattern
-            let defaults = PatternReference(pattern: pattern.pattern, meta: pattern.meta)
+            let defaults = pattern
             let rds = defaults.roles.map { role in
                 var draft = RoleDraft(roleName: role,
                                       sourcesOK: "",
@@ -115,12 +170,18 @@ final class TermEditorViewModel {
                 roleDrafts = [RoleDraft(roleName: "기본", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask)]
             }
             generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask)
-            groupName = ""
+            patternGroups = defaults.groups.map { GroupOption(id: $0.uid, name: $0.name) }.sorted { $0.name < $1.name }
+            selectedGroupID = nil
+            newGroupName = ""
+            componentDrafts = []
         } else {
             mode = .general
             generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: true, isAppellation: false, preMask: false)
             roleDrafts = []
-            groupName = ""
+            patternGroups = []
+            selectedGroupID = nil
+            newGroupName = ""
+            componentDrafts = []
         }
     }
 
@@ -158,6 +219,7 @@ final class TermEditorViewModel {
             context.insert(term)
         }
         apply(draft: draft, to: term)
+        if let existingTerm { try updateComponents(for: existingTerm) }
     }
 
     private func savePattern() throws {
@@ -271,13 +333,60 @@ final class TermEditorViewModel {
             context.insert(component)
             term.components.append(component)
             if pattern.grouping != .none {
-                let name = (groupName.isEmpty ? terms.map { $0.target }.joined(separator: " ") : groupName).trimmingCharacters(in: .whitespaces)
-                let group = try fetchOrCreateGroup(patternID: patternModel.name, name: name)
+                let fallback = terms.map { $0.target }.joined(separator: " ")
+                if let groupName = try resolvedGroupName(forPattern: pattern, fallback: fallback) {
+                    let group = try fetchOrCreateGroup(patternID: patternModel.name, name: groupName)
+                    let bridge = Glossary.SDModel.SDComponentGroup(component: component, group: group)
+                    context.insert(bridge)
+                    component.groupLinks.append(bridge)
+                }
+            }
+        }
+    }
+
+    private func updateComponents(for term: Glossary.SDModel.SDTerm) throws {
+        let lookup: [PersistentIdentifier: ComponentDraft] = Dictionary(uniqueKeysWithValues: componentDrafts.compactMap { draft in
+            guard let id = draft.id else { return nil }
+            return (id, draft)
+        })
+        for component in term.components {
+            let compID = component.persistentModelID
+            guard let draft = lookup[compID] else { continue }
+            let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
+            component.roles = trimmedRole.isEmpty ? nil : [trimmedRole]
+            for link in component.groupLinks {
+                context.delete(link)
+            }
+            component.groupLinks.removeAll()
+            guard draft.grouping != .none else { continue }
+            if let name = try resolvedGroupName(from: draft) {
+                let group = try fetchOrCreateGroup(patternID: draft.patternID, name: name)
                 let bridge = Glossary.SDModel.SDComponentGroup(component: component, group: group)
                 context.insert(bridge)
                 component.groupLinks.append(bridge)
             }
         }
+    }
+
+    private func resolvedGroupName(forPattern pattern: PatternReference, fallback: String) throws -> String? {
+        let trimmedCustom = newGroupName.trimmingCharacters(in: .whitespaces)
+        if !trimmedCustom.isEmpty { return trimmedCustom }
+        if let selectedGroupID,
+           let group = patternGroups.first(where: { $0.id == selectedGroupID }) {
+            return group.name
+        }
+        let trimmedFallback = fallback.trimmingCharacters(in: .whitespaces)
+        return trimmedFallback.isEmpty ? nil : trimmedFallback
+    }
+
+    private func resolvedGroupName(from draft: ComponentDraft) throws -> String? {
+        let trimmedCustom = draft.customGroupName.trimmingCharacters(in: .whitespaces)
+        if !trimmedCustom.isEmpty { return trimmedCustom }
+        if let selected = draft.selectedGroupUID,
+           let option = draft.availableGroups.first(where: { $0.id == selected }) {
+            return option.name
+        }
+        return nil
     }
 
     private func fetchOrCreateGroup(patternID: String, name: String) throws -> Glossary.SDModel.SDGroup {
@@ -340,6 +449,12 @@ final class TermEditorViewModel {
             throw NSError(domain: "TermEditor", code: 0, userInfo: [NSLocalizedDescriptionKey: "패턴을 찾을 수 없습니다."])
         }
         let meta = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>(predicate: #Predicate { $0.name == id })).first
-        return PatternReference(pattern: pattern, meta: meta)
+        let groups = try fetchGroups(patternID: id, context: context)
+        return PatternReference(pattern: pattern, meta: meta, groups: groups)
+    }
+
+    private static func fetchGroups(patternID: String, context: ModelContext) throws -> [Glossary.SDModel.SDGroup] {
+        let desc = FetchDescriptor<Glossary.SDModel.SDGroup>(predicate: #Predicate { $0.pattern == patternID })
+        return try context.fetch(desc)
     }
 }
