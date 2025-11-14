@@ -25,7 +25,7 @@ extension Glossary.SDModel {
         let markerKeyCollisions: [KeyCollision]
     }
     
-    struct ImportSyncPolicy: Sendable { var removeMissingTerms = false; var removeMissingPatterns = false; var removeMissingMarkers = false }
+    struct ImportSyncPolicy: Sendable { var removeMissingTerms = true; var removeMissingPatterns = true; var removeMissingMarkers = true }
     
     @MainActor
     final class GlossaryUpserter {
@@ -112,14 +112,18 @@ extension Glossary.SDModel {
             var map: [String: SDTerm] = [:]
             for t in try context.fetch(FetchDescriptor<SDTerm>()) { map[t.key] = t }
             for src in items {
-                if let dst = map[src.key] {
-                    try update(term: dst, with: src)
+                let dst: SDTerm
+                if let existing = map[src.key] {
+                    try update(term: existing, with: src)
+                    dst = existing
                 } else {
-                    let dst = SDTerm(key: src.key, target: src.target)
-                    try update(term: dst, with: src)
-                    context.insert(dst)
-                    map[src.key] = dst
+                    let created = SDTerm(key: src.key, target: src.target)
+                    try update(term: created, with: src)
+                    context.insert(created)
+                    map[src.key] = created
+                    dst = created
                 }
+                try SourceIndexMaintainer.rebuild(for: dst, in: context)
             }
         }
         
@@ -132,21 +136,37 @@ extension Glossary.SDModel {
                 if dst.target.isEmpty { dst.target = src.target }
             }
             dst.variants = mergeSet(dst.variants, src.variants)
+            
+            upsertSources(term: dst, with: src)
+            
+            try upsertComponents(term: dst, with: src)
+            
+            try ensureTags(dst, names: src.tags)
+        }
+        
+        private func upsertSources(term dst: SDTerm, with src: JSTerm) {
             var existingByText: [String: SDSource] = [:]
             for s in dst.sources { existingByText[s.text] = s }
             for js in src.sources {
                 if let s = existingByText[js.source] {
-                    if merge == .overwrite { s.prohibitStandalone = js.prohibitStandalone }
+                    if merge == .overwrite {
+                        s.prohibitStandalone = js.prohibitStandalone
+                    }
                 } else {
                     let s = SDSource(text: js.source, prohibitStandalone: js.prohibitStandalone, term: dst)
                     context.insert(s)
                     dst.sources.append(s)
                 }
             }
+        }
+        
+        private func upsertComponents(term dst: SDTerm, with src: JSTerm) throws {
             var existingCompKeys: [String: SDComponent] = [:]
+            var seen: Set<String> = []
             for c in dst.components { existingCompKeys[key(of: c)] = c }
             for jc in src.components {
                 let compKey = key(of: jc)
+                seen.insert(compKey)
                 let comp: SDComponent
                 if let c = existingCompKeys[compKey] {
                     comp = c
@@ -159,9 +179,16 @@ extension Glossary.SDModel {
                     context.insert(comp)
                     dst.components.append(comp)
                 }
-                if let groups = jc.groups { try ensureGroups(groups, for: comp, pattern: jc.pattern) }
+                if let groups = jc.groups {
+                    try ensureGroups(groups, for: comp, pattern: jc.pattern)
+                }
             }
-            try ensureTags(dst, names: src.tags)
+            for (key, old) in existingCompKeys where !seen.contains(key) {
+                if let idx = dst.components.firstIndex(where: { $0 === old }) {
+                    dst.components.remove(at: idx)
+                }
+                context.delete(old)
+            }
         }
         
         private func upsertPatterns(_ items: [JSPattern]) throws {
@@ -240,19 +267,15 @@ extension Glossary.SDModel {
         
         private func key(of c: SDComponent) -> String {
             let roleKey = c.roles?.joined(separator: ",") ?? "-"
-            let srcKey = c.srcTplIdx.map(String.init) ?? "-1"
-            let tgtKey = c.tgtTplIdx.map(String.init) ?? "-1"
             let groupNames = c.groupLinks.map { $0.group.name }
             let groupKey = groupKey(of: groupNames)
-            return "\(c.pattern)|\(roleKey)|\(srcKey)|\(tgtKey)|\(groupKey)"
+            return "\(c.pattern)|\(roleKey)|\(groupKey)"
         }
 
         private func key(of c: JSComponent) -> String {
             let roleKey = c.roles?.joined(separator: ",") ?? "-"
-            let srcKey = c.srcTplIdx.map(String.init) ?? "-1"
-            let tgtKey = c.tgtTplIdx.map(String.init) ?? "-1"
             let groupKey = groupKey(of: c.groups)
-            return "\(c.pattern)|\(roleKey)|\(srcKey)|\(tgtKey)|\(groupKey)"
+            return "\(c.pattern)|\(roleKey)|\(groupKey)"
         }
 
         private func groupKey(of names: [String]?) -> String {
@@ -264,6 +287,24 @@ extension Glossary.SDModel {
         }
         
         private func ensureGroups(_ names: [String], for comp: SDComponent, pattern: String) throws {
+            let cur = Set(comp.groupLinks.map({ $0.group.uid }))
+            let new = Set(names.map({ "\(pattern)#\($0)" }))
+            let removes = cur.subtracting(new)
+            if !removes.isEmpty {
+                for remove in removes {
+                    if let removeLink = comp.groupLinks.first(where: { $0.group.uid == remove }) {
+                        context.delete(removeLink)
+                    }
+                    let pred = #Predicate<SDGroup> { $0.uid == remove }
+                    var desc = FetchDescriptor<SDGroup>(predicate: pred)
+                    desc.fetchLimit = 1
+                    if let g = try context.fetch(desc).first {
+                        g.componentLinks.removeAll(where: { $0.component.term == comp.term })
+                    }
+                    comp.groupLinks.removeAll(where: { $0.group.uid == remove })
+                }
+            }
+            
             var linked: [String: SDGroup] = [:]
             for link in comp.groupLinks { linked[link.group.uid] = link.group }
             for name in names {
@@ -324,7 +365,10 @@ extension Glossary.SDModel {
                 let toDelete = existing.subtracting(incoming)
                 for key in toDelete {
                     let pred = #Predicate<SDTerm> { $0.key == key }
-                    for t in try context.fetch(FetchDescriptor<SDTerm>(predicate: pred)) { context.delete(t) }
+                    for t in try context.fetch(FetchDescriptor<SDTerm>(predicate: pred)) {
+                        try SourceIndexMaintainer.deleteAll(for: t, in: context)
+                        context.delete(t)
+                    }
                 }
             }
             if sync.removeMissingPatterns {

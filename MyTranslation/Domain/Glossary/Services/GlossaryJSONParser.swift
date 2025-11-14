@@ -205,7 +205,6 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
 }
 
 func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPattern {
-    func splitPipes(_ s: String) -> [String] { s.split(separator: "||").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
     func splitSemi(_ s: String) -> [String] { s.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
 
     let leftDSL = parseSelectorDSL(row.left)
@@ -243,9 +242,9 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
         left: toSelector(leftDSL),
         right: toSelector(rightDSL),
         skipPairsIfSameTerm: row.skipSame,
-        sourceJoiners: splitPipes(row.sourceJoiners),
-        sourceTemplates: splitPipes(row.sourceTemplates),
-        targetTemplates: splitPipes(row.targetTemplates),
+        sourceJoiners: splitSemi(row.sourceJoiners),
+        sourceTemplates: splitSemi(row.sourceTemplates),
+        targetTemplates: splitSemi(row.targetTemplates),
         isAppellation: row.isAppellation,
         preMask: row.preMask,
         displayName: row.displayName,
