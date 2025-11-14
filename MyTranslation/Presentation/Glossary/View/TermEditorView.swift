@@ -219,39 +219,120 @@ struct TermEditorView: View {
 
     @ViewBuilder
     private var componentEditor: some View {
-        if !viewModel.componentDrafts.isEmpty {
+        if viewModel.canEditComponents {
             Section("패턴 연결") {
-                ForEach($viewModel.componentDrafts) { $component in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(component.patternDisplayName)
-                            .font(.headline)
-                        if !component.displayRoleOptions.isEmpty {
-                            Picker("역할", selection: $component.roleName) {
-                                Text("역할 없음").tag("")
-                                ForEach(component.displayRoleOptions, id: \.self) { option in
-                                    Text(option).tag(option)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        } else {
-                            formTextField(
-                                "역할",
-                                text: $component.roleName,
-                                help: "필요하다면 역할 이름을 직접 입력하세요."
-                            )
-                        }
-                        if component.grouping != .none {
-                            GroupSelectionField(
-                                label: component.groupLabel,
-                                grouping: component.grouping,
-                                options: component.availableGroups,
-                                selectedGroupID: $component.selectedGroupUID,
-                                customName: $component.customGroupName
-                            )
+                if viewModel.componentDrafts.isEmpty {
+                    Text("패턴을 선택해 새 연결을 추가하세요.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach($viewModel.componentDrafts) { component in
+                    componentCard(for: component)
+                        .padding(.vertical, 4)
+                }
+                Button {
+                    viewModel.addComponentDraft()
+                } label: {
+                    Label("패턴 연결 추가", systemImage: "plus")
+                }
+            }
+        }
+    }
+
+    private func componentCard(for component: Binding<TermEditorViewModel.ComponentDraft>) -> some View {
+        let patternSelection = Binding<String?>(
+            get: { component.patternID.wrappedValue },
+            set: { newValue in
+                component.patternID.wrappedValue = newValue
+                viewModel.didSelectPattern(for: component.wrappedValue.id, patternID: newValue)
+            }
+        )
+        let patternID = component.patternID.wrappedValue
+        let hasPattern = viewModel.patternOption(for: patternID) != nil
+        return VStack(alignment: .leading, spacing: 12) {
+            Picker("패턴", selection: patternSelection) {
+                Text("패턴 선택").tag(String?.none)
+                if let patternID,
+                   !viewModel.sortedPatternOptions.contains(where: { $0.id == patternID }) {
+                    Text(patternID).tag(Optional(patternID))
+                }
+                ForEach(viewModel.sortedPatternOptions) { option in
+                    Text(option.displayName).tag(Optional(option.id))
+                }
+            }
+            .pickerStyle(.menu)
+
+            if hasPattern {
+                let roles = viewModel.availableRoles(for: patternID)
+                if !roles.isEmpty {
+                    Picker("역할", selection: component.roleName) {
+                        Text("역할 없음").tag("")
+                        ForEach(roles, id: \.self) { role in
+                            Text(role).tag(role)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .pickerStyle(.menu)
+                } else {
+                    Text("이 패턴에는 지정할 역할 슬롯이 없습니다.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
+
+                let grouping = viewModel.grouping(for: patternID)
+                if grouping != .none {
+                    GroupSelectionField(
+                        label: viewModel.groupLabel(for: patternID),
+                        grouping: grouping,
+                        options: viewModel.availableGroups(for: patternID),
+                        selectedGroupID: component.selectedGroupUID,
+                        customName: component.customGroupName
+                    )
+                }
+
+                templatePicker(
+                    title: "원문 템플릿",
+                    templates: viewModel.sourceTemplates(for: patternID),
+                    selection: component.srcTemplateIndex
+                )
+                templatePicker(
+                    title: "번역 템플릿",
+                    templates: viewModel.targetTemplates(for: patternID),
+                    selection: component.tgtTemplateIndex
+                )
+            } else {
+                Text("패턴을 선택하면 역할, 그룹, 템플릿을 설정할 수 있습니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button(role: .destructive) {
+                viewModel.removeComponentDraft(id: component.wrappedValue.id)
+            } label: {
+                Label("연결 삭제", systemImage: "trash")
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, 4)
+        }
+    }
+
+    private func templatePicker(title: String, templates: [String], selection: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+            if templates.isEmpty {
+                Text("사용 가능한 템플릿이 없습니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker(title, selection: selection) {
+                    ForEach(Array(templates.enumerated()), id: \.offset) { item in
+                        Text("\(item.offset + 1): \(item.element)")
+                            .lineLimit(2)
+                            .tag(item.offset)
+                    }
+                }
+                .pickerStyle(.menu)
             }
         }
     }
