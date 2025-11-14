@@ -188,6 +188,7 @@ final class GlossaryHomeViewModel {
     }
 
     func delete(term row: TermRow) throws {
+        try Glossary.SDModel.SourceIndexMaintainer.deleteAll(for: row.rawTerm, in: context)
         context.delete(row.rawTerm)
         try context.save()
         try refreshAfterMutation()

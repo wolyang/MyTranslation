@@ -114,6 +114,7 @@ final class TermEditorViewModel {
         pattern?.roleOptions ?? []
     }
 
+
     var canEditComponents: Bool { editingTerm != nil }
 
     var sortedPatternOptions: [PatternOption] { patternOptions }
@@ -178,7 +179,7 @@ final class TermEditorViewModel {
         componentDrafts[index].srcTemplateIndex = 0
         componentDrafts[index].tgtTemplateIndex = 0
     }
-
+  
     init(context: ModelContext, termID: PersistentIdentifier?, patternID: String?) throws {
         self.context = context
         if let termID, let term = context.model(for: termID) as? Glossary.SDModel.SDTerm {
