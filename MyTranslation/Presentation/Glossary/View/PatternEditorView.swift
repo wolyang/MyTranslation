@@ -9,41 +9,56 @@ struct PatternEditorView: View {
         NavigationStack {
             Form {
                 Section("기본 정보") {
-                    TextField("패턴 ID", text: $viewModel.patternID)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                    TextField("표시 이름", text: $viewModel.displayName)
-                    TextField("역할 (세미콜론)", text: $viewModel.rolesText)
-                    Picker("그룹 정책", selection: $viewModel.grouping) {
-                        Text("없음").tag(Glossary.SDModel.SDPatternGrouping.none)
-                        Text("선택").tag(Glossary.SDModel.SDPatternGrouping.optional)
-                        Text("필수").tag(Glossary.SDModel.SDPatternGrouping.required)
+                    LabeledContent("패턴 ID") {
+                        TextField("예: person", text: $viewModel.patternID)
+                            .textInputAutocapitalization(.never)
+                            .disableAutocorrection(true)
+                            .textFieldStyle(.roundedBorder)
                     }
-                    TextField("그룹 라벨", text: $viewModel.groupLabel)
+                    LabeledContent("표시 이름") {
+                        TextField("예: 인물 패턴", text: $viewModel.displayName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledContent("그룹 정책") {
+                        Picker("그룹 정책", selection: $viewModel.grouping) {
+                            Text("없음").tag(Glossary.SDModel.SDPatternGrouping.none)
+                            Text("선택").tag(Glossary.SDModel.SDPatternGrouping.optional)
+                            Text("필수").tag(Glossary.SDModel.SDPatternGrouping.required)
+                        }
+                        .pickerStyle(.menu)
+                    }
+                    LabeledContent("그룹 라벨") {
+                        TextField("예: 그룹", text: $viewModel.groupLabel)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+                Section("역할") {
+                    Text("역할을 사용하지 않는다면 두 필드를 모두 비워두세요. 하나만 입력하면 저장할 수 없습니다.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    LabeledContent("왼쪽 역할") {
+                        TextField("예: family", text: $viewModel.leftRole)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledContent("오른쪽 역할") {
+                        TextField("예: given", text: $viewModel.rightRole)
+                            .textFieldStyle(.roundedBorder)
+                    }
                 }
                 Section("템플릿") {
-                    TextField("원문 조인자 (세미콜론)", text: $viewModel.sourceJoiners)
-                    TextField("원문 템플릿 (세미콜론)", text: $viewModel.sourceTemplates)
-                    TextField("번역 템플릿 (세미콜론)", text: $viewModel.targetTemplates)
-                    TemplatePreviewView(sourceTemplates: $viewModel.sourceTemplates, targetTemplates: $viewModel.targetTemplates)
-                }
-                Section("역할 배치") {
-                    let roles = viewModel.rolesText.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                    if roles.isEmpty {
-                        Text("역할을 먼저 입력하세요.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(roles, id: \.self) { role in
-                            HStack {
-                                Text(role)
-                                Spacer()
-                                Toggle("LEFT", isOn: Binding(get: { viewModel.leftRoles.contains(role) }, set: { newValue in viewModel.set(role: role, side: .left, active: newValue) }))
-                                    .labelsHidden()
-                                Toggle("RIGHT", isOn: Binding(get: { viewModel.rightRoles.contains(role) }, set: { newValue in viewModel.set(role: role, side: .right, active: newValue) }))
-                                    .labelsHidden()
-                            }
-                        }
+                    LabeledContent("원문 조인자") {
+                        TextField("세미콜론(;)으로 구분", text: $viewModel.sourceJoiners)
+                            .textFieldStyle(.roundedBorder)
                     }
+                    LabeledContent("원문 템플릿") {
+                        TextField("세미콜론(;)으로 구분", text: $viewModel.sourceTemplates)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    LabeledContent("번역 템플릿") {
+                        TextField("세미콜론(;)으로 구분", text: $viewModel.targetTemplates)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    TemplatePreviewView(sourceTemplates: $viewModel.sourceTemplates, targetTemplates: $viewModel.targetTemplates)
                 }
                 Section("옵션") {
                     Toggle("동일 용어 페어 건너뛰기", isOn: $viewModel.skipPairsIfSameTerm)

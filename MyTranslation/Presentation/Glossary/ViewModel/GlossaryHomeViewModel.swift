@@ -123,6 +123,36 @@ final class GlossaryHomeViewModel {
         }
     }
 
+    func resetGlossary() async throws {
+        isLoading = true
+        defer { isLoading = false }
+        let termDesc = FetchDescriptor<Glossary.SDModel.SDTerm>()
+        let patternDesc = FetchDescriptor<Glossary.SDModel.SDPattern>()
+        let metaDesc = FetchDescriptor<Glossary.SDModel.SDPatternMeta>()
+        let tagDesc = FetchDescriptor<Glossary.SDModel.SDTag>()
+        let groupDesc = FetchDescriptor<Glossary.SDModel.SDGroup>()
+        let markerDesc = FetchDescriptor<Glossary.SDModel.SDAppellationMarker>()
+        do {
+            let terms = try context.fetch(termDesc)
+            terms.forEach { context.delete($0) }
+            let patterns = try context.fetch(patternDesc)
+            patterns.forEach { context.delete($0) }
+            let metas = try context.fetch(metaDesc)
+            metas.forEach { context.delete($0) }
+            let tags = try context.fetch(tagDesc)
+            tags.forEach { context.delete($0) }
+            let groups = try context.fetch(groupDesc)
+            groups.forEach { context.delete($0) }
+            let markers = try context.fetch(markerDesc)
+            markers.forEach { context.delete($0) }
+            try context.save()
+            await reloadAll()
+        } catch {
+            errorMessage = nil
+            throw error
+        }
+    }
+
     func resetFilters() {
         searchText = ""
         selectedTagNames = []

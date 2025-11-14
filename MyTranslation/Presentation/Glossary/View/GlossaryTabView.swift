@@ -3,56 +3,63 @@ import SwiftData
 import SwiftUI
 
 struct GlossaryTabView: View {
-    private let modelContext: ModelContext
+    let modelContext: ModelContext
 
     @State private var homeViewModel: GlossaryHomeViewModel
-    @State private var activeSheet: ActiveSheet? = nil
-    @State private var selection: Tab = .terms
+    @Binding var selection: Tab
+    @Binding var activeSheet: ActiveSheet?
 
-    init(modelContext: ModelContext) {
+    init(
+        modelContext: ModelContext,
+        viewModel: GlossaryHomeViewModel,
+        selection: Binding<Tab>,
+        activeSheet: Binding<ActiveSheet?>
+    ) {
         self.modelContext = modelContext
-        _homeViewModel = State(initialValue: GlossaryHomeViewModel(context: modelContext))
+        self._homeViewModel = State(initialValue: viewModel)
+        self._selection = selection
+        self._activeSheet = activeSheet
     }
 
     var body: some View {
-        TabView(selection: $selection) {
-            NavigationStack {
-                GlossaryHomeView(
-                    viewModel: homeViewModel,
-                    onCreateTerm: { pattern in presentTermEditor(patternID: pattern?.id) },
-                    onEditTerm: { row in presentTermEditor(termID: row.id) },
-                    onOpenImport: { activeSheet = ActiveSheet.importSheet() }
-                )
-                .navigationTitle("용어")
+        VStack(spacing: 0) {
+            Picker("섹션", selection: $selection) {
+                Text("용어").tag(Tab.terms)
+                Text("패턴").tag(Tab.patterns)
+                Text("호칭").tag(Tab.appellations)
             }
-            .tabItem { Label("용어", systemImage: "list.bullet") }
-            .tag(Tab.terms)
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
 
-            NavigationStack {
-                PatternListView(
-                    viewModel: homeViewModel,
-                    onCreatePattern: { presentPatternEditor(nil) },
-                    onEditPattern: { presentPatternEditor($0.id) }
-                )
-            }
-            .tabItem { Label("패턴", systemImage: "square.grid.2x2") }
-            .tag(Tab.patterns)
+            Divider()
 
-            NavigationStack {
-                AppellationListView(viewModel: homeViewModel)
+            Group {
+                switch selection {
+                case .terms:
+                    NavigationStack {
+                        GlossaryHomeView(
+                            viewModel: homeViewModel,
+                            onCreateTerm: { pattern in presentTermEditor(patternID: pattern?.id) },
+                            onEditTerm: { row in presentTermEditor(termID: row.id) },
+                            onOpenImport: { activeSheet = ActiveSheet.importSheet() }
+                        )
+                    }
+                case .patterns:
+                    NavigationStack {
+                        PatternListView(
+                            viewModel: homeViewModel,
+                            onCreatePattern: { presentPatternEditor(nil) },
+                            onEditPattern: { presentPatternEditor($0.id) }
+                        )
+                    }
+                case .appellations:
+                    NavigationStack {
+                        AppellationListView(viewModel: homeViewModel)
+                    }
+                }
             }
-            .tabItem { Label("호칭", systemImage: "text.quote") }
-            .tag(Tab.appellations)
-        }
-        .sheet(item: $activeSheet, onDismiss: { Task { await homeViewModel.reloadAll() } }) { sheet in
-            switch sheet {
-            case .term(let viewModel, _):
-                TermEditorView(viewModel: viewModel)
-            case .pattern(let viewModel, _):
-                PatternEditorView(viewModel: viewModel)
-            case .importSheet(_):
-                SheetsImportCoordinatorView(modelContext: modelContext)
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -78,13 +85,13 @@ struct GlossaryTabView: View {
         }
     }
 
-    private enum Tab: Hashable {
+    enum Tab: Hashable {
         case terms
         case patterns
         case appellations
     }
 
-    private enum ActiveSheet: Identifiable {
+    enum ActiveSheet: Identifiable {
         case term(TermEditorViewModel, UUID)
         case pattern(PatternEditorViewModel, UUID)
         case importSheet(UUID)
