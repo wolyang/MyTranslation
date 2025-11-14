@@ -127,12 +127,27 @@ final class GlossaryHomeViewModel {
         isLoading = true
         defer { isLoading = false }
         let termDesc = FetchDescriptor<Glossary.SDModel.SDTerm>()
+        let sourceDesc = FetchDescriptor<Glossary.SDModel.SDSource>()
+        let sourceIndexDesc = FetchDescriptor<Glossary.SDModel.SDSourceIndex>()
+        let componentDesc = FetchDescriptor<Glossary.SDModel.SDComponent>()
+        let componentGroupDesc = FetchDescriptor<Glossary.SDModel.SDComponentGroup>()
+        let tagLinkDesc = FetchDescriptor<Glossary.SDModel.SDTermTagLink>()
         let patternDesc = FetchDescriptor<Glossary.SDModel.SDPattern>()
         let metaDesc = FetchDescriptor<Glossary.SDModel.SDPatternMeta>()
         let tagDesc = FetchDescriptor<Glossary.SDModel.SDTag>()
         let groupDesc = FetchDescriptor<Glossary.SDModel.SDGroup>()
         let markerDesc = FetchDescriptor<Glossary.SDModel.SDAppellationMarker>()
         do {
+            let componentGroups = try context.fetch(componentGroupDesc)
+            componentGroups.forEach { context.delete($0) }
+            let tagLinks = try context.fetch(tagLinkDesc)
+            tagLinks.forEach { context.delete($0) }
+            let sources = try context.fetch(sourceDesc)
+            sources.forEach { context.delete($0) }
+            let sourceIndexes = try context.fetch(sourceIndexDesc)
+            sourceIndexes.forEach { context.delete($0) }
+            let components = try context.fetch(componentDesc)
+            components.forEach { context.delete($0) }
             let terms = try context.fetch(termDesc)
             terms.forEach { context.delete($0) }
             let patterns = try context.fetch(patternDesc)

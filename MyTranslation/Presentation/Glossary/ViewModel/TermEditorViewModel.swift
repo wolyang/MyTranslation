@@ -151,7 +151,7 @@ final class TermEditorViewModel {
             }
         } else if let pattern {
             mode = .pattern
-            let defaults = PatternReference(pattern: pattern.pattern, meta: pattern.meta)
+            let defaults = pattern
             let rds = defaults.roles.map { role in
                 var draft = RoleDraft(roleName: role,
                                       sourcesOK: "",
@@ -350,7 +350,8 @@ final class TermEditorViewModel {
             return (id, draft)
         })
         for component in term.components {
-            guard let compID = component.persistentModelID, let draft = lookup[compID] else { continue }
+            let compID = component.persistentModelID
+            guard let draft = lookup[compID] else { continue }
             let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
             component.roles = trimmedRole.isEmpty ? nil : [trimmedRole]
             for link in component.groupLinks {
