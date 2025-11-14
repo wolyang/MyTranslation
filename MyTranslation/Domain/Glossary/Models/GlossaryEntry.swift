@@ -276,10 +276,6 @@ extension Glossary {
                 let usesR = pat.sourceTemplates.contains { $0.contains("{R}") } || pat.targetTemplates.contains { $0.contains("{R}") }
                 if usesR {
                     let pairs = try matchedPairs(for: pat, terms: allTerms, matched: matchedTerms)
-                    let contains = pairs.contains { lC, rC in
-                        lC.term.target == "쿠레나이" && rC.term.target == "가이"
-                    }
-                    print("pat[\(pat.name)] matched pairs contains '쿠레나이 가이' : \(contains)")
                     for (lComp, rComp) in pairs {
                         let leftTerm = lComp.term
                         let rightTerm = rComp.term
@@ -289,21 +285,20 @@ extension Glossary {
                         let tgtTpl = pat.targetTemplates[safe: tgtTplIdx] ?? pat.targetTemplates.first ?? "{L} {R}"
                         let joiners = Util.filterJoiners(from: pat.sourceJoiners, in: pageText)
                         let variants: [String] = Util.renderVariants(srcTpl, joiners: joiners, L: leftTerm, R: rightTerm)
-                        if leftTerm.target == "쿠레나이" && rightTerm.target == "가이" {
-                            print("쿠레나이 가이's variants: \(variants)")
-                        }
                         for joiner in joiners {
-                            let src = Util.renderSource(srcTpl, joiner: joiner, L: leftTerm, R: rightTerm)
+                            let srcs = Util.renderSources(srcTpl, joiner: joiner, L: leftTerm, R: rightTerm)
                             let tgt = Util.renderTarget(tgtTpl, L: leftTerm, R: rightTerm)
-                            entries.append(GlossaryEntry(
-                                source: src,
-                                target: tgt,
-                                variants: Set(variants),
-                                preMask: pat.preMask,
-                                isAppellation: pat.isAppellation,
-                                prohibitStandalone: false,
-                                origin: .composer(composerId: pat.name, leftKey: leftTerm.key, rightKey: rightTerm.key, needPairCheck: pat.needPairCheck)
-                            ))
+                            for src in srcs {
+                                entries.append(GlossaryEntry(
+                                    source: src,
+                                    target: tgt,
+                                    variants: Set(variants),
+                                    preMask: pat.preMask,
+                                    isAppellation: pat.isAppellation,
+                                    prohibitStandalone: false,
+                                    origin: .composer(composerId: pat.name, leftKey: leftTerm.key, rightKey: rightTerm.key, needPairCheck: pat.needPairCheck)
+                                ))
+                            }
                         }
                     }
                 } else {
@@ -314,18 +309,20 @@ extension Glossary {
                         let tgtTplIdx = lComp.tgtTplIdx ?? 0
                         let srcTpl = pat.sourceTemplates[safe: srcTplIdx] ?? pat.sourceTemplates.first ?? "{L}"
                         let tgtTpl = pat.targetTemplates[safe: tgtTplIdx] ?? pat.targetTemplates.first ?? "{L}"
-                        let src = Util.renderSource(srcTpl, joiner: nil, L: t, R: nil)
+                        let srcs = Util.renderSources(srcTpl, joiner: nil, L: t, R: nil)
                         let tgt = Util.renderTarget(tgtTpl, L: t, R: nil)
                         let variants = Util.renderVariants(srcTpl, joiners: [], L: t, R: nil)
-                        entries.append(GlossaryEntry(
-                            source: src,
-                            target: tgt,
-                            variants: Set(variants),
-                            preMask: pat.preMask,
-                            isAppellation: pat.isAppellation,
-                            prohibitStandalone: false,
-                            origin: .composer(composerId: pat.name, leftKey: t.key, rightKey: nil, needPairCheck: false)
-                        ))
+                        for src in srcs {
+                            entries.append(GlossaryEntry(
+                                source: src,
+                                target: tgt,
+                                variants: Set(variants),
+                                preMask: pat.preMask,
+                                isAppellation: pat.isAppellation,
+                                prohibitStandalone: false,
+                                origin: .composer(composerId: pat.name, leftKey: t.key, rightKey: nil, needPairCheck: false)
+                            ))
+                        }
                     }
                 }
             }
@@ -452,6 +449,7 @@ extension Glossary {
         }
 
         static func filterJoiners(from joiners: [String], in pageText: String) -> [String] {
+            if joiners.isEmpty { return [""] }
             if joiners.count <= 1 { return joiners }
             var result = joiners.filter {
                 pageText.contains($0)
@@ -462,12 +460,22 @@ extension Glossary {
             return result
         }
 
-        static func renderSource(_ tpl: String, joiner J: String?, L: SDTerm, R: SDTerm?) -> String {
+        static func renderSources(_ tpl: String, joiner J: String?, L: SDTerm, R: SDTerm?) -> [String] {
             var s = tpl
             if let J { s = s.replacingOccurrences(of: "{J}", with: J) }
-            s = s.replacingOccurrences(of: "{L}", with: chooseBestSource(from: L.sources))
-            if let R { s = s.replacingOccurrences(of: "{R}", with: chooseBestSource(from: R.sources)) }
-            return s
+            var sources: [String] = []
+            for ls in L.sources {
+                let replacedL = s.replacingOccurrences(of: "{L}", with: ls.text)
+                if let R {
+                    for rs in R.sources {
+                        let replacedR = replacedL.replacingOccurrences(of: "{R}", with: rs.text)
+                        sources.append(replacedR)
+                    }
+                } else {
+                    sources.append(replacedL)
+                }
+            }
+            return sources
         }
 
         static func renderTarget(_ tpl: String, L: SDTerm, R: SDTerm?) -> String {
@@ -502,11 +510,6 @@ extension Glossary {
                     tpl.replacingOccurrences(of: "{L}", with: $0)
                 }
             }
-        }
-
-        static func chooseBestSource(from sources: [SDSource]) -> String {
-            if let s = sources.first(where: { !$0.prohibitStandalone }) { return s.text }
-            return sources.first?.text ?? ""
         }
     }
 
