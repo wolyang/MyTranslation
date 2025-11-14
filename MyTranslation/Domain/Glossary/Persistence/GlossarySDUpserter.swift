@@ -238,8 +238,30 @@ extension Glossary.SDModel {
             return out
         }
         
-        private func key(of c: SDComponent) -> String { "\(c.pattern)|\(c.roles?.joined(separator: ",") ?? "-")|\(c.srcTplIdx ?? -1)|\(c.tgtTplIdx ?? -1)" }
-        private func key(of c: JSComponent) -> String { "\(c.pattern)|\(c.roles?.joined(separator: ",") ?? "-")|\(c.srcTplIdx ?? -1)|\(c.tgtTplIdx ?? -1)" }
+        private func key(of c: SDComponent) -> String {
+            let roleKey = c.roles?.joined(separator: ",") ?? "-"
+            let srcKey = c.srcTplIdx.map(String.init) ?? "-1"
+            let tgtKey = c.tgtTplIdx.map(String.init) ?? "-1"
+            let groupNames = c.groupLinks.map { $0.group.name }
+            let groupKey = groupKey(of: groupNames)
+            return "\(c.pattern)|\(roleKey)|\(srcKey)|\(tgtKey)|\(groupKey)"
+        }
+
+        private func key(of c: JSComponent) -> String {
+            let roleKey = c.roles?.joined(separator: ",") ?? "-"
+            let srcKey = c.srcTplIdx.map(String.init) ?? "-1"
+            let tgtKey = c.tgtTplIdx.map(String.init) ?? "-1"
+            let groupKey = groupKey(of: c.groups)
+            return "\(c.pattern)|\(roleKey)|\(srcKey)|\(tgtKey)|\(groupKey)"
+        }
+
+        private func groupKey(of names: [String]?) -> String {
+            guard let names, !names.isEmpty else { return "-" }
+            let trimmed = names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            guard !trimmed.isEmpty else { return "-" }
+            let unique = Set(trimmed)
+            return unique.sorted().joined(separator: ",")
+        }
         
         private func ensureGroups(_ names: [String], for comp: SDComponent, pattern: String) throws {
             var linked: [String: SDGroup] = [:]
