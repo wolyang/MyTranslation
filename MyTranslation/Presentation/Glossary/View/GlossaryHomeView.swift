@@ -156,7 +156,7 @@ struct GlossaryHomeView: View {
     private var groupsList: some View {
         List(viewModel.filteredPatternGroups) { group in
             VStack(alignment: .leading, spacing: 6) {
-                Text(group.displayName)
+                Text(group.name)
                     .font(.headline)
                 Text(group.badgeTargets.joined(separator: ", "))
                     .foregroundStyle(.secondary)

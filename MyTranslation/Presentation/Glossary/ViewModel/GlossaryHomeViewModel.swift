@@ -24,10 +24,11 @@ final class GlossaryHomeViewModel {
         struct ComponentInfo: Hashable {
             let pattern: String
             let roles: [String]
-            let groupUIDs: [String]
-            let groupNames: [String]
+            let groups: [Group]
             let srcTemplateIndex: Int?
             let tgtTemplateIndex: Int?
+            
+            struct Group: Hashable { let uid: String; let name: String }
         }
 
         let id: PersistentIdentifier
@@ -61,7 +62,6 @@ final class GlossaryHomeViewModel {
     struct PatternGroupRow: Identifiable, Hashable {
         let id: String
         let name: String
-        let displayName: String
         let componentTerms: [Glossary.SDModel.SDTerm]
         let badgeTargets: [String]
     }
@@ -212,13 +212,10 @@ final class GlossaryHomeViewModel {
         termRows = terms.map { term in
             let sources = term.sources.sorted { $0.text < $1.text }
             let components = term.components.map { comp -> TermRow.ComponentInfo in
-                let groupUIDs = comp.groupLinks.map { $0.group.uid }
-                let groupNames = comp.groupLinks.compactMap { groupLookup[$0.group.uid]?.name }
                 return .init(
                     pattern: comp.pattern,
                     roles: comp.roles ?? [],
-                    groupUIDs: groupUIDs,
-                    groupNames: groupNames,
+                    groups: comp.groupLinks.map({ .init(uid: $0.group.uid, name: groupLookup[$0.group.uid]?.name ?? "") }),
                     srcTemplateIndex: comp.srcTplIdx,
                     tgtTemplateIndex: comp.tgtTplIdx
                 )
@@ -275,33 +272,18 @@ final class GlossaryHomeViewModel {
         for row in termRows {
             guard row.components.contains(where: { $0.pattern == pattern.id }) else { continue }
             for comp in row.components where comp.pattern == pattern.id {
-                for uid in comp.groupUIDs {
-                    var bucket = grouped[uid, default: GroupBucket()]
+                for group in comp.groups {
+                    var bucket = grouped[group.uid, default: GroupBucket()]
                     bucket.terms.append(row.rawTerm)
                     bucket.rows.append(row)
-                    if bucket.name == nil, let name = comp.groupNames.first { bucket.name = name }
-                    grouped[uid] = bucket
+                    if bucket.name == nil { bucket.name = group.name }
+                    grouped[group.uid] = bucket
                 }
             }
         }
         for (uid, bucket) in grouped {
-            guard let firstRow = bucket.rows.first else { continue }
             let name = bucket.name ?? uid
-            let tpl = pattern.pattern.targetTemplates.first ?? "{L}"
-            let leftRoles = pattern.leftRoles
-            let rightRoles = pattern.rightRoles
-            var leftTerm: Glossary.SDModel.SDTerm? = nil
-            var rightTerm: Glossary.SDModel.SDTerm? = nil
-            for row in bucket.rows {
-                for comp in row.components where comp.pattern == pattern.id {
-                    if let role = comp.roles.first {
-                        if leftRoles.contains(role) { leftTerm = row.rawTerm }
-                        if rightRoles.contains(role) { rightTerm = row.rawTerm }
-                    }
-                }
-            }
-            let display = Glossary.Util.renderTarget(tpl, L: leftTerm ?? firstRow.rawTerm, R: rightTerm)
-            groups.append(PatternGroupRow(id: uid, name: name, displayName: display, componentTerms: bucket.terms, badgeTargets: bucket.terms.map { $0.target }))
+            groups.append(PatternGroupRow(id: uid, name: name, componentTerms: bucket.terms, badgeTargets: bucket.terms.map { $0.target }))
         }
         patternGroups = groups.sorted { $0.name < $1.name }
         filteredPatternGroups = patternGroups
@@ -319,7 +301,7 @@ final class GlossaryHomeViewModel {
             }
             if !selectedGroupUIDs.isEmpty, let pattern {
                 let hit = row.components.contains { comp in
-                    comp.pattern == pattern.id && !Set(comp.groupUIDs).isDisjoint(with: selectedGroupUIDs)
+                    comp.pattern == pattern.id && !Set(comp.groups.map({ $0.uid })).isDisjoint(with: selectedGroupUIDs)
                 }
                 if !hit { return false }
             }
