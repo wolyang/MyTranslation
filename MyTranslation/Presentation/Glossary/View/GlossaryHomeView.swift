@@ -18,7 +18,6 @@ struct GlossaryHomeView: View {
             content
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .toolbar { toolbar }
         .task { viewModel.load() }
         .alert("용어 삭제", isPresented: $showDeleteConfirm, presenting: targetForDeletion) { row in
             Button("삭제", role: .destructive) {
@@ -183,14 +182,7 @@ struct GlossaryHomeView: View {
         }
     }
 
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button("Google 시트 가져오기") { onOpenImport() }
-            if viewModel.pattern(for: viewModel.selectedPatternID) == nil {
-                Button("새 용어") { onCreateTerm(nil) }
-            }
-        }
-    }
+// 상단 툴바는 GlossaryHost에서 관리합니다.
 }
 
 private struct TermRowView: View {
