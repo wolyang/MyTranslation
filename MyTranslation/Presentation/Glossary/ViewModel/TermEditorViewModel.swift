@@ -194,8 +194,8 @@ final class TermEditorViewModel {
         }
         let loadedPatternOptions = try TermEditorViewModel.loadPatternOptions(context: context)
         self.patternOptions = loadedPatternOptions
-        self.patternOptionMap = Dictionary(uniqueKeysWithValues: loadedPatternOptions.map { ($0.id, $0) })
-
+        let patternOptionMap = Dictionary(uniqueKeysWithValues: loadedPatternOptions.map { ($0.id, $0) })
+        self.patternOptionMap = patternOptionMap
         if let term = existingTerm {
             mode = .general
             generalDraft = RoleDraft(

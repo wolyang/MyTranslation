@@ -62,7 +62,3 @@ public actor DefaultFMQueryService: FMQueryService {
         return FMAnswer(improvedText: improved, explanation: reason)
     }
 }
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
-}
