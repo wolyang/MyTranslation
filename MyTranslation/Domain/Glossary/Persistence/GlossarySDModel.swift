@@ -24,7 +24,16 @@ extension Glossary.SDModel {
         // 태그(M:N) - 조인 테이블 경유
         @Relationship(deleteRule: .cascade) var termTagLinks: [SDTermTagLink] = []
         
-        init(key: String, target: String, variants: [String] = [], isAppellation: Bool = false, preMask: Bool = true, sources: [SDSource] = [], components: [SDComponent] = [], termTagLinks: [SDTermTagLink] = []) {
+        init(
+            key: String,
+            target: String,
+            variants: [String] = [],
+            isAppellation: Bool = false,
+            preMask: Bool = true,
+            sources: [SDSource] = [],
+            components: [SDComponent] = [],
+            termTagLinks: [SDTermTagLink] = []
+        ) {
             self.key = key
             self.target = target
             self.variants = variants

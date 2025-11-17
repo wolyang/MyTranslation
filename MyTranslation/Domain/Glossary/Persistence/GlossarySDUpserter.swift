@@ -25,7 +25,14 @@ extension Glossary.SDModel {
         let markerKeyCollisions: [KeyCollision]
     }
     
-    struct ImportSyncPolicy: Sendable { var removeMissingTerms = true; var removeMissingPatterns = true; var removeMissingMarkers = true }
+    struct ImportSyncPolicy: Sendable {
+        var removeMissingTerms = true
+        var removeMissingPatterns = true
+        var removeMissingMarkers = true
+        var termDeletionFilter: (@Sendable (String) -> Bool)? = nil
+        var patternDeletionFilter: (@Sendable (String) -> Bool)? = nil
+        var markerDeletionFilter: (@Sendable (String) -> Bool)? = nil
+    }
     
     @MainActor
     final class GlossaryUpserter {
@@ -53,7 +60,8 @@ extension Glossary.SDModel {
         
         // 결과 예상 시뮬레이션 함수
         func dryRun(bundle: JSBundle) throws -> ImportDryRunReport {
-            let existingTermKeys = try fetchAllKeys(SDTerm.self, key: \SDTerm.key)
+            let existingTerms = try context.fetch(FetchDescriptor<SDTerm>())
+            let existingTermKeys = Set(existingTerms.map { $0.key })
             let existingPatternIds = try fetchAllKeys(SDPattern.self, key: \SDPattern.name)
             let existingMarkerUids = try fetchAllKeys(SDAppellationMarker.self, key: \SDAppellationMarker.uid)
             let incomingTermKeys = bundle.terms.map { $0.key }
@@ -64,13 +72,43 @@ extension Glossary.SDModel {
             let incomingMarkerUidSet = Set(incomingMarkerUids)
             let tNew = incomingTermKeySet.subtracting(existingTermKeys).count
             let tUpd = incomingTermKeySet.intersection(existingTermKeys).count
-            let tDel = sync.removeMissingTerms ? existingTermKeys.subtracting(incomingTermKeySet).count : 0
+            let tDel: Int
+            if sync.removeMissingTerms {
+                let candidates = existingTermKeys.subtracting(incomingTermKeySet)
+                if let filter = sync.termDeletionFilter {
+                    tDel = candidates.filter { filter($0) }.count
+                } else {
+                    tDel = candidates.count
+                }
+            } else {
+                tDel = 0
+            }
             let pNew = incomingPatternIdSet.subtracting(existingPatternIds).count
             let pUpd = incomingPatternIdSet.intersection(existingPatternIds).count
-            let pDel = sync.removeMissingPatterns ? existingPatternIds.subtracting(incomingPatternIdSet).count : 0
+            let pDel: Int
+            if sync.removeMissingPatterns {
+                let candidates = existingPatternIds.subtracting(incomingPatternIdSet)
+                if let filter = sync.patternDeletionFilter {
+                    pDel = candidates.filter { filter($0) }.count
+                } else {
+                    pDel = candidates.count
+                }
+            } else {
+                pDel = 0
+            }
             let mNew = incomingMarkerUidSet.subtracting(existingMarkerUids).count
             let mUpd = incomingMarkerUidSet.intersection(existingMarkerUids).count
-            let mDel = sync.removeMissingMarkers ? existingMarkerUids.subtracting(incomingMarkerUidSet).count : 0
+            let mDel: Int
+            if sync.removeMissingMarkers {
+                let candidates = existingMarkerUids.subtracting(incomingMarkerUidSet)
+                if let filter = sync.markerDeletionFilter {
+                    mDel = candidates.filter { filter($0) }.count
+                } else {
+                    mDel = candidates.count
+                }
+            } else {
+                mDel = 0
+            }
             func collisions(_ arr: [String]) -> [ImportDryRunReport.KeyCollision] {
                 var freq: [String:Int] = [:]
                 for k in arr { freq[k, default: 0] += 1 }
@@ -136,9 +174,9 @@ extension Glossary.SDModel {
                 if dst.target.isEmpty { dst.target = src.target }
             }
             dst.variants = mergeSet(dst.variants, src.variants)
-            
+
             upsertSources(term: dst, with: src)
-            
+
             try upsertComponents(term: dst, with: src)
             
             try ensureTags(dst, names: src.tags)
@@ -404,22 +442,26 @@ extension Glossary.SDModel {
         
         private func deleteMissing(bundle: JSBundle) throws {
             if sync.removeMissingTerms {
-                let existing = try fetchAllKeys(SDTerm.self, key: \SDTerm.key)
+                let existingTerms = try context.fetch(FetchDescriptor<SDTerm>())
                 let incoming = Set(bundle.terms.map { $0.key })
-                let toDelete = existing.subtracting(incoming)
-                for key in toDelete {
-                    let pred = #Predicate<SDTerm> { $0.key == key }
-                    for t in try context.fetch(FetchDescriptor<SDTerm>(predicate: pred)) {
-                        try SourceIndexMaintainer.deleteAll(for: t, in: context)
-                        context.delete(t)
-                    }
+                let candidates = existingTerms.filter { !incoming.contains($0.key) }
+                let filteredTerms: [SDTerm]
+                if let filter = sync.termDeletionFilter {
+                    filteredTerms = candidates.filter { filter($0.key) }
+                } else {
+                    filteredTerms = candidates
+                }
+                for term in filteredTerms {
+                    try SourceIndexMaintainer.deleteAll(for: term, in: context)
+                    context.delete(term)
                 }
             }
             if sync.removeMissingPatterns {
                 let existing = try fetchAllKeys(SDPattern.self, key: \SDPattern.name)
                 let incoming = Set(bundle.patterns.map { $0.name })
-                let toDelete = existing.subtracting(incoming)
-                for name in toDelete {
+                let candidates = existing.subtracting(incoming)
+                let filtered = sync.patternDeletionFilter.map { filter in candidates.filter { filter($0) } } ?? Array(candidates)
+                for name in filtered {
                     let pred = #Predicate<SDPattern> { $0.name == name }
                     for p in try context.fetch(FetchDescriptor<SDPattern>(predicate: pred)) { context.delete(p) }
                 }
@@ -427,8 +469,9 @@ extension Glossary.SDModel {
             if sync.removeMissingMarkers {
                 let existing = try fetchAllKeys(SDAppellationMarker.self, key: \SDAppellationMarker.uid)
                 let incoming = Set(bundle.markers.map { "\($0.source)|\($0.target)|\($0.position.rawValue)" })
-                let toDelete = existing.subtracting(incoming)
-                for uid in toDelete {
+                let candidates = existing.subtracting(incoming)
+                let filtered = sync.markerDeletionFilter.map { filter in candidates.filter { filter($0) } } ?? Array(candidates)
+                for uid in filtered {
                     let pred = #Predicate<SDAppellationMarker> { $0.uid == uid }
                     for m in try context.fetch(FetchDescriptor<SDAppellationMarker>(predicate: pred)) { context.delete(m) }
                 }

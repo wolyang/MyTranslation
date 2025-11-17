@@ -10,15 +10,16 @@ final class SheetsImportViewModel {
     struct Tab: Identifiable, Hashable {
         let id = UUID()
         let title: String
-        var kind: Kind
-        enum Kind { case term, pattern, marker }
+        enum Kind: String, Codable { case term, pattern, marker }
     }
 
     let context: ModelContext
     private let adapter: SheetImportAdapter
+    private let defaults: UserDefaults
+    private var savedTabKinds: [String: Tab.Kind]
 
     var step: Step = .url
-    var spreadsheetURL: String = ""
+    var spreadsheetURL: String
     var availableTabs: [Tab] = []
     var selectedTermTabs: Set<UUID> = []
     var selectedPatternTabs: Set<UUID> = []
@@ -26,10 +27,18 @@ final class SheetsImportViewModel {
     var dryRunReport: Glossary.SDModel.ImportDryRunReport? = nil
     var errorMessage: String?
     var isProcessing: Bool = false
+    var applyDeletions: Bool = false
 
-    init(context: ModelContext, adapter: SheetImportAdapter = SheetImportAdapter()) {
+    init(
+        context: ModelContext,
+        adapter: SheetImportAdapter = SheetImportAdapter(),
+        defaults: UserDefaults = .standard
+    ) {
         self.context = context
         self.adapter = adapter
+        self.defaults = defaults
+        self.savedTabKinds = Self.loadSavedTabKinds(from: defaults)
+        self.spreadsheetURL = defaults.string(forKey: DefaultsKey.spreadsheetURL) ?? ""
     }
 
     func validateURL() async {
@@ -37,7 +46,9 @@ final class SheetsImportViewModel {
         defer { isProcessing = false }
         do {
             let tabs = try await adapter.fetchTabs(urlString: spreadsheetURL)
-            availableTabs = tabs.map { Tab(title: $0.title, kind: .term) }
+            availableTabs = tabs.map { Tab(title: $0.title) }
+            restoreSelectionsFromDefaults()
+            defaults.set(spreadsheetURL, forKey: DefaultsKey.spreadsheetURL)
             step = .tabs
         } catch {
             errorMessage = error.localizedDescription
@@ -48,11 +59,7 @@ final class SheetsImportViewModel {
         isProcessing = true
         defer { isProcessing = false }
         do {
-            let selection = Selection(
-                termTitles: selectedTermTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                patternTitles: selectedPatternTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                markerTitles: selectedMarkerTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title }
-            )
+            let selection = currentSelection()
             dryRunReport = try await adapter.performDryRun(urlString: spreadsheetURL, selection: selection, context: context)
             step = .preview
         } catch {
@@ -65,11 +72,7 @@ final class SheetsImportViewModel {
         isProcessing = true
         defer { isProcessing = false }
         do {
-            let selection = Selection(
-                termTitles: selectedTermTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                patternTitles: selectedPatternTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                markerTitles: selectedMarkerTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title }
-            )
+            let selection = currentSelection()
             try await adapter.importData(
                 urlString: spreadsheetURL,
                 selection: selection,
@@ -85,6 +88,83 @@ final class SheetsImportViewModel {
         let termTitles: [String]
         let patternTitles: [String]
         let markerTitles: [String]
+        let applyDeletions: Bool
+    }
+
+    private func currentSelection() -> Selection {
+        Selection(
+            termTitles: titles(for: selectedTermTabs),
+            patternTitles: titles(for: selectedPatternTabs),
+            markerTitles: titles(for: selectedMarkerTabs),
+            applyDeletions: applyDeletions
+        )
+    }
+
+    private func titles(for ids: Set<UUID>) -> [String] {
+        availableTabs.compactMap { ids.contains($0.id) ? $0.title : nil }
+    }
+
+    private func title(for id: UUID) -> String? {
+        availableTabs.first(where: { $0.id == id })?.title
+    }
+
+    private func restoreSelectionsFromDefaults() {
+        selectedTermTabs.removeAll()
+        selectedPatternTabs.removeAll()
+        selectedMarkerTabs.removeAll()
+        for tab in availableTabs {
+            guard let kind = savedTabKinds[tab.title] else { continue }
+            switch kind {
+            case .term: selectedTermTabs.insert(tab.id)
+            case .pattern: selectedPatternTabs.insert(tab.id)
+            case .marker: selectedMarkerTabs.insert(tab.id)
+            }
+        }
+    }
+
+    private func persistTabKinds() {
+        let raw = savedTabKinds.mapValues { $0.rawValue }
+        defaults.set(raw, forKey: DefaultsKey.tabKinds)
+    }
+
+    func setSelection(kind: Tab.Kind?, forTab id: UUID) {
+        updateSelection(for: id, to: kind)
+    }
+
+    private func updateSelection(for id: UUID, to newValue: Tab.Kind?) {
+        selectedTermTabs.remove(id)
+        selectedPatternTabs.remove(id)
+        selectedMarkerTabs.remove(id)
+        if let kind = newValue {
+            switch kind {
+            case .term: selectedTermTabs.insert(id)
+            case .pattern: selectedPatternTabs.insert(id)
+            case .marker: selectedMarkerTabs.insert(id)
+            }
+        }
+        guard let title = title(for: id) else { return }
+        if let kind = newValue {
+            savedTabKinds[title] = kind
+        } else {
+            savedTabKinds.removeValue(forKey: title)
+        }
+        persistTabKinds()
+    }
+
+    private static func loadSavedTabKinds(from defaults: UserDefaults) -> [String: Tab.Kind] {
+        guard let raw = defaults.dictionary(forKey: DefaultsKey.tabKinds) as? [String: String] else { return [:] }
+        var map: [String: Tab.Kind] = [:]
+        for (title, value) in raw {
+            if let kind = Tab.Kind(rawValue: value) {
+                map[title] = kind
+            }
+        }
+        return map
+    }
+
+    private enum DefaultsKey {
+        static let spreadsheetURL = "SheetsImport.lastSpreadsheetURL"
+        static let tabKinds = "SheetsImport.tabKinds"
     }
 }
 
@@ -96,7 +176,7 @@ struct SheetImportAdapter {
         }
         return try await Glossary.Sheet.fetchSheetTabs(spreadsheetId: spreadsheetId)
     }
-    
+
     func extractSpreadsheetId(from urlString: String) -> String? {
         guard let range1 = urlString.range(of: "/d/"),
               let range2 = urlString.range(of: "/edit", range: range1.upperBound..<urlString.endIndex) else {
@@ -106,16 +186,13 @@ struct SheetImportAdapter {
     }
 
     func performDryRun(urlString: String, selection: SheetsImportViewModel.Selection, context: ModelContext) async throws -> Glossary.SDModel.ImportDryRunReport {
-        let bundle = Glossary.SDModel.ImportDryRunReport(
-            terms: .init(newCount: selection.termTitles.count, updateCount: 0, deleteCount: 0),
-            patterns: .init(newCount: selection.patternTitles.count, updateCount: 0, deleteCount: 0),
-            markers: .init(newCount: selection.markerTitles.count, updateCount: 0, deleteCount: 0),
-            warnings: [],
-            termKeyCollisions: [],
-            patternKeyCollisions: [],
-            markerKeyCollisions: []
+        let bundle = try await makeBundle(urlString: urlString, selection: selection)
+        let upserter = await Glossary.SDModel.GlossaryUpserter(
+            context: context,
+            merge: .overwrite,
+            sync: makeSyncPolicy(for: selection)
         )
-        return bundle
+        return try upserter.dryRun(bundle: bundle)
     }
 
     func importData(
@@ -124,96 +201,41 @@ struct SheetImportAdapter {
         report: Glossary.SDModel.ImportDryRunReport,
         context: ModelContext
     ) async throws {
-        enum ImportError: LocalizedError {
-            case invalidURL
-            case spreadsheetIdMissing
-            case missingAPIKey
-            case noRecognizedSheets
-            case emptySelection
-            case malformedSheet(String)
+        _ = report
 
-            var errorDescription: String? {
-                switch self {
-                case .invalidURL:
-                    return "유효한 Google 스프레드시트 URL이 아닙니다."
-                case .spreadsheetIdMissing:
-                    return "스프레드시트 ID를 추출할 수 없습니다."
-                case .missingAPIKey:
-                    return "Google API 키가 설정되지 않았습니다."
-                case .noRecognizedSheets:
-                    return "가져올 수 있는 시트 구성을 찾지 못했습니다."
-                case .emptySelection:
-                    return "가져올 시트를 선택하세요."
-                case let .malformedSheet(title):
-                    return "\(title) 시트의 헤더 구성을 해석할 수 없습니다."
-                }
-            }
+        let bundle = try await makeBundle(urlString: urlString, selection: selection)
+        let upserter = await Glossary.SDModel.GlossaryUpserter(
+            context: context,
+            merge: .overwrite,
+            sync: makeSyncPolicy(for: selection)
+        )
+        let result = try await upserter.apply(bundle: bundle)
+        await Glossary.SDModel.ToastHub.shared.show(
+            "용어 +\(result.terms.newCount + result.terms.updateCount), 패턴 +\(result.patterns.newCount + result.patterns.updateCount), 호칭 +\(result.markers.newCount + result.markers.updateCount) 가져왔습니다."
+        )
+    }
+
+    private func makeSyncPolicy(for selection: SheetsImportViewModel.Selection) -> Glossary.SDModel.ImportSyncPolicy {
+        var policy = Glossary.SDModel.ImportSyncPolicy()
+        if selection.applyDeletions {
+            policy.removeMissingTerms = !selection.termTitles.isEmpty
+            policy.removeMissingPatterns = !selection.patternTitles.isEmpty
+            policy.removeMissingMarkers = !selection.markerTitles.isEmpty
+        } else {
+            policy.removeMissingTerms = false
+            policy.removeMissingPatterns = false
+            policy.removeMissingMarkers = false
         }
+        return policy
+    }
 
-        
-
-        struct HeaderMap<Column: Hashable> {
-            let index: [Column: Int]
-            init?(header: [String], mapping: [String: Column]) {
-                var table: [Column: Int] = [:]
-                for (offset, value) in header.enumerated() {
-                    let key = HeaderMap.normalize(value)
-                    if let column = mapping[key], table[column] == nil {
-                        table[column] = offset
-                    }
-                }
-                guard !table.isEmpty else { return nil }
-                index = table
-            }
-
-            static func normalize(_ header: String) -> String {
-                let trimmed = header
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .replacingOccurrences(of: " ", with: "_")
-                    .replacingOccurrences(of: "-", with: "_")
-                var snake = ""
-                for ch in trimmed {
-                    if ch.isUppercase {
-                        if let last = snake.last, last != "_" {
-                            snake += "_"
-                        }
-                        snake.append(contentsOf: ch.lowercased())
-                    } else {
-                        snake.append(ch)
-                    }
-                }
-                let collapsed = snake.replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
-                return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_")).lowercased()
-            }
-
-            func value(in row: [String], for column: Column) -> String? {
-                guard let idx = index[column], idx < row.count else { return nil }
-                let value = row[idx].trimmingCharacters(in: .whitespacesAndNewlines)
-                return value.isEmpty ? nil : value
-            }
-        }
-
-        enum TermColumn { case sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask }
-        enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
-        enum MarkerColumn { case source, target, variants, position, prohibit }
-
-        func parseBool(_ raw: String?) -> Bool {
-            guard let raw else { return false }
-            let lowered = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return ["1", "y", "yes", "true", "t", "on"].contains(lowered)
-        }
-
+    private func makeBundle(urlString: String, selection: SheetsImportViewModel.Selection) async throws -> JSBundle {
         guard !selection.termTitles.isEmpty || !selection.patternTitles.isEmpty || !selection.markerTitles.isEmpty else {
             throw ImportError.emptySelection
         }
 
-        guard !APIKeys.google.isEmpty else { throw ImportError.missingAPIKey }
+        let spreadsheetId = try resolveSpreadsheetId(urlString: urlString)
 
-        _ = report
-
-        guard let spreadsheetId = extractSpreadsheetId(from: urlString) else {
-            throw ImportError.spreadsheetIdMissing
-        }
         var termSheets: [String: [TermRow]] = [:]
         var patternRows: [PatternRow] = []
         var markerRows: [AppellationRow] = []
@@ -275,12 +297,8 @@ struct SheetImportAdapter {
             "prohibit_standalone": .prohibit
         ]
 
-        func resolveRows(for title: String) async throws -> [[String]] {
-            return try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
-        }
-
         for title in selection.termTitles {
-            let rows = try await resolveRows(for: title)
+            let rows = try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
             guard !rows.isEmpty else { continue }
             let headerRow = rows[0]
             guard let header = HeaderMap(header: headerRow, mapping: termMapping) else {
@@ -306,7 +324,7 @@ struct SheetImportAdapter {
         }
 
         for title in selection.patternTitles {
-            let rows = try await resolveRows(for: title)
+            let rows = try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
             guard !rows.isEmpty else { continue }
             let headerRow = rows[0]
             guard let header = HeaderMap<PatternColumn>(header: headerRow, mapping: patternMapping) else {
@@ -338,7 +356,7 @@ struct SheetImportAdapter {
         }
 
         for title in selection.markerTitles {
-            let rows = try await resolveRows(for: title)
+            let rows = try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
             guard !rows.isEmpty else { continue }
             let headerRow = rows[0]
             guard let header = HeaderMap<MarkerColumn>(header: headerRow, mapping: markerMapping) else {
@@ -361,11 +379,99 @@ struct SheetImportAdapter {
             throw ImportError.noRecognizedSheets
         }
 
-        let bundle = try buildGlossaryJSON(termsBySheet: termSheets, patterns: patternRows, markers: markerRows)
-        let upserter = await Glossary.SDModel.GlossaryUpserter(context: context, merge: .overwrite)
-        let result = try await upserter.apply(bundle: bundle)
-        await Glossary.SDModel.ToastHub.shared.show(
-            "용어 +\(result.terms.newCount + result.terms.updateCount), 패턴 +\(result.patterns.newCount + result.patterns.updateCount), 호칭 +\(result.markers.newCount + result.markers.updateCount) 가져왔습니다."
-        )
+        return try buildGlossaryJSON(termsBySheet: termSheets, patterns: patternRows, markers: markerRows)
     }
+
+    private func resolveSpreadsheetId(urlString: String) throws -> String {
+        guard !APIKeys.google.isEmpty else { throw ImportError.missingAPIKey }
+
+        guard !urlString.isEmpty else {
+            throw ImportError.invalidURL
+        }
+
+        guard let spreadsheetId = extractSpreadsheetId(from: urlString) else {
+            throw ImportError.spreadsheetIdMissing
+        }
+        return spreadsheetId
+    }
+
+    private func parseBool(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        let lowered = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["1", "y", "yes", "true", "t", "on"].contains(lowered)
+    }
+}
+
+extension SheetImportAdapter {
+    enum ImportError: LocalizedError {
+        case invalidURL
+        case spreadsheetIdMissing
+        case missingAPIKey
+        case noRecognizedSheets
+        case emptySelection
+        case malformedSheet(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidURL:
+                return "유효한 Google 스프레드시트 URL이 아닙니다."
+            case .spreadsheetIdMissing:
+                return "스프레드시트 ID를 추출할 수 없습니다."
+            case .missingAPIKey:
+                return "Google API 키가 설정되지 않았습니다."
+            case .noRecognizedSheets:
+                return "가져올 수 있는 시트 구성을 찾지 못했습니다."
+            case .emptySelection:
+                return "가져올 시트를 선택하세요."
+            case let .malformedSheet(title):
+                return "\(title) 시트의 헤더 구성을 해석할 수 없습니다."
+            }
+        }
+    }
+
+    struct HeaderMap<Column: Hashable> {
+        let index: [Column: Int]
+        init?(header: [String], mapping: [String: Column]) {
+            var table: [Column: Int] = [:]
+            for (offset, value) in header.enumerated() {
+                let key = HeaderMap.normalize(value)
+                if let column = mapping[key], table[column] == nil {
+                    table[column] = offset
+                }
+            }
+            guard !table.isEmpty else { return nil }
+            index = table
+        }
+
+        static func normalize(_ header: String) -> String {
+            let trimmed = header
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "_")
+                .replacingOccurrences(of: "-", with: "_")
+            var snake = ""
+            for ch in trimmed {
+                if ch.isUppercase {
+                    if let last = snake.last, last != "_" {
+                        snake += "_"
+                    }
+                    snake.append(contentsOf: ch.lowercased())
+                } else {
+                    snake.append(ch)
+                }
+            }
+            let collapsed = snake.replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
+            return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_")).lowercased()
+        }
+
+        func value(in row: [String], for column: Column) -> String? {
+            guard let idx = index[column], idx < row.count else { return nil }
+            let value = row[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        }
+    }
+
+    enum TermColumn { case sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask }
+    enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
+    enum MarkerColumn { case source, target, variants, position, prohibit }
+}
 }
