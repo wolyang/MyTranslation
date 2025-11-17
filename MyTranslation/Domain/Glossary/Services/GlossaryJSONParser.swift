@@ -206,6 +206,10 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
 
 func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPattern {
     func splitSemi(_ s: String) -> [String] { s.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+    func splitJoiners(_ s: String) -> [String] {
+        s.split(separator: ";", omittingEmptySubsequences: false)
+            .map(String.init)   // 트리밍 안 함, 빈 문자열도 그대로 둠
+    }
 
     let leftDSL = parseSelectorDSL(row.left)
     let rightDSL = parseSelectorDSL(row.right)
@@ -242,7 +246,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
         left: toSelector(leftDSL),
         right: toSelector(rightDSL),
         skipPairsIfSameTerm: row.skipSame,
-        sourceJoiners: splitSemi(row.sourceJoiners),
+        sourceJoiners: splitJoiners(row.sourceJoiners),
         sourceTemplates: splitSemi(row.sourceTemplates),
         targetTemplates: splitSemi(row.targetTemplates),
         isAppellation: row.isAppellation,
