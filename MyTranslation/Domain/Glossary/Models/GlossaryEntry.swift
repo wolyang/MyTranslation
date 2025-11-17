@@ -487,14 +487,11 @@ extension Glossary {
         
         static func renderVariants(_ tpl: String, joiners: [String], L: SDTerm, R: SDTerm?) -> [String] {
             if let R {
+                var lAll = L.variants + [L.target]
+                var rAll = R.variants + [R.target]
                 var variants: [String] = []
-                if L.target == "쿠레나이" && R.target == "가이" {
-                    print("L.variants: \(L.variants)")
-                    print("R.variants: \(R.variants)")
-                    print("joiners: \(joiners)")
-                }
-                for lv in L.variants {
-                    for rv in R.variants {
+                for lv in lAll {
+                    for rv in rAll {
                         for j in joiners {
                             var s = tpl
                             s = s.replacingOccurrences(of: "{J}", with: j)
