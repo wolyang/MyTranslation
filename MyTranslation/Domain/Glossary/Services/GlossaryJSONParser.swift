@@ -55,19 +55,6 @@ func latinSlug(_ s: String) -> String {
     return squashed
 }
 
-func makeTermKey(sheetName: String, target: String, used: inout Set<String>) -> String {
-    let sheetSlug = latinSlug(sheetName).prefix(5)
-    var base = String(sheetSlug) + ":" + latinSlug(target)
-    if base.isEmpty { base = String(sheetSlug) + ":TERM" }
-    var key = base
-    var i = 2
-    while used.contains(key) {
-        key = base + "-\(i)"; i += 1
-    }
-    used.insert(key)
-    return key
-}
-
 // MARK: - Ref Resolver
 struct RefIndex {
     // ref(원문) → key(해석)
@@ -80,6 +67,7 @@ func refToken(sheet: String, target: String) -> String { "ref:\(sheet):\(target)
 
 // MARK: - Row Adapters
 struct TermRow {
+    let key: String
     let sourcesOK: String
     let sourcesProhibit: String
     let target: String
@@ -184,7 +172,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
     }
 
     var keySet = used
-    let key = makeTermKey(sheetName: sheetName, target: row.target, used: &keySet)
+    let key = row.key
     used = keySet
 
     // ref 인덱스 등록
@@ -294,11 +282,9 @@ func buildGlossaryJSON(
     // 3) AppellationMarkers (시트 → 평탄화)
     var allMarkers: [JSAppellationMarker] = []
     for r in markers {
-        let baseSources = [r.source] + r.variants.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let variants = r.variants.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let pos = JSAppellationMarker.Position(rawValue: r.position) ?? .prefix
-        for s in baseSources {
-            allMarkers.append(JSAppellationMarker(source: s, target: r.target, position: pos, prohibitStandalone: r.prohibit))
-        }
+        allMarkers.append(JSAppellationMarker(source: r.source, target: r.target, variants: variants, position: pos, prohibitStandalone: r.prohibit))
     }
 
     // 4) 드라이런 경고(간단): 미해결 ref 수집

@@ -159,6 +159,87 @@ public final class TermMasker {
 
         return promoted
     }
+    
+    func makeCompositeAppellationTerms(
+        markers: [GlossaryAppellationMarker],
+        entries: [GlossaryEntry]
+    ) -> [GlossaryEntry] {
+        let appellationTerms = entries.filter { $0.isAppellation }
+
+        var composites: [GlossaryEntry] = []
+
+        for marker in markers {
+            for term in appellationTerms {
+                guard case let .termStandalone(termKey) = term.origin else { continue }
+                
+                // 1) 원문 source 조합
+                let compositeSource: String
+                switch marker.position {
+                case .prefix:
+                    compositeSource = marker.source + term.source   // "小陆", "桑凯"
+                case .suffix:
+                    compositeSource = term.source + marker.source   // "陆小", "凯桑"
+                }
+
+                // 2) target(정규화 결과) 결정
+                let baseTarget = term.target              // "가이", "리쿠"
+                let compositeTarget: String
+                if let markerTarget = marker.target, !markerTarget.isEmpty {
+                    // marker를 살리기: prefix/suffix 위치 그대로
+                    switch marker.position {
+                    case .prefix:
+                        compositeTarget = markerTarget + " " + baseTarget   // "상가이" 같은 패턴이 필요할 때
+                    case .suffix:
+                        compositeTarget = baseTarget + " " + markerTarget   // "가이상"
+                    }
+                } else {
+                    // marker.target이 없으면 → marker는 최종 표기에서 제거
+                    // "샤오루" → "리쿠"
+                    compositeTarget = baseTarget
+                }
+
+                // 3) variants(한글 쪽 패턴) 조합
+                //    - term 쪽: variants + target
+                //    - marker 쪽: variants + (target 있으면 그것도)
+                var nameVariants = Array(term.variants)
+                if !nameVariants.contains(term.target) {
+                    nameVariants.append(term.target)
+                }
+
+                var markerVariants = Array(marker.variants)
+                if let markerTarget = marker.target, !markerTarget.isEmpty,
+                   !markerVariants.contains(markerTarget) {
+                    markerVariants.append(markerTarget)
+                }
+
+                var compositeVariants: [String] = []
+
+                for mv in markerVariants {
+                    for nv in nameVariants {
+                        switch marker.position {
+                        case .prefix:
+                            compositeVariants.append(mv + nv)   // "상가이", "산가이"
+                        case .suffix:
+                            compositeVariants.append(nv + mv)   // "가이상", "가이산"
+                        }
+                    }
+                }
+
+                let composite = GlossaryEntry(
+                    source: compositeSource,
+                    target: compositeTarget,
+                    variants: Set(compositeVariants),
+                    preMask: false,
+                    isAppellation: true,
+                    prohibitStandalone: false,
+                    origin: .termWithMarker(termKey: termKey, markerId: marker.id)
+                )
+                composites.append(composite)
+            }
+        }
+
+        return composites
+    }
 
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
@@ -535,9 +616,10 @@ public final class TermMasker {
 
         let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
         
-        var standaloneEntries = entries.filter { !$0.prohibitStandalone }
-        var promotedEntries = promoteProhibitedEntries(in: original, entries: entries, markers: markers)
-        var allowedEntries = standaloneEntries + promotedEntries
+        let standaloneEntries = entries.filter { !$0.prohibitStandalone }
+        let promotedEntries = promoteProhibitedEntries(in: original, entries: entries, markers: markers)
+        let withMarkerEntries = makeCompositeAppellationTerms(markers: markers, entries: entries)
+        let allowedEntries = standaloneEntries + promotedEntries + withMarkerEntries
 
         var variantsByTarget: [String: [String]] = [:]
         var seenVariantKeysByTarget: [String: Set<String>] = [:]

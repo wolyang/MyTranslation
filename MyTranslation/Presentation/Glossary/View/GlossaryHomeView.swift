@@ -337,7 +337,7 @@ enum PreviewData {
         family.termTagLinks = [familyTagLink]
         given.termTagLinks = [givenTagLink]
 
-        let marker = Glossary.SDModel.SDAppellationMarker(source: "Mr.", target: "홍 선생", position: "prefix", prohibitStandalone: true)
+        let marker = Glossary.SDModel.SDAppellationMarker(source: "Mr.", target: "홍 선생", variants: [], position: "prefix", prohibitStandalone: true)
         context.insert(marker)
 
         try? context.save()

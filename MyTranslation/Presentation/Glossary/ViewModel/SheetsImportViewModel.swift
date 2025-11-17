@@ -241,6 +241,8 @@ struct SheetImportAdapter {
         var markerRows: [AppellationRow] = []
 
         let termMapping: [String: TermColumn] = [
+            "key": .key,
+            "id": .key,
             "sources_ok": .sourcesOK,
             "source_ok": .sourcesOK,
             "sources": .sourcesOK,
@@ -305,11 +307,13 @@ struct SheetImportAdapter {
                 throw ImportError.malformedSheet(title)
             }
             let entries = rows.dropFirst().compactMap { row -> TermRow? in
+                let key = header.value(in: row, for: .key) ?? ""
                 let target = header.value(in: row, for: .target) ?? ""
                 let sourcesOK = header.value(in: row, for: .sourcesOK) ?? ""
                 let sourcesNG = header.value(in: row, for: .sourcesNG) ?? ""
                 if target.isEmpty && sourcesOK.isEmpty && sourcesNG.isEmpty { return nil }
                 return TermRow(
+                    key: key,
                     sourcesOK: sourcesOK,
                     sourcesProhibit: sourcesNG,
                     target: target,
@@ -470,7 +474,7 @@ extension SheetImportAdapter {
         }
     }
 
-    enum TermColumn { case sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask }
+    enum TermColumn { case key, sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask }
     enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
     enum MarkerColumn { case source, target, variants, position, prohibit }
 }

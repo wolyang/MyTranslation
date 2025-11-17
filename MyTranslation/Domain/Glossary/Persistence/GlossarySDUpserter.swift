@@ -118,20 +118,6 @@ extension Glossary.SDModel {
             let patternCollisions = collisions(incomingPatternIds)
             let markerCollisions = collisions(incomingMarkerUids)
             var warns: [String] = []
-            for pat in bundle.patterns {
-                let usesR = pat.sourceTemplates.contains { $0.contains("{R}") } || pat.targetTemplates.contains { $0.contains("{R}") }
-                let right = pat.right
-                let isUnary: Bool = {
-                    guard let r = right else { return true }
-                    let hasRoles = !(r.roles?.isEmpty ?? true)
-                    let hasAll = !(r.tagsAll?.isEmpty ?? true)
-                    let hasAny = !(r.tagsAny?.isEmpty ?? true)
-                    let hasIncl = !(r.includeTermKeys?.isEmpty ?? true)
-                    let hasExcl = !(r.excludeTermKeys?.isEmpty ?? true)
-                    return !(hasRoles || hasAll || hasAny || hasIncl || hasExcl)
-                }()
-                if isUnary && usesR { warns.append("Pattern '\(pat.name)' appears unary but uses {R} in templates.") }
-            }
             if !termCollisions.isEmpty { warns.append("Duplicate Term keys in import: \(termCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             if !patternCollisions.isEmpty { warns.append("Duplicate Pattern ids in import: \(patternCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             if !markerCollisions.isEmpty { warns.append("Duplicate Marker uids in import: \(markerCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
@@ -323,7 +309,7 @@ extension Glossary.SDModel {
                 if let dst = map[uid] {
                     if merge == .overwrite { dst.prohibitStandalone = js.prohibitStandalone }
                 } else {
-                    let m = SDAppellationMarker(source: js.source, target: js.target, position: js.position.rawValue, prohibitStandalone: js.prohibitStandalone)
+                    let m = SDAppellationMarker(source: js.source, target: js.target, variants: js.variants, position: js.position.rawValue, prohibitStandalone: js.prohibitStandalone)
                     context.insert(m)
                     map[uid] = m
                 }

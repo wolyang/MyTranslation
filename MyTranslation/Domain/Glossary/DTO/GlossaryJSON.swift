@@ -74,6 +74,7 @@ public struct JSPattern: Codable, Hashable {
 public struct JSAppellationMarker: Codable, Hashable {
     public var source: String
     public var target: String
+    public var variants: [String]
     public var position: Position
     public var prohibitStandalone: Bool
     

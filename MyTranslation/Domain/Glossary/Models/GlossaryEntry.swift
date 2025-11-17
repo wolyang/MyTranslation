@@ -17,24 +17,33 @@ public struct GlossaryEntry: Sendable, Hashable {
     public var preMask: Bool
     public var isAppellation: Bool
     public var prohibitStandalone: Bool
-    public enum Origin: Sendable, Hashable { case termStandalone(termKey: String), composer(composerId: String, leftKey: String, rightKey: String?, needPairCheck: Bool), markerStandalone }
+    public enum Origin: Sendable, Hashable {
+        case termStandalone(termKey: String)
+        case composer(composerId: String, leftKey: String, rightKey: String?, needPairCheck: Bool)
+        case markerStandalone(markerId: String)
+        case termWithMarker(termKey: String, markerId: String)
+    }
     public var origin: Origin
 }
 
 public struct GlossaryAppellationMarker: Sendable, Hashable {
     public enum Position: String, Sendable, Hashable { case prefix, suffix }
+    public let id: String
     public let source: String
     public let position: Position
     // (메타) 마커가 단독일 때의 번역 도착어 — 승격 판단에는 사용하지 않음
-    public let standaloneTarget: String?
+    public let target: String?
+    public let variants: [String]
     /// (메타) 마커 자체의 단독 사용 금지 여부 — 승격 판단에는 사용하지 않음
     public let prohibitStandalone: Bool
 
-    public init(source: String, rawPosition: String,
-                standaloneTarget: String?, prohibitStandalone: Bool) {
+    public init(id: String, source: String, rawPosition: String,
+                target: String?, variants: [String], prohibitStandalone: Bool) {
+        self.id = id
         self.source = source
         self.position = Position(rawValue: rawPosition) ?? .suffix
-        self.standaloneTarget = standaloneTarget
+        self.target = target
+        self.variants = variants
         self.prohibitStandalone = prohibitStandalone
     }
 }
@@ -127,9 +136,11 @@ extension Glossary {
             for marker in sdMarkers {
                 if pageText.contains(marker.source) {
                     markers.append(GlossaryAppellationMarker(
+                        id: marker.uid,
                         source: marker.source,
                         rawPosition: marker.position,
-                        standaloneTarget: marker.target,
+                        target: marker.target,
+                        variants: marker.variants,
                         prohibitStandalone: marker.prohibitStandalone
                     ))
                     if !marker.prohibitStandalone {
@@ -140,7 +151,7 @@ extension Glossary {
                             preMask: false,
                             isAppellation: true,
                             prohibitStandalone: true,
-                            origin: .markerStandalone))
+                            origin: .markerStandalone(markerId: marker.uid)))
                     }
                 }
             }
@@ -487,17 +498,23 @@ extension Glossary {
         
         static func renderVariants(_ tpl: String, joiners: [String], L: SDTerm, R: SDTerm?) -> [String] {
             if let R {
-                var lAll = L.variants + [L.target]
-                var rAll = R.variants + [R.target]
+                var reverseTpl = tpl.replacingOccurrences(of: "{L}", with: "{T}")
+                reverseTpl = reverseTpl.replacingOccurrences(of: "{R}", with: "{L}")
+                reverseTpl = reverseTpl.replacingOccurrences(of: "{T}", with: "{R}")
+                let lAll = L.variants + [L.target]
+                let rAll = R.variants + [R.target]
+                let tpls: [String] = [tpl, reverseTpl]
                 var variants: [String] = []
                 for lv in lAll {
                     for rv in rAll {
                         for j in joiners {
-                            var s = tpl
-                            s = s.replacingOccurrences(of: "{J}", with: j)
-                            s = s.replacingOccurrences(of: "{L}", with: lv)
-                            s = s.replacingOccurrences(of: "{R}", with: rv)
-                            variants.append(s)
+                            for t in tpls {
+                                var s = t
+                                s = s.replacingOccurrences(of: "{J}", with: j)
+                                s = s.replacingOccurrences(of: "{L}", with: lv)
+                                s = s.replacingOccurrences(of: "{R}", with: rv)
+                                variants.append(s)
+                            }
                         }
                     }
                 }
