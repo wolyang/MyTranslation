@@ -144,19 +144,11 @@ struct SheetImportAdapter {
         if selection.termTitles.isEmpty {
             policy.removeMissingTerms = false
         } else {
-            let prefixes = Set(selection.termTitles.map { sheetSlug(for: $0) }.filter { !$0.isEmpty })
-            policy.termDeletionFilter = { key in
-                guard let prefix = key.split(separator: ":").first else { return false }
-                return prefixes.contains(String(prefix))
-            }
+            policy.allowedTermSheetTitles = Set(selection.termTitles)
         }
         policy.removeMissingPatterns = !selection.patternTitles.isEmpty
         policy.removeMissingMarkers = !selection.markerTitles.isEmpty
         return policy
-    }
-
-    private func sheetSlug(for title: String) -> String {
-        String(latinSlug(title).prefix(5))
     }
 
     private func makeBundle(urlString: String, selection: SheetsImportViewModel.Selection) async throws -> JSBundle {
