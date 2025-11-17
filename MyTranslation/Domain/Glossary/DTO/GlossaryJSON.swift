@@ -18,7 +18,6 @@ public struct JSTerm: Codable, Hashable {
     public var components: [JSComponent]
     public var isAppellation: Bool
     public var preMask: Bool
-    public var sheetTitle: String?
 }
 
 public struct JSComponent: Codable, Hashable {

@@ -20,6 +20,11 @@ struct SheetsTabPickerView: View {
                     }
                 }
             }
+            Section("동기화") {
+                Toggle(isOn: $viewModel.applyDeletions) {
+                    Text("삭제 항목을 반영")
+                }
+            }
             Section {
                 Button {
                     Task { await viewModel.loadPreview() }
@@ -41,15 +46,7 @@ struct SheetsTabPickerView: View {
             if viewModel.selectedMarkerTabs.contains(id) { return .marker }
             return nil
         } set: { newValue in
-            viewModel.selectedTermTabs.remove(id)
-            viewModel.selectedPatternTabs.remove(id)
-            viewModel.selectedMarkerTabs.remove(id)
-            switch newValue {
-            case .term?: viewModel.selectedTermTabs.insert(id)
-            case .pattern?: viewModel.selectedPatternTabs.insert(id)
-            case .marker?: viewModel.selectedMarkerTabs.insert(id)
-            default: break
-            }
+            viewModel.setSelection(kind: newValue, forTab: id)
         }
     }
 }

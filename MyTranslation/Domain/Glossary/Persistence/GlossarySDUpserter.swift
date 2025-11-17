@@ -32,7 +32,6 @@ extension Glossary.SDModel {
         var termDeletionFilter: (@Sendable (String) -> Bool)? = nil
         var patternDeletionFilter: (@Sendable (String) -> Bool)? = nil
         var markerDeletionFilter: (@Sendable (String) -> Bool)? = nil
-        var allowedTermSheetTitles: Set<String>? = nil
     }
     
     @MainActor
@@ -63,11 +62,6 @@ extension Glossary.SDModel {
         func dryRun(bundle: JSBundle) throws -> ImportDryRunReport {
             let existingTerms = try context.fetch(FetchDescriptor<SDTerm>())
             let existingTermKeys = Set(existingTerms.map { $0.key })
-            let termOriginByKey = existingTerms.reduce(into: [String: String]()) { result, term in
-                if let title = term.sheetTitle, !title.isEmpty {
-                    result[term.key] = title
-                }
-            }
             let existingPatternIds = try fetchAllKeys(SDPattern.self, key: \SDPattern.name)
             let existingMarkerUids = try fetchAllKeys(SDAppellationMarker.self, key: \SDAppellationMarker.uid)
             let incomingTermKeys = bundle.terms.map { $0.key }
@@ -81,12 +75,7 @@ extension Glossary.SDModel {
             let tDel: Int
             if sync.removeMissingTerms {
                 let candidates = existingTermKeys.subtracting(incomingTermKeySet)
-                if let allowed = sync.allowedTermSheetTitles, !allowed.isEmpty {
-                    tDel = candidates.filter { key in
-                        guard let title = termOriginByKey[key] else { return false }
-                        return allowed.contains(title)
-                    }.count
-                } else if let filter = sync.termDeletionFilter {
+                if let filter = sync.termDeletionFilter {
                     tDel = candidates.filter { filter($0) }.count
                 } else {
                     tDel = candidates.count
@@ -166,7 +155,7 @@ extension Glossary.SDModel {
                     try update(term: existing, with: src)
                     dst = existing
                 } else {
-                    let created = SDTerm(key: src.key, target: src.target, sheetTitle: src.sheetTitle)
+                    let created = SDTerm(key: src.key, target: src.target)
                     try update(term: created, with: src)
                     context.insert(created)
                     map[src.key] = created
@@ -181,19 +170,13 @@ extension Glossary.SDModel {
                 dst.target = src.target
                 dst.isAppellation = src.isAppellation
                 dst.preMask = src.preMask
-                if let sheet = src.sheetTitle, !sheet.isEmpty {
-                    dst.sheetTitle = sheet
-                }
             } else {
                 if dst.target.isEmpty { dst.target = src.target }
             }
             dst.variants = mergeSet(dst.variants, src.variants)
-            if let sheet = src.sheetTitle, !sheet.isEmpty {
-                dst.sheetTitle = sheet
-            }
-            
+
             upsertSources(term: dst, with: src)
-            
+
             try upsertComponents(term: dst, with: src)
             
             try ensureTags(dst, names: src.tags)
@@ -463,12 +446,7 @@ extension Glossary.SDModel {
                 let incoming = Set(bundle.terms.map { $0.key })
                 let candidates = existingTerms.filter { !incoming.contains($0.key) }
                 let filteredTerms: [SDTerm]
-                if let allowed = sync.allowedTermSheetTitles, !allowed.isEmpty {
-                    filteredTerms = candidates.filter { term in
-                        guard let title = term.sheetTitle else { return false }
-                        return allowed.contains(title)
-                    }
-                } else if let filter = sync.termDeletionFilter {
+                if let filter = sync.termDeletionFilter {
                     filteredTerms = candidates.filter { filter($0.key) }
                 } else {
                     filteredTerms = candidates

@@ -200,8 +200,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
         tags: tags,
         components: components,
         isAppellation: row.isAppellation,
-        preMask: row.preMask,
-        sheetTitle: sheetName
+        preMask: row.preMask
     )
 }
 

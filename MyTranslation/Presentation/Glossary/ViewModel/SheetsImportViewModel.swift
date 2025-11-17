@@ -10,15 +10,16 @@ final class SheetsImportViewModel {
     struct Tab: Identifiable, Hashable {
         let id = UUID()
         let title: String
-        var kind: Kind
-        enum Kind { case term, pattern, marker }
+        enum Kind: String, Codable { case term, pattern, marker }
     }
 
     let context: ModelContext
     private let adapter: SheetImportAdapter
+    private let defaults: UserDefaults
+    private var savedTabKinds: [String: Tab.Kind]
 
     var step: Step = .url
-    var spreadsheetURL: String = ""
+    var spreadsheetURL: String
     var availableTabs: [Tab] = []
     var selectedTermTabs: Set<UUID> = []
     var selectedPatternTabs: Set<UUID> = []
@@ -26,10 +27,18 @@ final class SheetsImportViewModel {
     var dryRunReport: Glossary.SDModel.ImportDryRunReport? = nil
     var errorMessage: String?
     var isProcessing: Bool = false
+    var applyDeletions: Bool = false
 
-    init(context: ModelContext, adapter: SheetImportAdapter = SheetImportAdapter()) {
+    init(
+        context: ModelContext,
+        adapter: SheetImportAdapter = SheetImportAdapter(),
+        defaults: UserDefaults = .standard
+    ) {
         self.context = context
         self.adapter = adapter
+        self.defaults = defaults
+        self.savedTabKinds = Self.loadSavedTabKinds(from: defaults)
+        self.spreadsheetURL = defaults.string(forKey: DefaultsKey.spreadsheetURL) ?? ""
     }
 
     func validateURL() async {
@@ -37,7 +46,9 @@ final class SheetsImportViewModel {
         defer { isProcessing = false }
         do {
             let tabs = try await adapter.fetchTabs(urlString: spreadsheetURL)
-            availableTabs = tabs.map { Tab(title: $0.title, kind: .term) }
+            availableTabs = tabs.map { Tab(title: $0.title) }
+            restoreSelectionsFromDefaults()
+            defaults.set(spreadsheetURL, forKey: DefaultsKey.spreadsheetURL)
             step = .tabs
         } catch {
             errorMessage = error.localizedDescription
@@ -77,18 +88,83 @@ final class SheetsImportViewModel {
         let termTitles: [String]
         let patternTitles: [String]
         let markerTitles: [String]
+        let applyDeletions: Bool
     }
 
     private func currentSelection() -> Selection {
         Selection(
             termTitles: titles(for: selectedTermTabs),
             patternTitles: titles(for: selectedPatternTabs),
-            markerTitles: titles(for: selectedMarkerTabs)
+            markerTitles: titles(for: selectedMarkerTabs),
+            applyDeletions: applyDeletions
         )
     }
 
     private func titles(for ids: Set<UUID>) -> [String] {
         availableTabs.compactMap { ids.contains($0.id) ? $0.title : nil }
+    }
+
+    private func title(for id: UUID) -> String? {
+        availableTabs.first(where: { $0.id == id })?.title
+    }
+
+    private func restoreSelectionsFromDefaults() {
+        selectedTermTabs.removeAll()
+        selectedPatternTabs.removeAll()
+        selectedMarkerTabs.removeAll()
+        for tab in availableTabs {
+            guard let kind = savedTabKinds[tab.title] else { continue }
+            switch kind {
+            case .term: selectedTermTabs.insert(tab.id)
+            case .pattern: selectedPatternTabs.insert(tab.id)
+            case .marker: selectedMarkerTabs.insert(tab.id)
+            }
+        }
+    }
+
+    private func persistTabKinds() {
+        let raw = savedTabKinds.mapValues { $0.rawValue }
+        defaults.set(raw, forKey: DefaultsKey.tabKinds)
+    }
+
+    func setSelection(kind: Tab.Kind?, forTab id: UUID) {
+        updateSelection(for: id, to: kind)
+    }
+
+    private func updateSelection(for id: UUID, to newValue: Tab.Kind?) {
+        selectedTermTabs.remove(id)
+        selectedPatternTabs.remove(id)
+        selectedMarkerTabs.remove(id)
+        if let kind = newValue {
+            switch kind {
+            case .term: selectedTermTabs.insert(id)
+            case .pattern: selectedPatternTabs.insert(id)
+            case .marker: selectedMarkerTabs.insert(id)
+            }
+        }
+        guard let title = title(for: id) else { return }
+        if let kind = newValue {
+            savedTabKinds[title] = kind
+        } else {
+            savedTabKinds.removeValue(forKey: title)
+        }
+        persistTabKinds()
+    }
+
+    private static func loadSavedTabKinds(from defaults: UserDefaults) -> [String: Tab.Kind] {
+        guard let raw = defaults.dictionary(forKey: DefaultsKey.tabKinds) as? [String: String] else { return [:] }
+        var map: [String: Tab.Kind] = [:]
+        for (title, value) in raw {
+            if let kind = Tab.Kind(rawValue: value) {
+                map[title] = kind
+            }
+        }
+        return map
+    }
+
+    private enum DefaultsKey {
+        static let spreadsheetURL = "SheetsImport.lastSpreadsheetURL"
+        static let tabKinds = "SheetsImport.tabKinds"
     }
 }
 
@@ -141,13 +217,15 @@ struct SheetImportAdapter {
 
     private func makeSyncPolicy(for selection: SheetsImportViewModel.Selection) -> Glossary.SDModel.ImportSyncPolicy {
         var policy = Glossary.SDModel.ImportSyncPolicy()
-        if selection.termTitles.isEmpty {
-            policy.removeMissingTerms = false
+        if selection.applyDeletions {
+            policy.removeMissingTerms = !selection.termTitles.isEmpty
+            policy.removeMissingPatterns = !selection.patternTitles.isEmpty
+            policy.removeMissingMarkers = !selection.markerTitles.isEmpty
         } else {
-            policy.allowedTermSheetTitles = Set(selection.termTitles)
+            policy.removeMissingTerms = false
+            policy.removeMissingPatterns = false
+            policy.removeMissingMarkers = false
         }
-        policy.removeMissingPatterns = !selection.patternTitles.isEmpty
-        policy.removeMissingMarkers = !selection.markerTitles.isEmpty
         return policy
     }
 

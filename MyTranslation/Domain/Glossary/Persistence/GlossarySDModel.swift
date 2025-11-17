@@ -15,8 +15,6 @@ extension Glossary.SDModel {
         var target: String
         var variants: [String] = []
 
-        var sheetTitle: String? = nil
-
         var isAppellation: Bool = false
         var preMask: Bool = false
 
@@ -30,7 +28,6 @@ extension Glossary.SDModel {
             key: String,
             target: String,
             variants: [String] = [],
-            sheetTitle: String? = nil,
             isAppellation: Bool = false,
             preMask: Bool = true,
             sources: [SDSource] = [],
@@ -40,7 +37,6 @@ extension Glossary.SDModel {
             self.key = key
             self.target = target
             self.variants = variants
-            self.sheetTitle = sheetTitle
             self.isAppellation = isAppellation
             self.preMask = preMask
             self.sources = sources
