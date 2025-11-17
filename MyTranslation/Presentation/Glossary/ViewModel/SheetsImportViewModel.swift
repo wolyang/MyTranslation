@@ -48,11 +48,7 @@ final class SheetsImportViewModel {
         isProcessing = true
         defer { isProcessing = false }
         do {
-            let selection = Selection(
-                termTitles: selectedTermTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                patternTitles: selectedPatternTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                markerTitles: selectedMarkerTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title }
-            )
+            let selection = currentSelection()
             dryRunReport = try await adapter.performDryRun(urlString: spreadsheetURL, selection: selection, context: context)
             step = .preview
         } catch {
@@ -65,11 +61,7 @@ final class SheetsImportViewModel {
         isProcessing = true
         defer { isProcessing = false }
         do {
-            let selection = Selection(
-                termTitles: selectedTermTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                patternTitles: selectedPatternTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title },
-                markerTitles: selectedMarkerTabs.compactMap { id in availableTabs.first(where: { $0.id == id })?.title }
-            )
+            let selection = currentSelection()
             try await adapter.importData(
                 urlString: spreadsheetURL,
                 selection: selection,
@@ -86,15 +78,21 @@ final class SheetsImportViewModel {
         let patternTitles: [String]
         let markerTitles: [String]
     }
+
+    private func currentSelection() -> Selection {
+        Selection(
+            termTitles: titles(for: selectedTermTabs),
+            patternTitles: titles(for: selectedPatternTabs),
+            markerTitles: titles(for: selectedMarkerTabs)
+        )
+    }
+
+    private func titles(for ids: Set<UUID>) -> [String] {
+        availableTabs.compactMap { ids.contains($0.id) ? $0.title : nil }
+    }
 }
 
 struct SheetImportAdapter {
-    private let nonDestructiveSync = Glossary.SDModel.ImportSyncPolicy(
-        removeMissingTerms: false,
-        removeMissingPatterns: false,
-        removeMissingMarkers: false
-    )
-
     func fetchTabs(urlString: String) async throws -> [(title: String, id: Int)] {
         guard !urlString.isEmpty else { throw NSError(domain: "Sheets", code: 0, userInfo: [NSLocalizedDescriptionKey: "URL을 입력하세요."]) }
         guard let spreadsheetId = extractSpreadsheetId(from: urlString) else {
@@ -116,7 +114,7 @@ struct SheetImportAdapter {
         let upserter = await Glossary.SDModel.GlossaryUpserter(
             context: context,
             merge: .overwrite,
-            sync: nonDestructiveSync
+            sync: makeSyncPolicy(for: selection)
         )
         return try upserter.dryRun(bundle: bundle)
     }
@@ -133,12 +131,32 @@ struct SheetImportAdapter {
         let upserter = await Glossary.SDModel.GlossaryUpserter(
             context: context,
             merge: .overwrite,
-            sync: nonDestructiveSync
+            sync: makeSyncPolicy(for: selection)
         )
         let result = try await upserter.apply(bundle: bundle)
         await Glossary.SDModel.ToastHub.shared.show(
             "용어 +\(result.terms.newCount + result.terms.updateCount), 패턴 +\(result.patterns.newCount + result.patterns.updateCount), 호칭 +\(result.markers.newCount + result.markers.updateCount) 가져왔습니다."
         )
+    }
+
+    private func makeSyncPolicy(for selection: SheetsImportViewModel.Selection) -> Glossary.SDModel.ImportSyncPolicy {
+        var policy = Glossary.SDModel.ImportSyncPolicy()
+        if selection.termTitles.isEmpty {
+            policy.removeMissingTerms = false
+        } else {
+            let prefixes = Set(selection.termTitles.map { sheetSlug(for: $0) }.filter { !$0.isEmpty })
+            policy.termDeletionFilter = { key in
+                guard let prefix = key.split(separator: ":").first else { return false }
+                return prefixes.contains(String(prefix))
+            }
+        }
+        policy.removeMissingPatterns = !selection.patternTitles.isEmpty
+        policy.removeMissingMarkers = !selection.markerTitles.isEmpty
+        return policy
+    }
+
+    private func sheetSlug(for title: String) -> String {
+        String(latinSlug(title).prefix(5))
     }
 
     private func makeBundle(urlString: String, selection: SheetsImportViewModel.Selection) async throws -> JSBundle {
