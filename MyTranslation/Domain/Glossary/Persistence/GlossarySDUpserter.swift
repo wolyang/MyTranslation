@@ -307,7 +307,14 @@ extension Glossary.SDModel {
             for js in items {
                 let uid = "\(js.source)|\(js.target)|\(js.position.rawValue)"
                 if let dst = map[uid] {
-                    if merge == .overwrite { dst.prohibitStandalone = js.prohibitStandalone }
+                    if merge == .overwrite {
+                        dst.variants = js.variants
+                        dst.prohibitStandalone = js.prohibitStandalone
+                    } else {
+                        if dst.variants.isEmpty {
+                            dst.variants = js.variants
+                        }
+                    }
                 } else {
                     let m = SDAppellationMarker(source: js.source, target: js.target, variants: js.variants, position: js.position.rawValue, prohibitStandalone: js.prohibitStandalone)
                     context.insert(m)

@@ -657,7 +657,6 @@ public final class TermMasker {
                 variantsByTarget[entry.target] = []
             }
             
-            let normalizedSources = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
             if normalizedOriginal.contains(normalizedSource) {
                 let occ = normalizedOriginal.components(separatedBy: normalizedSource).count - 1
                 if occ > 0 {

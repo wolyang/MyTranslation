@@ -101,7 +101,7 @@ struct PatternRow {
 struct AppellationRow {
     let source: String
     let target: String
-    let variants: String // 세미콜론 분리(선택)
+    let variants: String // 세미콜론 분리
     let position: String // prefix|suffix
     let prohibit: Bool
 }
