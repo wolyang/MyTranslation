@@ -192,7 +192,7 @@ struct SheetImportAdapter {
             merge: .overwrite,
             sync: makeSyncPolicy(for: selection)
         )
-        return try upserter.dryRun(bundle: bundle)
+        return try await upserter.dryRun(bundle: bundle)
     }
 
     func importData(
@@ -473,5 +473,4 @@ extension SheetImportAdapter {
     enum TermColumn { case sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask }
     enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
     enum MarkerColumn { case source, target, variants, position, prohibit }
-}
 }
