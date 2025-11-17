@@ -53,21 +53,23 @@ public final class TermMasker {
         self.contextWindow = contextWindow
     }
     
+    // ---- 유틸
+    func allOccurrences(of needle: String, in hay: String) -> [Int] {
+        guard !needle.isEmpty, !hay.isEmpty else { return [] }
+        var out: [Int] = []; var from = hay.startIndex
+        while from < hay.endIndex, let r = hay.range(of: needle, range: from..<hay.endIndex) {
+            out.append(hay.distance(from: hay.startIndex, to: r.lowerBound))
+            from = hay.index(after: r.lowerBound) // 겹치기 허용
+        }
+        return out
+    }
+    
     /// 이번 세그먼트에서 예외적으로 허용해야 하는 GlossaryEntry 배열을 리턴한다.
     public func promoteProhibitedEntries(
         in segmentText: String,
         entries: [GlossaryEntry],
         markers: [GlossaryAppellationMarker]
-    ) -> [GlossaryEntry] {// ---- 유틸
-        func allOccurrences(of needle: String, in hay: String) -> [Int] {
-            guard !needle.isEmpty, !hay.isEmpty else { return [] }
-            var out: [Int] = []; var from = hay.startIndex
-            while from < hay.endIndex, let r = hay.range(of: needle, range: from..<hay.endIndex) {
-                out.append(hay.distance(from: hay.startIndex, to: r.lowerBound))
-                from = hay.index(after: r.lowerBound) // 겹치기 허용
-            }
-            return out
-        }
+    ) -> [GlossaryEntry] {
         func slice(_ s: String, start: Int, len: Int) -> Substring {
             let st = max(0, min(start, s.count))
             let en = max(st, min(st + len, s.count))
@@ -188,9 +190,9 @@ public final class TermMasker {
                     // marker를 살리기: prefix/suffix 위치 그대로
                     switch marker.position {
                     case .prefix:
-                        compositeTarget = markerTarget + " " + baseTarget   // "상가이" 같은 패턴이 필요할 때
+                        compositeTarget = markerTarget + " " + baseTarget
                     case .suffix:
-                        compositeTarget = baseTarget + " " + markerTarget   // "가이상"
+                        compositeTarget = baseTarget + " " + markerTarget
                     }
                 } else {
                     // marker.target이 없으면 → marker는 최종 표기에서 제거
@@ -218,9 +220,11 @@ public final class TermMasker {
                     for nv in nameVariants {
                         switch marker.position {
                         case .prefix:
-                            compositeVariants.append(mv + nv)   // "상가이", "산가이"
+                            compositeVariants.append(mv + nv)
+                            compositeVariants.append(mv + " " + nv)
                         case .suffix:
-                            compositeVariants.append(nv + mv)   // "가이상", "가이산"
+                            compositeVariants.append(nv + mv)
+                            compositeVariants.append(nv + " " + mv)
                         }
                     }
                 }
@@ -253,7 +257,6 @@ public final class TermMasker {
         }
 
         let sorted = entries.sorted { $0.source.count > $1.source.count }
-        
         var out = text
         var tags: [String] = []
         var locks: [String: LockInfo] = [:]
@@ -309,6 +312,13 @@ public final class TermMasker {
                 endsWithRieul: r,
                 isAppellation: e.isAppellation
             )
+        }
+        print("[\(segment.id)] \(text)\nlocks: \(locks)")
+        if segment.id == "6fe649a90d58421b714fff75be638186a68fc481" {
+            let containXD = entries.contains { e in
+                e.source == "艾空"
+            }
+            print("entries contains 艾空: \(containXD)")
         }
 
         // (5) 토큰 좌우 문장부호 인접 시 공백 삽입
@@ -604,6 +614,7 @@ public final class TermMasker {
     struct NameGlossary {
         let target: String
         let variants: [String]
+        let expectedCount: Int   // 원문에서 이 이름이 등장한 횟수
     }
 
     /// 원문에 등장한 인물 용어만 선별하여 정규화용 이름 정보를 생성한다.
@@ -619,10 +630,12 @@ public final class TermMasker {
         let standaloneEntries = entries.filter { !$0.prohibitStandalone }
         let promotedEntries = promoteProhibitedEntries(in: original, entries: entries, markers: markers)
         let withMarkerEntries = makeCompositeAppellationTerms(markers: markers, entries: entries)
-        let allowedEntries = standaloneEntries + promotedEntries + withMarkerEntries
+        var allowedEntries = standaloneEntries + promotedEntries + withMarkerEntries
+        allowedEntries = filterBySourceOcc(normalizedOriginal, allowedEntries)
 
         var variantsByTarget: [String: [String]] = [:]
         var seenVariantKeysByTarget: [String: Set<String>] = [:]
+        var expectedCountsByTarget: [String: Int] = [:]
 
         for entry in allowedEntries {
             guard !entry.target.isEmpty else { continue }
@@ -643,13 +656,91 @@ public final class TermMasker {
             } else if variantsByTarget[entry.target] == nil {
                 variantsByTarget[entry.target] = []
             }
+            
+            let normalizedSources = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
+            if normalizedOriginal.contains(normalizedSource) {
+                let occ = normalizedOriginal.components(separatedBy: normalizedSource).count - 1
+                if occ > 0 {
+                    expectedCountsByTarget[entry.target, default: 0] += occ
+                }
+            }
         }
 
         guard variantsByTarget.isEmpty == false else { return [] }
 
         return variantsByTarget.map { target, variants in
-            NameGlossary(target: target, variants: variants)
+            (target: target, variants: variants, count: expectedCountsByTarget[target] ?? 0)
+        }.sorted { lhs, rhs in
+            if lhs.count != rhs.count { return lhs.count > rhs.count }
+            return lhs.target < rhs.target
+        }.map { NameGlossary(target: $0.target, variants: $0.variants, expectedCount: $0.count) }
+    }
+    
+    /// 실제 등장 위치를 기준으로, 긴 용어에 완전히 덮이는 짧은 용어는 이 세그먼트에선 제외
+    private func filterBySourceOcc(_ normalizedOriginal: String, _ allowedEntries: [GlossaryEntry]) -> [GlossaryEntry] {
+        struct SourceOcc {
+            let entry: GlossaryEntry
+            let normSource: String
+            let length: Int
+            let positions: [Int]
         }
+
+        // 1) 이 세그먼트에서 실제로 등장한 용어만 모으기
+        var occList: [SourceOcc] = []
+        for e in allowedEntries {
+            guard !e.target.isEmpty else { continue }
+            let normSource = e.source.precomposedStringWithCompatibilityMapping.lowercased()
+            let positions = allOccurrences(of: normSource, in: normalizedOriginal)
+            guard !positions.isEmpty else { continue }   // 이 세그먼트엔 안 나옴
+            occList.append(SourceOcc(entry: e, normSource: normSource, length: normSource.count, positions: positions))
+        }
+
+        guard occList.isEmpty == false else { return [] }
+
+        // 2) 각 용어가 “독립적으로”도 쓰였는지 검사
+        var keepFlags = Array(repeating: true, count: occList.count)
+
+        for i in 0..<occList.count {
+            let short = occList[i]
+            var hasIndependentUse = false
+
+            for p in short.positions {
+                let start = p
+                let end   = p + short.length
+
+                var coveredByLonger = false
+                for j in 0..<occList.count where j != i {
+                    let long = occList[j]
+                    guard long.length > short.length else { continue }
+
+                    for q in long.positions {
+                        let longStart = q
+                        let longEnd   = q + long.length
+                        if longStart <= start && end <= longEnd {
+                            coveredByLonger = true
+                            break
+                        }
+                    }
+                    if coveredByLonger { break }
+                }
+
+                if coveredByLonger == false {
+                    // 이 위치는 어떤 더 긴 용어에도 완전히 포함되지 않음 → 독립적 사용 있음
+                    hasIndependentUse = true
+                    break
+                }
+            }
+
+            if hasIndependentUse == false {
+                // 모든 등장 위치가 항상 더 긴 용어 안에만 있음 → 이 세그먼트에서는 제외
+                keepFlags[i] = false
+            }
+        }
+
+        // 3) 최종적으로 이 세그먼트에서 사용할 엔트리 집합
+        let filteredEntries: [GlossaryEntry] = occList.enumerated()
+            .compactMap { idx, s in keepFlags[idx] ? s.entry : nil }
+        return filteredEntries
     }
     
     struct JosaPair {
@@ -668,6 +759,7 @@ public final class TermMasker {
         .init(noBatchim: "랑",   withBatchim: "이랑", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
         .init(noBatchim: "로",   withBatchim: "으로", rieulException: true,  prefersWithBatchimWhenAuxAttached: true),
         .init(noBatchim: "라",   withBatchim: "이라", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
+        .init(noBatchim: "였",   withBatchim: "이었", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
         .init(noBatchim: "라고", withBatchim: "이라고", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
         .init(noBatchim: "라서", withBatchim: "이라서", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
         .init(noBatchim: "라면", withBatchim: "이라면", rieulException: false, prefersWithBatchimWhenAuxAttached: false),
@@ -1054,6 +1146,8 @@ public final class TermMasker {
 
         let nameAlts: [String] = (mode == .tokensOnly) ? [] :
             names.flatMap { [$0.target] + $0.variants }.map(esc)
+        // 이름 정규화 분포 조정을 위한 사용 횟수 state
+        var nameUsage: [String: Int] = [:]
 
         let entityAlts = (tokenAlts + nameAlts)
             .sorted { $0.count > $1.count }          // ★ 긴 것 우선
@@ -1104,10 +1198,13 @@ public final class TermMasker {
             let entity  = ns.substring(with: m.g1)
             let spacing = ns.substring(with: m.g2)
             let josa    = ns.substring(with: m.g3)
-
             let (canon, chosen) = resolveEntityAndJosa(
-                nameText: entity, josaCandidate: josa,
-                locksByToken: locksByToken, names: names, mode: mode
+                nameText: entity,
+                josaCandidate: josa,
+                locksByToken: locksByToken,
+                names: names,
+                mode: mode,
+                nameUsage: &nameUsage
             )
             out = ns.replacingCharacters(in: m.whole, with: canon + spacing + chosen)
         }
@@ -1137,7 +1234,8 @@ public final class TermMasker {
 
             let (canon, chosen) = resolveEntityAndJosa(
                 nameText: name, josaCandidate: nil,
-                locksByToken: locksByToken, names: names, mode: mode
+                locksByToken: locksByToken, names: names, mode: mode,
+                nameUsage: &nameUsage
             )
 
             // prefix 캡처가 없으므로, 바로 엔티티 범위 전체를 교체
@@ -1152,7 +1250,8 @@ public final class TermMasker {
         josaCandidate: String?,
         locksByToken: [String: LockInfo],
         names: [NameGlossary],
-        mode: EntityMode
+        mode: EntityMode,
+        nameUsage: inout [String: Int]
     ) -> (canon: String, josa: String) {
 //        print("[RESOLVE] nameText='\(nameText)' josaCand='\(String(describing: josaCandidate))' mode=\(mode)")
         if mode != .namesOnly, let info = locksByToken[nameText] {
@@ -1162,7 +1261,7 @@ public final class TermMasker {
             return (nameText, j)
         } else {
             // 이름: canonical 통일 + canonical 받침 기준으로 조사 재계산
-            let canon = canonicalFor(nameText, entries: names)
+            let canon = canonicalFor(nameText, entries: names, nameUsage: &nameUsage)
             let (has, rieul) = hangulFinalJongInfo(canon)
 //            print("[RESOLVE] canon='\(canon)' hasBatchim=\(has) rieul=\(rieul)")
             let j = chooseJosa(for: josaCandidate, baseHasBatchim: has, baseIsRieul: rieul)
@@ -1171,13 +1270,52 @@ public final class TermMasker {
     }
 
     // 이름 매핑
-    private func canonicalFor(_ matched: String, entries: [NameGlossary]) -> String {
+    private func canonicalFor(_ matched: String, entries: [NameGlossary], nameUsage: inout [String: Int]) -> String {
         let key = normKey(matched)
-        for e in entries {
-            if normKey(e.target) == key { return e.target }
-            for v in e.variants { if normKey(v) == key { return e.target } }
+        
+        if let direct = entries.first(where: { normKey($0.target) == key }) {
+            let t = direct.target
+            nameUsage[t, default: 0] += 1
+            return t
         }
-        return matched
+        
+        var candidates: [NameGlossary] = []
+        for e in entries {
+            for v in e.variants {
+                if normKey(v) == key {
+                    candidates.append(e)
+                    break
+                }
+            }
+        }
+        
+        guard !candidates.isEmpty else { return matched }
+        
+        if candidates.count == 1 {
+            let t = candidates[0].target
+            nameUsage[t, default: 0] += 1
+            return t
+        }
+        
+        let chosen = candidates.min { lhs, rhs in
+            let usedL = nameUsage[lhs.target] ?? 0
+            let usedR = nameUsage[rhs.target] ?? 0
+            let expL = max(lhs.expectedCount, 1)
+            let expR = max(rhs.expectedCount, 1)
+
+            let ratioL = Double(usedL) / Double(expL)
+            let ratioR = Double(usedR) / Double(expR)
+            
+            if ratioL == ratioR {
+                // 비율이 같으면 target 문자열 사전순으로 안정화
+                return lhs.target < rhs.target
+            }
+            return ratioL < ratioR
+        }!
+        
+        let t = chosen.target
+        nameUsage[t, default: 0] += 1
+        return t
     }
 }
 

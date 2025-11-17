@@ -58,7 +58,7 @@ public struct RecallOptions: Sendable {
     
     public var enableUnigramRecall: Bool = true           // 1-gram도 조회
     public var unigramScripts: Set<ScriptKind> = [.cjk]   // 1-gram은 CJK만
-    public var maxDistinctUnigrams: Int = 256             // 과리콜 방지 상한
+    public var maxDistinctUnigrams: Int = 512             // 과리콜 방지 상한
     public init() {}
 }
 
@@ -101,7 +101,7 @@ extension Glossary {
             for h in hits {
                 guard let owner = acBundle.pidToOwner[h.pid] else { continue }
                 matchedSourcesByKey[owner.termKey, default: []].insert(acBundle.sources[h.pid])
-                /*if !owner.prohibitStandalone { */matchedStandaloneByKey.insert(owner.termKey) /*}*/
+                matchedStandaloneByKey.insert(owner.termKey)
             }
             if matchedSourcesByKey.isEmpty { return ([], []) }
 
@@ -124,10 +124,19 @@ extension Glossary {
 
             // 6) 패턴 조합 엔트리
             let patterns = try Store.fetchPatterns(ctx: context)
-            let composed = try Composer.composeEntriesForMatched(pageText: pageText,
+            var composed = try Composer.composeEntriesForMatched(pageText: pageText,
                                                                  patterns: patterns,
                                                                  termsByKey: termByKey,
                                                                  matchedSourcesByKey: matchedSourcesByKey)
+            // 단독 엔트리의 source와 겹치는 조합 엔트리를 제외
+            composed = composed.filter { c in
+                if c.source == "泰迦" {
+                    print("entries.map({ $0.source }).contains(c.source): \(entries.map({ $0.source }).contains(c.source))")
+                }
+                return !entries.map({ $0.source }).contains(c.source)
+            }
+            print("composed.contains 泰迦 : \(composed.contains(where: { $0.source == "泰迦" }))")
+            
             entries.append(contentsOf: composed)
             
             // 7) 호칭 마커
@@ -147,10 +156,10 @@ extension Glossary {
                         entries.append(GlossaryEntry(
                             source: marker.source,
                             target: marker.target,
-                            variants: [],
+                            variants: Set(marker.variants),
                             preMask: false,
                             isAppellation: true,
-                            prohibitStandalone: true,
+                            prohibitStandalone: false,
                             origin: .markerStandalone(markerId: marker.uid)))
                     }
                 }
