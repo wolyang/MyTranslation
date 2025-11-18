@@ -59,19 +59,17 @@ struct TermEditorView: View {
     @ViewBuilder
     private var generalForm: some View {
         Section("원문") {
-            sourceEditor(
+            sourceField(
                 title: "허용 원문",
                 text: $viewModel.generalDraft.sourcesOK,
-                instruction: "단독 번역을 허용할 원문을 한 줄에 하나씩 입력하세요.",
-                accessibilityLabel: "허용 원문",
-                minHeight: 64
+                help: "세미콜론(;)으로 구분해 단독 번역을 허용할 원문을 입력하세요.",
+                accessibilityLabel: "허용 원문"
             )
-            sourceEditor(
+            sourceField(
                 title: "금지 원문",
                 text: $viewModel.generalDraft.sourcesProhibit,
-                instruction: "단독 번역을 금지할 원문을 한 줄에 하나씩 입력하세요.",
-                accessibilityLabel: "금지 원문",
-                minHeight: 64
+                help: "세미콜론(;)으로 구분해 단독 번역을 금지할 원문을 입력하세요.",
+                accessibilityLabel: "금지 원문"
             )
         }
         Section("번역") {
@@ -137,19 +135,17 @@ struct TermEditorView: View {
                         help: "필요하다면 역할 이름을 직접 입력하세요."
                     )
                 }
-                sourceEditor(
+                sourceField(
                     title: "허용 원문",
                     text: $draft.sourcesOK,
-                    instruction: "단독 번역을 허용할 원문을 한 줄에 하나씩 입력하세요.",
-                    accessibilityLabel: "허용 원문",
-                    minHeight: 60
+                    help: "세미콜론(;)으로 구분해 단독 번역을 허용할 원문을 입력하세요.",
+                    accessibilityLabel: "허용 원문"
                 )
-                sourceEditor(
+                sourceField(
                     title: "금지 원문",
                     text: $draft.sourcesProhibit,
-                    instruction: "단독 번역을 금지할 원문을 한 줄에 하나씩 입력하세요.",
-                    accessibilityLabel: "금지 원문",
-                    minHeight: 60
+                    help: "세미콜론(;)으로 구분해 단독 번역을 금지할 원문을 입력하세요.",
+                    accessibilityLabel: "금지 원문"
                 )
                 formTextField("번역", text: $draft.target)
                 formTextField(
@@ -168,23 +164,22 @@ struct TermEditorView: View {
         }
     }
 
-    private func sourceEditor(
+    private func sourceField(
         title: String,
         text: Binding<String>,
-        instruction: String,
-        accessibilityLabel: String,
-        minHeight: CGFloat
+        help: String,
+        accessibilityLabel: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.subheadline)
                 .fontWeight(.semibold)
-            Text(instruction)
+            TextField("", text: text)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(accessibilityLabel)
+            Text(help)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            TextEditor(text: text)
-                .frame(minHeight: minHeight)
-                .accessibilityLabel(accessibilityLabel)
         }
     }
 

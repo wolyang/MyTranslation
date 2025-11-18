@@ -2,10 +2,17 @@ import SwiftUI
 
 struct AppellationListView: View {
     @Bindable var viewModel: GlossaryHomeViewModel
+    let onCreateMarker: () -> Void
+    let onEditMarker: (GlossaryHomeViewModel.AppellationMarkerRow) -> Void
 
     var body: some View {
         List(viewModel.markers) { marker in
-            AppellationRowView(marker: marker)
+            Button {
+                onEditMarker(marker)
+            } label: {
+                AppellationRowView(marker: marker)
+            }
+            .buttonStyle(.plain)
         }
         .listStyle(.insetGrouped)
         .overlay {
@@ -18,6 +25,11 @@ struct AppellationListView: View {
             }
         }
         .navigationTitle("호칭")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("새 호칭", action: onCreateMarker)
+            }
+        }
         .task { viewModel.load() }
     }
 }
@@ -36,6 +48,13 @@ private struct AppellationRowView: View {
                 Text(marker.target)
                     .font(.headline)
                 Spacer()
+            }
+            if !marker.variants.isEmpty {
+                Text(marker.variants.joined(separator: "; "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             HStack(spacing: 8) {
                 label(text: positionLabel, systemImage: "textformat")
@@ -69,6 +88,6 @@ private struct AppellationRowView: View {
     let vm = GlossaryHomeViewModel(context: context)
     Task { @MainActor in await vm.reloadAll() }
     return NavigationStack {
-        AppellationListView(viewModel: vm)
+        AppellationListView(viewModel: vm, onCreateMarker: {}, onEditMarker: { _ in })
     }
 }

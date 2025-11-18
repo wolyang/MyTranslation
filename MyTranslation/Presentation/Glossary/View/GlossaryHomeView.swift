@@ -193,10 +193,19 @@ private struct TermRowView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(primaryText)
                 .font(.headline)
+            if !row.variants.isEmpty {
+                Text(row.variants.joined(separator: "; "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             if !row.primarySources.isEmpty {
                 Text(row.primarySources.joined(separator: ", "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             if !row.tags.isEmpty {
                 Text(row.tags.joined(separator: ", "))
