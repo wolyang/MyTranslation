@@ -24,11 +24,11 @@ final class TermEditorViewModel {
         }
 
         var okSources: [String] {
-            sourcesOK.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            RoleDraft.splitSources(from: sourcesOK)
         }
 
         var ngSources: [String] {
-            sourcesProhibit.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            RoleDraft.splitSources(from: sourcesProhibit)
         }
 
         var variantArray: [String] {
@@ -37,6 +37,11 @@ final class TermEditorViewModel {
 
         var tagArray: [String] {
             tags.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+        private static func splitSources(from text: String) -> [String] {
+            text.split(whereSeparator: { $0 == ";" || $0 == "\n" })
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
         }
     }
 
@@ -200,8 +205,8 @@ final class TermEditorViewModel {
             mode = .general
             generalDraft = RoleDraft(
                 roleName: "",
-                sourcesOK: term.sources.filter { !$0.prohibitStandalone }.map { $0.text }.joined(separator: "\n"),
-                sourcesProhibit: term.sources.filter { $0.prohibitStandalone }.map { $0.text }.joined(separator: "\n"),
+                sourcesOK: term.sources.filter { !$0.prohibitStandalone }.map { $0.text }.joined(separator: ";"),
+                sourcesProhibit: term.sources.filter { $0.prohibitStandalone }.map { $0.text }.joined(separator: ";"),
                 target: term.target,
                 variants: term.variants.joined(separator: ";"),
                 tags: term.termTagLinks.map { $0.tag.name }.joined(separator: ";"),

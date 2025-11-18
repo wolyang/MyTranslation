@@ -72,6 +72,7 @@ final class GlossaryHomeViewModel {
         let target: String
         let position: String
         let prohibitStandalone: Bool
+        let variants: [String]
     }
     var searchText: String = "" { didSet { applyFilters() } }
     var selectedTagNames: Set<String> = [] { didSet { applyFilters() } }
@@ -300,7 +301,8 @@ final class GlossaryHomeViewModel {
                     source: marker.source,
                     target: marker.target,
                     position: marker.position,
-                    prohibitStandalone: marker.prohibitStandalone
+                    prohibitStandalone: marker.prohibitStandalone,
+                    variants: marker.variants
                 )
             }
     }
