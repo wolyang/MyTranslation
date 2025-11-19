@@ -10,7 +10,7 @@ final class SheetsImportViewModel {
     struct Tab: Identifiable, Hashable {
         let id = UUID()
         let title: String
-        enum Kind: String, Codable { case term, pattern, marker }
+        enum Kind: String, Codable { case term, pattern }
     }
 
     let context: ModelContext
@@ -23,7 +23,6 @@ final class SheetsImportViewModel {
     var availableTabs: [Tab] = []
     var selectedTermTabs: Set<UUID> = []
     var selectedPatternTabs: Set<UUID> = []
-    var selectedMarkerTabs: Set<UUID> = []
     var dryRunReport: Glossary.SDModel.ImportDryRunReport? = nil
     var errorMessage: String?
     var isProcessing: Bool = false
@@ -87,7 +86,6 @@ final class SheetsImportViewModel {
     struct Selection {
         let termTitles: [String]
         let patternTitles: [String]
-        let markerTitles: [String]
         let applyDeletions: Bool
     }
 
@@ -95,7 +93,6 @@ final class SheetsImportViewModel {
         Selection(
             termTitles: titles(for: selectedTermTabs),
             patternTitles: titles(for: selectedPatternTabs),
-            markerTitles: titles(for: selectedMarkerTabs),
             applyDeletions: applyDeletions
         )
     }
@@ -111,13 +108,11 @@ final class SheetsImportViewModel {
     private func restoreSelectionsFromDefaults() {
         selectedTermTabs.removeAll()
         selectedPatternTabs.removeAll()
-        selectedMarkerTabs.removeAll()
         for tab in availableTabs {
             guard let kind = savedTabKinds[tab.title] else { continue }
             switch kind {
             case .term: selectedTermTabs.insert(tab.id)
             case .pattern: selectedPatternTabs.insert(tab.id)
-            case .marker: selectedMarkerTabs.insert(tab.id)
             }
         }
     }
@@ -134,12 +129,10 @@ final class SheetsImportViewModel {
     private func updateSelection(for id: UUID, to newValue: Tab.Kind?) {
         selectedTermTabs.remove(id)
         selectedPatternTabs.remove(id)
-        selectedMarkerTabs.remove(id)
         if let kind = newValue {
             switch kind {
             case .term: selectedTermTabs.insert(id)
             case .pattern: selectedPatternTabs.insert(id)
-            case .marker: selectedMarkerTabs.insert(id)
             }
         }
         guard let title = title(for: id) else { return }
@@ -211,7 +204,7 @@ struct SheetImportAdapter {
         )
         let result = try await upserter.apply(bundle: bundle)
         await Glossary.SDModel.ToastHub.shared.show(
-            "용어 +\(result.terms.newCount + result.terms.updateCount), 패턴 +\(result.patterns.newCount + result.patterns.updateCount), 호칭 +\(result.markers.newCount + result.markers.updateCount) 가져왔습니다."
+            "용어 +\(result.terms.newCount + result.terms.updateCount), 패턴 +\(result.patterns.newCount + result.patterns.updateCount) 가져왔습니다."
         )
     }
 
@@ -220,17 +213,15 @@ struct SheetImportAdapter {
         if selection.applyDeletions {
             policy.removeMissingTerms = !selection.termTitles.isEmpty
             policy.removeMissingPatterns = !selection.patternTitles.isEmpty
-            policy.removeMissingMarkers = !selection.markerTitles.isEmpty
         } else {
             policy.removeMissingTerms = false
             policy.removeMissingPatterns = false
-            policy.removeMissingMarkers = false
         }
         return policy
     }
 
     private func makeBundle(urlString: String, selection: SheetsImportViewModel.Selection) async throws -> JSBundle {
-        guard !selection.termTitles.isEmpty || !selection.patternTitles.isEmpty || !selection.markerTitles.isEmpty else {
+        guard !selection.termTitles.isEmpty || !selection.patternTitles.isEmpty else {
             throw ImportError.emptySelection
         }
 
@@ -238,7 +229,6 @@ struct SheetImportAdapter {
 
         var termSheets: [String: [TermRow]] = [:]
         var patternRows: [PatternRow] = []
-        var markerRows: [AppellationRow] = []
 
         let termMapping: [String: TermColumn] = [
             "key": .key,
@@ -290,15 +280,6 @@ struct SheetImportAdapter {
             "need_pair_check": .needPairCheck
         ]
 
-        let markerMapping: [String: MarkerColumn] = [
-            "source": .source,
-            "target": .target,
-            "variants": .variants,
-            "position": .position,
-            "prohibit": .prohibit,
-            "prohibit_standalone": .prohibit
-        ]
-
         for title in selection.termTitles {
             let rows = try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
             guard !rows.isEmpty else { continue }
@@ -342,7 +323,7 @@ struct SheetImportAdapter {
                     roles: header.value(in: row, for: .roles) ?? "",
                     grouping: header.value(in: row, for: .grouping) ?? "",
                     groupLabel: header.value(in: row, for: .groupLabel) ?? "",
-                    sourceJoiners: header.value(in: row, for: .sourceJoiners) ?? "",
+                    sourceJoiners: header.value(in: row, for: .sourceJoiners, trim: false) ?? "",
                     sourceTemplates: header.value(in: row, for: .sourceTemplates) ?? "",
                     targetTemplates: header.value(in: row, for: .targetTemplates) ?? "",
                     left: header.value(in: row, for: .left) ?? "",
@@ -359,31 +340,11 @@ struct SheetImportAdapter {
             patternRows.append(contentsOf: entries)
         }
 
-        for title in selection.markerTitles {
-            let rows = try await Glossary.Sheet.fetchRows(spreadsheetId: spreadsheetId, sheetTitle: title)
-            guard !rows.isEmpty else { continue }
-            let headerRow = rows[0]
-            guard let header = HeaderMap<MarkerColumn>(header: headerRow, mapping: markerMapping) else {
-                throw ImportError.malformedSheet(title)
-            }
-            let entries = rows.dropFirst().compactMap { row -> AppellationRow? in
-                guard let source = header.value(in: row, for: .source), !source.isEmpty else { return nil }
-                return AppellationRow(
-                    source: source,
-                    target: header.value(in: row, for: .target) ?? "",
-                    variants: header.value(in: row, for: .variants) ?? "",
-                    position: header.value(in: row, for: .position) ?? "",
-                    prohibit: parseBool(header.value(in: row, for: .prohibit))
-                )
-            }
-            markerRows.append(contentsOf: entries)
-        }
-
-        guard !termSheets.isEmpty || !patternRows.isEmpty || !markerRows.isEmpty else {
+        guard !termSheets.isEmpty || !patternRows.isEmpty else {
             throw ImportError.noRecognizedSheets
         }
 
-        return try buildGlossaryJSON(termsBySheet: termSheets, patterns: patternRows, markers: markerRows)
+        return try buildGlossaryJSON(termsBySheet: termSheets, patterns: patternRows)
     }
 
     private func resolveSpreadsheetId(urlString: String) throws -> String {
@@ -467,14 +428,14 @@ extension SheetImportAdapter {
             return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_")).lowercased()
         }
 
-        func value(in row: [String], for column: Column) -> String? {
+        func value(in row: [String], for column: Column, trim: Bool = true) -> String? {
             guard let idx = index[column], idx < row.count else { return nil }
-            let value = row[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+            var value = row[idx]
+            if trim { value = value.trimmingCharacters(in: .whitespacesAndNewlines) }
             return value.isEmpty ? nil : value
         }
     }
 
     enum TermColumn { case key, sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask }
     enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
-    enum MarkerColumn { case source, target, variants, position, prohibit }
 }

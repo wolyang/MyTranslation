@@ -58,7 +58,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         print("[Router] Start translateStream")
         let cancelBag = RouterCancellationCenter.shared.bag(for: runID)
 
-        let (glossaryEntries, glossaryAppellationMarkers) = await fetchGlossaryEntries(fullText: segments.map({ $0.originalText
+        let glossaryEntries = await fetchGlossaryEntries(fullText: segments.map({ $0.originalText
         }).joined(), shouldApply: options.applyGlossary)
 
         let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
@@ -115,7 +115,6 @@ final class DefaultTranslationRouter: TranslationRouter {
             let maskingContext = prepareMaskingContext(
                 from: pendingSegments,
                 glossaryEntries: glossaryEntries,
-                markers: glossaryAppellationMarkers,
                 engine: engine,
                 termMasker: termMasker
             )
@@ -231,9 +230,9 @@ final class DefaultTranslationRouter: TranslationRouter {
     }
 
     /// 용어집 사용 여부에 따라 최신 용어집 스냅샷을 가져온다.
-    private func fetchGlossaryEntries(fullText: String, shouldApply: Bool) async -> (entries: [GlossaryEntry], markers: [GlossaryAppellationMarker]) {
-        guard shouldApply else { return ([], []) }
-        return await MainActor.run { (try? glossaryService.buildEntries(for: fullText)) ?? ([], []) }
+    private func fetchGlossaryEntries(fullText: String, shouldApply: Bool) async -> [GlossaryEntry] {
+        guard shouldApply else { return [] }
+        return await MainActor.run { (try? glossaryService.buildEntries(for: fullText)) ?? [] }
     }
 
     /// 캐시 적중 시 최종 페이로드를 만들고, 적중하지 않으면 nil을 반환한다.
@@ -261,7 +260,6 @@ final class DefaultTranslationRouter: TranslationRouter {
     private func prepareMaskingContext(
         from segments: [Segment],
         glossaryEntries: [GlossaryEntry],
-        markers: [GlossaryAppellationMarker],
         engine: TranslationEngine,
         termMasker: TermMasker
     ) -> MaskingContext {
@@ -281,7 +279,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         let nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = {
             return maskedPacks.map { pack in
-                termMasker.makeNameGlossaries(forOriginalText: pack.seg.originalText, entries: glossaryEntries, markers: markers)
+                termMasker.makeNameGlossaries(forOriginalText: pack.seg.originalText, entries: glossaryEntries)
             }
         }()
 

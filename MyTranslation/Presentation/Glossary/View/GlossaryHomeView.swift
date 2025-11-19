@@ -274,7 +274,6 @@ enum PreviewData {
                  Glossary.SDModel.SDTermTagLink.self,
                  Glossary.SDModel.SDPattern.self,
                  Glossary.SDModel.SDPatternMeta.self,
-                 Glossary.SDModel.SDAppellationMarker.self,
             configurations: config
         )
         seed(into: container.mainContext)
@@ -345,9 +344,6 @@ enum PreviewData {
         context.insert(givenTagLink)
         family.termTagLinks = [familyTagLink]
         given.termTagLinks = [givenTagLink]
-
-        let marker = Glossary.SDModel.SDAppellationMarker(source: "Mr.", target: "홍 선생", variants: [], position: "prefix", prohibitStandalone: true)
-        context.insert(marker)
 
         try? context.save()
     }

@@ -8,7 +8,7 @@ struct MyTranslateApp: App {
     @StateObject private var container: AppContainer
 
     init() {
-        let modelContainer = try! ModelContainer(for: Glossary.SDModel.SDTerm.self, Glossary.SDModel.SDSource.self, Glossary.SDModel.SDSourceIndex.self, Glossary.SDModel.SDComponent.self, Glossary.SDModel.SDGroup.self, Glossary.SDModel.SDComponentGroup.self, Glossary.SDModel.SDTag.self, Glossary.SDModel.SDTermTagLink.self, Glossary.SDModel.SDPattern.self, Glossary.SDModel.SDPatternMeta.self, Glossary.SDModel.SDAppellationMarker.self,
+        let modelContainer = try! ModelContainer(for: Glossary.SDModel.SDTerm.self, Glossary.SDModel.SDSource.self, Glossary.SDModel.SDSourceIndex.self, Glossary.SDModel.SDComponent.self, Glossary.SDModel.SDGroup.self, Glossary.SDModel.SDComponentGroup.self, Glossary.SDModel.SDTag.self, Glossary.SDModel.SDTermTagLink.self, Glossary.SDModel.SDPattern.self, Glossary.SDModel.SDPatternMeta.self,
                                             configurations: ModelConfiguration(isStoredInMemoryOnly: false))
 
         _container = StateObject(wrappedValue: AppContainer(context: modelContainer.mainContext, useOnDeviceFM: true, fmConfig:

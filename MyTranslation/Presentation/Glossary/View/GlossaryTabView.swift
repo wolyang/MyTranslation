@@ -26,7 +26,6 @@ struct GlossaryTabView: View {
             Picker("섹션", selection: $selection) {
                 Text("용어").tag(Tab.terms)
                 Text("패턴").tag(Tab.patterns)
-                Text("호칭").tag(Tab.appellations)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
@@ -51,14 +50,6 @@ struct GlossaryTabView: View {
                             viewModel: homeViewModel,
                             onCreatePattern: { presentPatternEditor(nil) },
                             onEditPattern: { presentPatternEditor($0.id) }
-                        )
-                    }
-                case .appellations:
-                    NavigationStack {
-                        AppellationListView(
-                            viewModel: homeViewModel,
-                            onCreateMarker: { presentAppellationEditor(nil) },
-                            onEditMarker: { presentAppellationEditor($0.id) }
                         )
                     }
                 }
@@ -89,37 +80,24 @@ struct GlossaryTabView: View {
         }
     }
 
-    private func presentAppellationEditor(_ id: String?) {
-        do {
-            let viewModel = try AppellationEditorViewModel(context: modelContext, markerID: id)
-            activeSheet = ActiveSheet.appellation(viewModel)
-        } catch {
-            print("AppellationEditor init error: \(error)")
-        }
-    }
-
     enum Tab: Hashable {
         case terms
         case patterns
-        case appellations
     }
 
     enum ActiveSheet: Identifiable {
         case term(TermEditorViewModel, UUID)
         case pattern(PatternEditorViewModel, UUID)
-        case appellation(AppellationEditorViewModel, UUID)
         case importSheet(UUID)
 
         static func term(_ viewModel: TermEditorViewModel) -> ActiveSheet { .term(viewModel, UUID()) }
         static func pattern(_ viewModel: PatternEditorViewModel) -> ActiveSheet { .pattern(viewModel, UUID()) }
-        static func appellation(_ viewModel: AppellationEditorViewModel) -> ActiveSheet { .appellation(viewModel, UUID()) }
         static func importSheet() -> ActiveSheet { .importSheet(UUID()) }
 
         var id: UUID {
             switch self {
             case .term(_, let id): return id
             case .pattern(_, let id): return id
-            case .appellation(_, let id): return id
             case .importSheet(let id): return id
             }
         }

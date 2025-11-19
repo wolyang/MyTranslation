@@ -71,21 +71,7 @@ public struct JSPattern: Codable, Hashable {
     public var needPairCheck: Bool
 }
 
-public struct JSAppellationMarker: Codable, Hashable {
-    public var source: String
-    public var target: String
-    public var variants: [String]
-    public var position: Position
-    public var prohibitStandalone: Bool
-    
-    public enum Position: String, Codable, Hashable {
-        case prefix
-        case suffix
-    }
-}
-
 struct JSBundle: Codable, Hashable {
     var terms: [JSTerm]
     var patterns: [JSPattern]
-    var markers: [JSAppellationMarker]
 }

@@ -11,7 +11,6 @@ struct SheetsImportPreviewView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     summaryRow(title: "용어", bucket: report.terms)
                     summaryRow(title: "패턴", bucket: report.patterns)
-                    summaryRow(title: "호칭", bucket: report.markers)
                 }
                 .padding()
             } else {

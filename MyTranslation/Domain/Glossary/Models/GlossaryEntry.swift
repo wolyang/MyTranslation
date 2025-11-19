@@ -20,32 +20,8 @@ public struct GlossaryEntry: Sendable, Hashable {
     public enum Origin: Sendable, Hashable {
         case termStandalone(termKey: String)
         case composer(composerId: String, leftKey: String, rightKey: String?, needPairCheck: Bool)
-        case markerStandalone(markerId: String)
-        case termWithMarker(termKey: String, markerId: String)
     }
     public var origin: Origin
-}
-
-public struct GlossaryAppellationMarker: Sendable, Hashable {
-    public enum Position: String, Sendable, Hashable { case prefix, suffix }
-    public let id: String
-    public let source: String
-    public let position: Position
-    // (메타) 마커가 단독일 때의 번역 도착어 — 승격 판단에는 사용하지 않음
-    public let target: String?
-    public let variants: [String]
-    /// (메타) 마커 자체의 단독 사용 금지 여부 — 승격 판단에는 사용하지 않음
-    public let prohibitStandalone: Bool
-
-    public init(id: String, source: String, rawPosition: String,
-                target: String?, variants: [String], prohibitStandalone: Bool) {
-        self.id = id
-        self.source = source
-        self.position = Position(rawValue: rawPosition) ?? .suffix
-        self.target = target
-        self.variants = variants
-        self.prohibitStandalone = prohibitStandalone
-    }
 }
 
 public enum ScriptKind: Int16, Sendable { case unknown=0, hangul=1, cjk=2, latin=3, mixed=4 }
@@ -68,13 +44,16 @@ extension Glossary {
     // DI를 위한 인터페이스
     public protocol Providing {
         @MainActor
-        func buildEntries(for pageText: String) throws -> (entries: [GlossaryEntry], markers: [GlossaryAppellationMarker])
+        func buildEntries(for pageText: String) throws -> [GlossaryEntry]
     }
 
     /// Instance-based runtime that OWNS the ModelContext.
     public final class Service: Providing {
         private let context: ModelContext
         private let recallOpt: RecallOptions
+        
+        private var termByKey: Dictionary<String, Glossary.SDModel.SDTerm> = [:]
+        private var patterns: [Glossary.SDModel.SDPattern] = []
 
         public init(context: ModelContext, recallOpt: RecallOptions = .init()) {
             self.context = context
@@ -82,14 +61,16 @@ extension Glossary {
         }
 
         @MainActor
-        public func buildEntries(for pageText: String) throws -> (entries: [GlossaryEntry], markers: [GlossaryAppellationMarker]) {
+        public func buildEntries(for pageText: String) throws -> [GlossaryEntry] {
             // 1) 후보 리콜(Q-gram)
             let candidateKeys = try Recall.recallTermKeys(for: pageText, ctx: context, opt: recallOpt)
-            if candidateKeys.isEmpty { return ([], []) }
+            if candidateKeys.isEmpty { return [] }
 
             // 2) 후보 Term 로드
-            let terms = try Store.fetchTerms(keys: candidateKeys, ctx: context)
-            let termByKey = Dictionary(uniqueKeysWithValues: terms.map { ($0.key, $0) })
+            let candidateTerms = try Store.fetchTerms(keys: candidateKeys, ctx: context)
+            let oneCharTerms = try Store.fetchOneCharTerms(ctx: context)
+            let terms = candidateTerms + oneCharTerms
+            termByKey = Dictionary(uniqueKeysWithValues: terms.map { ($0.key, $0) })
 
             // 3) AC 구성 및 매치 스캔
             let acBundle = Matcher.makeACBundle(from: terms)
@@ -97,19 +78,20 @@ extension Glossary {
 
             // 4) 매치 테이블 구성
             var matchedSourcesByKey: [String: Set<String>] = [:]
-            var matchedStandaloneByKey: Set<String> = []
+            var matchedTermKey: Set<String> = []
             for h in hits {
                 guard let owner = acBundle.pidToOwner[h.pid] else { continue }
                 matchedSourcesByKey[owner.termKey, default: []].insert(acBundle.sources[h.pid])
-                matchedStandaloneByKey.insert(owner.termKey)
+                matchedTermKey.insert(owner.termKey)
             }
-            if matchedSourcesByKey.isEmpty { return ([], []) }
+            if matchedSourcesByKey.isEmpty { return [] }
 
             // 5) 단독 엔트리
             var entries: [GlossaryEntry] = []
-            for key in matchedStandaloneByKey {
-                guard let t = termByKey[key] else { continue }
+            for key in matchedTermKey {
+                guard let t = termByKey[key], let ms = matchedSourcesByKey[key] else { continue }
                 for s in t.sources {
+                    guard ms.contains(s.text) else { continue }
                     entries.append(GlossaryEntry(
                         source: s.text,
                         target: t.target,
@@ -123,58 +105,35 @@ extension Glossary {
             }
 
             // 6) 패턴 조합 엔트리
-            let patterns = try Store.fetchPatterns(ctx: context)
+            patterns = try Store.fetchPatterns(ctx: context)
             var composed = try Composer.composeEntriesForMatched(pageText: pageText,
                                                                  patterns: patterns,
                                                                  termsByKey: termByKey,
                                                                  matchedSourcesByKey: matchedSourcesByKey)
             // 단독 엔트리의 source와 겹치는 조합 엔트리를 제외
             composed = composed.filter { c in
-                if c.source == "泰迦" {
-                    print("entries.map({ $0.source }).contains(c.source): \(entries.map({ $0.source }).contains(c.source))")
-                }
                 return !entries.map({ $0.source }).contains(c.source)
             }
-            print("composed.contains 泰迦 : \(composed.contains(where: { $0.source == "泰迦" }))")
             
             entries.append(contentsOf: composed)
             
-            // 7) 호칭 마커
-            let sdMarkers = try Store.fetchMarkers(ctx: context)
-            var markers: [GlossaryAppellationMarker] = []
-            for marker in sdMarkers {
-                if pageText.contains(marker.source) {
-                    markers.append(GlossaryAppellationMarker(
-                        id: marker.uid,
-                        source: marker.source,
-                        rawPosition: marker.position,
-                        target: marker.target,
-                        variants: marker.variants,
-                        prohibitStandalone: marker.prohibitStandalone
-                    ))
-                    if !marker.prohibitStandalone {
-                        entries.append(GlossaryEntry(
-                            source: marker.source,
-                            target: marker.target,
-                            variants: Set(marker.variants),
-                            preMask: false,
-                            isAppellation: true,
-                            prohibitStandalone: false,
-                            origin: .markerStandalone(markerId: marker.uid)))
-                    }
-                }
-            }
-
             // 7) 병합
-            return (Dedup.run(entries), markers)
+            return Dedup.run(entries)
+        }
+        
+        public func refreshCompositeVariants(
+            entries: inout [GlossaryEntry],
+            forText text: String
+        ) {
+            
         }
     }
 
     // MARK: - Store (SwiftData fetches)
     enum Store {
+        typealias SDSource = Glossary.SDModel.SDSource
         typealias SDTerm = Glossary.SDModel.SDTerm
         typealias SDPattern = Glossary.SDModel.SDPattern
-        typealias SDAppellationMarker = Glossary.SDModel.SDAppellationMarker
         
         @MainActor
         static func fetchTerms(keys: [String], ctx: ModelContext) throws -> [SDTerm] {
@@ -193,10 +152,12 @@ extension Glossary {
         static func fetchPatterns(ctx: ModelContext) throws -> [SDPattern] {
             try ctx.fetch(FetchDescriptor<SDPattern>())
         }
-
+        
         @MainActor
-        static func fetchMarkers(ctx: ModelContext) throws -> [SDAppellationMarker] {
-            try ctx.fetch(FetchDescriptor<SDAppellationMarker>())
+        static func fetchOneCharTerms(ctx: ModelContext) throws -> [SDTerm] {
+            let pred = #Predicate<SDSource> { $0.text.count == 1 }
+            let oneCharSources = try ctx.fetch(FetchDescriptor<SDSource>(predicate: pred))
+            return Array(Set(oneCharSources.compactMap { $0.term }))
         }
     }
 
@@ -256,7 +217,6 @@ extension Glossary {
     // MARK: - Matcher (AC bundle & helpers)
     enum Matcher {
         typealias SDTerm = Glossary.SDModel.SDTerm
-        typealias SDAppellationMarker = Glossary.SDModel.SDAppellationMarker
         
         struct Owner { let termKey: String; let prohibitStandalone: Bool }
         struct ACBundle { let ac: AhoCorasick; let pidToOwner: [Int: Owner]; let sources: [String] }
@@ -280,7 +240,6 @@ extension Glossary {
     enum Composer {
         typealias SDTerm = Glossary.SDModel.SDTerm
         typealias SDPattern = Glossary.SDModel.SDPattern
-        typealias SDAppellationMarker = Glossary.SDModel.SDAppellationMarker
         typealias SDComponent = Glossary.SDModel.SDComponent
         
         @MainActor
@@ -299,12 +258,12 @@ extension Glossary {
                     for (lComp, rComp) in pairs {
                         let leftTerm = lComp.term
                         let rightTerm = rComp.term
-                        let srcTplIdx = lComp.srcTplIdx ?? 0
-                        let tgtTplIdx = lComp.tgtTplIdx ?? 0
+                        let srcTplIdx = lComp.srcTplIdx ?? rComp.srcTplIdx ?? 0
+                        let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
                         let srcTpl = pat.sourceTemplates[safe: srcTplIdx] ?? pat.sourceTemplates.first ?? "{L}{J}{R}"
                         let tgtTpl = pat.targetTemplates[safe: tgtTplIdx] ?? pat.targetTemplates.first ?? "{L} {R}"
                         let joiners = Util.filterJoiners(from: pat.sourceJoiners, in: pageText)
-                        let variants: [String] = Util.renderVariants(srcTpl, joiners: joiners, L: leftTerm, R: rightTerm)
+                        let variants: [String] = Util.renderVariants(srcTpl, joiners: pat.sourceJoiners, L: leftTerm, R: rightTerm)
                         for joiner in joiners {
                             let srcs = Util.renderSources(srcTpl, joiner: joiner, L: leftTerm, R: rightTerm)
                             let tgt = Util.renderTarget(tgtTpl, L: leftTerm, R: rightTerm)
@@ -364,22 +323,59 @@ extension Glossary {
 
         @MainActor
         private static func matchedPairs(for pat: SDPattern, terms: any Sequence<SDTerm>, matched: Set<String>) throws -> [(SDComponent, SDComponent)] {
-            var leftByGroup: [String:[SDComponent]] = [:]
-            var rightByGroup: [String:[SDComponent]] = [:]
+            var lefts: [SDComponent] = []
+            var rights: [SDComponent] = []
+            var hasAnyGroup = false
+
             for t in terms where matched.contains(t.key) {
                 for c in t.components where c.pattern == pat.name {
-                    let groups = c.groupLinks.map { $0.group.uid }
-                    let isLeft = pat.leftRoles.isEmpty ? true : !(Set(c.roles ?? []).isDisjoint(with: pat.leftRoles))
-                    let isRight = pat.rightRoles.isEmpty ? true : !(Set(c.roles ?? []).isDisjoint(with: pat.rightRoles))
-                    if isLeft { for g in groups { leftByGroup[g, default: []].append(c) } }
-                    if isRight { for g in groups { rightByGroup[g, default: []].append(c) } }
+                    let roles = Set(c.roles ?? [])
+                    let isLeft  = pat.leftRoles.isEmpty  || !roles.isDisjoint(with: pat.leftRoles)
+                    let isRight = pat.rightRoles.isEmpty || !roles.isDisjoint(with: pat.rightRoles)
+
+                    if !c.groupLinks.isEmpty { hasAnyGroup = true }
+
+                    if isLeft  { lefts.append(c) }
+                    if isRight { rights.append(c) }
                 }
             }
+            
+            // group이 하나도 없으면 → groupless all-pairs 매칭
+            if !hasAnyGroup {
+                var pairs: [(SDComponent, SDComponent)] = []
+                for l in lefts {
+                    for r in rights where (!pat.skipPairsIfSameTerm || l.term.key != r.term.key) {
+                        pairs.append((l, r))
+                    }
+                }
+                return pairs
+            }
+            
+            // group이 존재하면 → group 기반 매칭
+            var leftByGroup:  [String: [SDComponent]] = [:]
+            var rightByGroup: [String: [SDComponent]] = [:]
+
+            for c in lefts {
+                for g in c.groupLinks.map({ $0.group.uid }) {
+                    leftByGroup[g, default: []].append(c)
+                }
+            }
+            for c in rights {
+                for g in c.groupLinks.map({ $0.group.uid }) {
+                    rightByGroup[g, default: []].append(c)
+                }
+            }
+
             var pairs: [(SDComponent, SDComponent)] = []
             for g in leftByGroup.keys {
                 guard let Ls = leftByGroup[g], let Rs = rightByGroup[g] else { continue }
-                for l in Ls { for r in Rs where (!pat.skipPairsIfSameTerm || l.term.key != r.term.key) { pairs.append((l,r)) } }
+                for l in Ls {
+                    for r in Rs where (!pat.skipPairsIfSameTerm || l.term.key != r.term.key) {
+                        pairs.append((l, r))
+                    }
+                }
             }
+
             return pairs
         }
     }
@@ -515,7 +511,9 @@ extension Glossary {
                 let tpls: [String] = [tpl, reverseTpl]
                 var variants: [String] = []
                 for lv in lAll {
+//                    variants.append(lv)
                     for rv in rAll {
+//                        variants.append(rv)
                         for j in joiners {
                             for t in tpls {
                                 var s = t
