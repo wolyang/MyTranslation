@@ -18,20 +18,16 @@ extension Glossary.SDModel {
         struct KeyCollision: Sendable, Hashable { let key: String; let count: Int }
         let terms: Bucket
         let patterns: Bucket
-        let markers: Bucket
         let warnings: [String]
         let termKeyCollisions: [KeyCollision]
         let patternKeyCollisions: [KeyCollision]
-        let markerKeyCollisions: [KeyCollision]
     }
     
     struct ImportSyncPolicy: Sendable {
         var removeMissingTerms = true
         var removeMissingPatterns = true
-        var removeMissingMarkers = true
         var termDeletionFilter: (@Sendable (String) -> Bool)? = nil
         var patternDeletionFilter: (@Sendable (String) -> Bool)? = nil
-        var markerDeletionFilter: (@Sendable (String) -> Bool)? = nil
     }
     
     @MainActor
@@ -49,8 +45,7 @@ extension Glossary.SDModel {
             let report = try dryRun(bundle: bundle)
             try upsertTerms(bundle.terms)
             try upsertPatterns(bundle.patterns)
-            try upsertMarkers(bundle.markers)
-            if sync.removeMissingTerms || sync.removeMissingPatterns || sync.removeMissingMarkers {
+            if sync.removeMissingTerms || sync.removeMissingPatterns {
                 try deleteMissing(bundle: bundle)
                 try cleanupOrphans()
             }
@@ -63,13 +58,10 @@ extension Glossary.SDModel {
             let existingTerms = try context.fetch(FetchDescriptor<SDTerm>())
             let existingTermKeys = Set(existingTerms.map { $0.key })
             let existingPatternIds = try fetchAllKeys(SDPattern.self, key: \SDPattern.name)
-            let existingMarkerUids = try fetchAllKeys(SDAppellationMarker.self, key: \SDAppellationMarker.uid)
             let incomingTermKeys = bundle.terms.map { $0.key }
             let incomingPatternIds = bundle.patterns.map { $0.name }
-            let incomingMarkerUids = bundle.markers.map { "\($0.source)|\($0.target)|\($0.position.rawValue)" }
             let incomingTermKeySet = Set(incomingTermKeys)
             let incomingPatternIdSet = Set(incomingPatternIds)
-            let incomingMarkerUidSet = Set(incomingMarkerUids)
             let tNew = incomingTermKeySet.subtracting(existingTermKeys).count
             let tUpd = incomingTermKeySet.intersection(existingTermKeys).count
             let tDel: Int
@@ -96,19 +88,6 @@ extension Glossary.SDModel {
             } else {
                 pDel = 0
             }
-            let mNew = incomingMarkerUidSet.subtracting(existingMarkerUids).count
-            let mUpd = incomingMarkerUidSet.intersection(existingMarkerUids).count
-            let mDel: Int
-            if sync.removeMissingMarkers {
-                let candidates = existingMarkerUids.subtracting(incomingMarkerUidSet)
-                if let filter = sync.markerDeletionFilter {
-                    mDel = candidates.filter { filter($0) }.count
-                } else {
-                    mDel = candidates.count
-                }
-            } else {
-                mDel = 0
-            }
             func collisions(_ arr: [String]) -> [ImportDryRunReport.KeyCollision] {
                 var freq: [String:Int] = [:]
                 for k in arr { freq[k, default: 0] += 1 }
@@ -116,19 +95,15 @@ extension Glossary.SDModel {
             }
             let termCollisions = collisions(incomingTermKeys)
             let patternCollisions = collisions(incomingPatternIds)
-            let markerCollisions = collisions(incomingMarkerUids)
             var warns: [String] = []
             if !termCollisions.isEmpty { warns.append("Duplicate Term keys in import: \(termCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             if !patternCollisions.isEmpty { warns.append("Duplicate Pattern ids in import: \(patternCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
-            if !markerCollisions.isEmpty { warns.append("Duplicate Marker uids in import: \(markerCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             return ImportDryRunReport(
                 terms: .init(newCount: tNew, updateCount: tUpd, deleteCount: tDel),
                 patterns: .init(newCount: pNew, updateCount: pUpd, deleteCount: pDel),
-                markers: .init(newCount: mNew, updateCount: mUpd, deleteCount: mDel),
                 warnings: warns,
                 termKeyCollisions: termCollisions,
-                patternKeyCollisions: patternCollisions,
-                markerKeyCollisions: markerCollisions
+                patternKeyCollisions: patternCollisions
             )
         }
         
@@ -301,28 +276,6 @@ extension Glossary.SDModel {
             }
         }
         
-        private func upsertMarkers(_ items: [JSAppellationMarker]) throws {
-            var map: [String: SDAppellationMarker] = [:]
-            for m in try context.fetch(FetchDescriptor<SDAppellationMarker>()) { map[m.uid] = m }
-            for js in items {
-                let uid = "\(js.source)|\(js.target)|\(js.position.rawValue)"
-                if let dst = map[uid] {
-                    if merge == .overwrite {
-                        dst.variants = js.variants
-                        dst.prohibitStandalone = js.prohibitStandalone
-                    } else {
-                        if dst.variants.isEmpty {
-                            dst.variants = js.variants
-                        }
-                    }
-                } else {
-                    let m = SDAppellationMarker(source: js.source, target: js.target, variants: js.variants, position: js.position.rawValue, prohibitStandalone: js.prohibitStandalone)
-                    context.insert(m)
-                    map[uid] = m
-                }
-            }
-        }
-        
         private func fetchAllKeys<T: PersistentModel>(_ type: T.Type, key: KeyPath<T,String>) throws -> Set<String> {
             let list = try context.fetch(FetchDescriptor<T>())
             return Set(list.map { $0[keyPath: key] })
@@ -459,16 +412,6 @@ extension Glossary.SDModel {
                     for p in try context.fetch(FetchDescriptor<SDPattern>(predicate: pred)) { context.delete(p) }
                 }
             }
-            if sync.removeMissingMarkers {
-                let existing = try fetchAllKeys(SDAppellationMarker.self, key: \SDAppellationMarker.uid)
-                let incoming = Set(bundle.markers.map { "\($0.source)|\($0.target)|\($0.position.rawValue)" })
-                let candidates = existing.subtracting(incoming)
-                let filtered = sync.markerDeletionFilter.map { filter in candidates.filter { filter($0) } } ?? Array(candidates)
-                for uid in filtered {
-                    let pred = #Predicate<SDAppellationMarker> { $0.uid == uid }
-                    for m in try context.fetch(FetchDescriptor<SDAppellationMarker>(predicate: pred)) { context.delete(m) }
-                }
-            }
         }
         
         private func cleanupOrphans() throws {
@@ -500,7 +443,6 @@ extension Glossary.SDModel {
                 HStack(spacing: 16) {
                     Stat("Terms", report.terms)
                     Stat("Patterns", report.patterns)
-                    Stat("Markers", report.markers)
                 }
                 if !report.warnings.isEmpty {
                     Divider()
@@ -509,7 +451,7 @@ extension Glossary.SDModel {
                         Text("• \(w)").foregroundStyle(.orange)
                     }
                 }
-                if !(report.termKeyCollisions.isEmpty && report.patternKeyCollisions.isEmpty && report.markerKeyCollisions.isEmpty) {
+                if !(report.termKeyCollisions.isEmpty && report.patternKeyCollisions.isEmpty) {
                     Divider()
                     Text("Key Collisions").font(.headline)
                     if !report.termKeyCollisions.isEmpty {
@@ -521,12 +463,6 @@ extension Glossary.SDModel {
                     if !report.patternKeyCollisions.isEmpty {
                         Text("Patterns").font(.subheadline).padding(.top, 6)
                         ForEach(report.patternKeyCollisions.sorted(by: { $0.key < $1.key }), id: \.self) { c in
-                            Text("• \(c.key) ×\(c.count)")
-                        }
-                    }
-                    if !report.markerKeyCollisions.isEmpty {
-                        Text("Markers").font(.subheadline).padding(.top, 6)
-                        ForEach(report.markerKeyCollisions.sorted(by: { $0.key < $1.key }), id: \.self) { c in
                             Text("• \(c.key) ×\(c.count)")
                         }
                     }
@@ -566,7 +502,7 @@ extension Glossary.SDModel {
                 let upserter = GlossaryUpserter(context: context, merge: merge, sync: sync)
                 let report = try upserter.dryRun(bundle: bundle)
                 _ = try upserter.apply(bundle: bundle)
-                ToastHub.shared.show("임포트 완료: Terms +\(report.terms.newCount+report.terms.updateCount), Patterns +\(report.patterns.newCount+report.patterns.updateCount), Markers +\(report.markers.newCount+report.markers.updateCount)")
+                ToastHub.shared.show("임포트 완료: Terms +\(report.terms.newCount+report.terms.updateCount), Patterns +\(report.patterns.newCount+report.patterns.updateCount)")
             } catch {
                 ToastHub.shared.show("임포트 실패: \(error.localizedDescription)")
             }

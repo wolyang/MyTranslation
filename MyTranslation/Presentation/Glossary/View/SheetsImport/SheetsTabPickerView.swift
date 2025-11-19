@@ -14,7 +14,6 @@ struct SheetsTabPickerView: View {
                             Text("미선택").tag(SheetsImportViewModel.Tab.Kind?.none)
                             Text("용어").tag(Optional(SheetsImportViewModel.Tab.Kind.term))
                             Text("패턴").tag(Optional(SheetsImportViewModel.Tab.Kind.pattern))
-                            Text("호칭").tag(Optional(SheetsImportViewModel.Tab.Kind.marker))
                         }
                         .pickerStyle(.menu)
                     }
@@ -43,7 +42,6 @@ struct SheetsTabPickerView: View {
         Binding {
             if viewModel.selectedTermTabs.contains(id) { return .term }
             if viewModel.selectedPatternTabs.contains(id) { return .pattern }
-            if viewModel.selectedMarkerTabs.contains(id) { return .marker }
             return nil
         } set: { newValue in
             viewModel.setSelection(kind: newValue, forTab: id)

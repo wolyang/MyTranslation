@@ -65,15 +65,6 @@ final class GlossaryHomeViewModel {
         let componentTerms: [Glossary.SDModel.SDTerm]
         let badgeTargets: [String]
     }
-
-    struct AppellationMarkerRow: Identifiable, Hashable {
-        let id: String
-        let source: String
-        let target: String
-        let position: String
-        let prohibitStandalone: Bool
-        let variants: [String]
-    }
     var searchText: String = "" { didSet { applyFilters() } }
     var selectedTagNames: Set<String> = [] { didSet { applyFilters() } }
     var selectedPatternID: String? { didSet { updateGroups(); applyFilters() } }
@@ -87,7 +78,6 @@ final class GlossaryHomeViewModel {
     private(set) var filteredPatternGroups: [PatternGroupRow] = []
     private(set) var patterns: [PatternSummary] = []
     private(set) var availableTags: [String] = []
-    private(set) var markers: [AppellationMarkerRow] = []
     private(set) var isLoading: Bool = false
     private(set) var errorMessage: String? = nil
     private var termRowMap: [PersistentIdentifier: TermRow] = [:]
@@ -112,10 +102,8 @@ final class GlossaryHomeViewModel {
             let metas = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>())
             let tags = try context.fetch(FetchDescriptor<Glossary.SDModel.SDTag>())
             let groups = try context.fetch(FetchDescriptor<Glossary.SDModel.SDGroup>())
-            let markers = try context.fetch(FetchDescriptor<Glossary.SDModel.SDAppellationMarker>())
             mapPatterns(patterns: patterns, metas: metas)
             mapTerms(terms: terms, groups: groups)
-            mapMarkers(markers: markers)
             availableTags = tags.map { $0.name }.sorted()
             updateGroups()
             applyFilters()
@@ -137,7 +125,6 @@ final class GlossaryHomeViewModel {
         let metaDesc = FetchDescriptor<Glossary.SDModel.SDPatternMeta>()
         let tagDesc = FetchDescriptor<Glossary.SDModel.SDTag>()
         let groupDesc = FetchDescriptor<Glossary.SDModel.SDGroup>()
-        let markerDesc = FetchDescriptor<Glossary.SDModel.SDAppellationMarker>()
         do {
             let componentGroups = try context.fetch(componentGroupDesc)
             componentGroups.forEach { context.delete($0) }
@@ -159,8 +146,6 @@ final class GlossaryHomeViewModel {
             tags.forEach { context.delete($0) }
             let groups = try context.fetch(groupDesc)
             groups.forEach { context.delete($0) }
-            let markers = try context.fetch(markerDesc)
-            markers.forEach { context.delete($0) }
             try context.save()
             await reloadAll()
         } catch {
@@ -282,29 +267,6 @@ final class GlossaryHomeViewModel {
             )
         }
         termRowMap = Dictionary(uniqueKeysWithValues: termRows.map { ($0.id, $0) })
-    }
-
-    private func mapMarkers(markers: [Glossary.SDModel.SDAppellationMarker]) {
-        self.markers = markers
-            .sorted { lhs, rhs in
-                if lhs.source == rhs.source {
-                    if lhs.target == rhs.target {
-                        return lhs.position < rhs.position
-                    }
-                    return lhs.target < rhs.target
-                }
-                return lhs.source < rhs.source
-            }
-            .map { marker in
-                AppellationMarkerRow(
-                    id: marker.uid,
-                    source: marker.source,
-                    target: marker.target,
-                    position: marker.position,
-                    prohibitStandalone: marker.prohibitStandalone,
-                    variants: marker.variants
-                )
-            }
     }
 
     private func updateGroups() {

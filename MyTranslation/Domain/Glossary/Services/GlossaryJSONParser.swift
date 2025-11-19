@@ -254,8 +254,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
 
 func buildGlossaryJSON(
     termsBySheet: [String: [TermRow]],
-    patterns: [PatternRow],
-    markers: [AppellationRow]
+    patterns: [PatternRow]
 ) throws -> JSBundle {
     var usedKeys: Set<String> = []
     var refIndex = RefIndex()
@@ -279,14 +278,6 @@ func buildGlossaryJSON(
     }
     let allPatterns = patterns.map { parsePatternRow($0, resolve: resolve) }
 
-    // 3) AppellationMarkers (시트 → 평탄화)
-    var allMarkers: [JSAppellationMarker] = []
-    for r in markers {
-        let variants = r.variants.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let pos = JSAppellationMarker.Position(rawValue: r.position) ?? .prefix
-        allMarkers.append(JSAppellationMarker(source: r.source, target: r.target, variants: variants, position: pos, prohibitStandalone: r.prohibit))
-    }
-
     // 4) 드라이런 경고(간단): 미해결 ref 수집
     var unresolvedRefs: [String] = []
     func collectUnresolved(from dsl: SelectorParseResult) {
@@ -303,7 +294,6 @@ func buildGlossaryJSON(
         print("[Import][Warn] Unresolved refs: \(Set(unresolvedRefs))")
     }
 
-    let bundle = JSBundle(terms: allTerms, patterns: allPatterns, markers: allMarkers)
-//    let data = try JSONEncoder().encode(bundle)
+    let bundle = JSBundle(terms: allTerms, patterns: allPatterns)
     return bundle
 }

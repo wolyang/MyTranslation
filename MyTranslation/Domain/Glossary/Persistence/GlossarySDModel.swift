@@ -233,23 +233,4 @@ extension Glossary.SDModel {
             self.defaultPreMask = defaultPreMask
         }
     }
-    
-    @Model
-    public final class SDAppellationMarker {
-        @Attribute(.unique) var uid: String          // composite key: "source|target|position"
-        var source: String
-        var target: String
-        var variants: [String]
-        var position: String                         // "prefix" | "suffix"
-        var prohibitStandalone: Bool
-
-        init(source: String, target: String, variants: [String], position: String, prohibitStandalone: Bool) {
-            self.uid = "\(source)|\(target)|\(position)"
-            self.source = source
-            self.target = target
-            self.variants = variants
-            self.position = position
-            self.prohibitStandalone = prohibitStandalone
-        }
-    }
 }

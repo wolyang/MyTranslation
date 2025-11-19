@@ -20,32 +20,8 @@ public struct GlossaryEntry: Sendable, Hashable {
     public enum Origin: Sendable, Hashable {
         case termStandalone(termKey: String)
         case composer(composerId: String, leftKey: String, rightKey: String?, needPairCheck: Bool)
-        case markerStandalone(markerId: String)
-        case termWithMarker(termKey: String, markerId: String)
     }
     public var origin: Origin
-}
-
-public struct GlossaryAppellationMarker: Sendable, Hashable {
-    public enum Position: String, Sendable, Hashable { case prefix, suffix }
-    public let id: String
-    public let source: String
-    public let position: Position
-    // (메타) 마커가 단독일 때의 번역 도착어 — 승격 판단에는 사용하지 않음
-    public let target: String?
-    public let variants: [String]
-    /// (메타) 마커 자체의 단독 사용 금지 여부 — 승격 판단에는 사용하지 않음
-    public let prohibitStandalone: Bool
-
-    public init(id: String, source: String, rawPosition: String,
-                target: String?, variants: [String], prohibitStandalone: Bool) {
-        self.id = id
-        self.source = source
-        self.position = Position(rawValue: rawPosition) ?? .suffix
-        self.target = target
-        self.variants = variants
-        self.prohibitStandalone = prohibitStandalone
-    }
 }
 
 public enum ScriptKind: Int16, Sendable { case unknown=0, hangul=1, cjk=2, latin=3, mixed=4 }
@@ -68,7 +44,7 @@ extension Glossary {
     // DI를 위한 인터페이스
     public protocol Providing {
         @MainActor
-        func buildEntries(for pageText: String) throws -> (entries: [GlossaryEntry], markers: [GlossaryAppellationMarker])
+        func buildEntries(for pageText: String) throws -> [GlossaryEntry]
     }
 
     /// Instance-based runtime that OWNS the ModelContext.
@@ -85,10 +61,10 @@ extension Glossary {
         }
 
         @MainActor
-        public func buildEntries(for pageText: String) throws -> (entries: [GlossaryEntry], markers: [GlossaryAppellationMarker]) {
+        public func buildEntries(for pageText: String) throws -> [GlossaryEntry] {
             // 1) 후보 리콜(Q-gram)
             let candidateKeys = try Recall.recallTermKeys(for: pageText, ctx: context, opt: recallOpt)
-            if candidateKeys.isEmpty { return ([], []) }
+            if candidateKeys.isEmpty { return [] }
 
             // 2) 후보 Term 로드
             let candidateTerms = try Store.fetchTerms(keys: candidateKeys, ctx: context)
@@ -108,7 +84,7 @@ extension Glossary {
                 matchedSourcesByKey[owner.termKey, default: []].insert(acBundle.sources[h.pid])
                 matchedTermKey.insert(owner.termKey)
             }
-            if matchedSourcesByKey.isEmpty { return ([], []) }
+            if matchedSourcesByKey.isEmpty { return [] }
 
             // 5) 단독 엔트리
             var entries: [GlossaryEntry] = []
@@ -141,34 +117,8 @@ extension Glossary {
             
             entries.append(contentsOf: composed)
             
-            // 7) 호칭 마커
-            let sdMarkers = try Store.fetchMarkers(ctx: context)
-            var markers: [GlossaryAppellationMarker] = []
-            for marker in sdMarkers {
-                if pageText.contains(marker.source) {
-                    markers.append(GlossaryAppellationMarker(
-                        id: marker.uid,
-                        source: marker.source,
-                        rawPosition: marker.position,
-                        target: marker.target,
-                        variants: marker.variants,
-                        prohibitStandalone: marker.prohibitStandalone
-                    ))
-                    if !marker.prohibitStandalone {
-                        entries.append(GlossaryEntry(
-                            source: marker.source,
-                            target: marker.target,
-                            variants: Set(marker.variants),
-                            preMask: false,
-                            isAppellation: true,
-                            prohibitStandalone: false,
-                            origin: .markerStandalone(markerId: marker.uid)))
-                    }
-                }
-            }
-
             // 7) 병합
-            return (Dedup.run(entries), markers)
+            return Dedup.run(entries)
         }
         
         public func refreshCompositeVariants(
@@ -184,7 +134,6 @@ extension Glossary {
         typealias SDSource = Glossary.SDModel.SDSource
         typealias SDTerm = Glossary.SDModel.SDTerm
         typealias SDPattern = Glossary.SDModel.SDPattern
-        typealias SDAppellationMarker = Glossary.SDModel.SDAppellationMarker
         
         @MainActor
         static func fetchTerms(keys: [String], ctx: ModelContext) throws -> [SDTerm] {
@@ -202,11 +151,6 @@ extension Glossary {
         @MainActor
         static func fetchPatterns(ctx: ModelContext) throws -> [SDPattern] {
             try ctx.fetch(FetchDescriptor<SDPattern>())
-        }
-
-        @MainActor
-        static func fetchMarkers(ctx: ModelContext) throws -> [SDAppellationMarker] {
-            try ctx.fetch(FetchDescriptor<SDAppellationMarker>())
         }
         
         @MainActor
@@ -273,7 +217,6 @@ extension Glossary {
     // MARK: - Matcher (AC bundle & helpers)
     enum Matcher {
         typealias SDTerm = Glossary.SDModel.SDTerm
-        typealias SDAppellationMarker = Glossary.SDModel.SDAppellationMarker
         
         struct Owner { let termKey: String; let prohibitStandalone: Bool }
         struct ACBundle { let ac: AhoCorasick; let pidToOwner: [Int: Owner]; let sources: [String] }
@@ -297,7 +240,6 @@ extension Glossary {
     enum Composer {
         typealias SDTerm = Glossary.SDModel.SDTerm
         typealias SDPattern = Glossary.SDModel.SDPattern
-        typealias SDAppellationMarker = Glossary.SDModel.SDAppellationMarker
         typealias SDComponent = Glossary.SDModel.SDComponent
         
         @MainActor
@@ -569,9 +511,9 @@ extension Glossary {
                 let tpls: [String] = [tpl, reverseTpl]
                 var variants: [String] = []
                 for lv in lAll {
-                    variants.append(lv)
+//                    variants.append(lv)
                     for rv in rAll {
-                        variants.append(rv)
+//                        variants.append(rv)
                         for j in joiners {
                             for t in tpls {
                                 var s = t

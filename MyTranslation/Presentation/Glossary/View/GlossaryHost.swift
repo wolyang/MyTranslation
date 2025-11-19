@@ -50,8 +50,6 @@ struct GlossaryHost: View {
                 TermEditorView(viewModel: viewModel)
             case .pattern(let viewModel, _):
                 PatternEditorView(viewModel: viewModel)
-            case .appellation(let viewModel, _):
-                AppellationEditorView(viewModel: viewModel)
             case .importSheet:
                 SheetsImportCoordinatorView(modelContext: modelContext)
             }
