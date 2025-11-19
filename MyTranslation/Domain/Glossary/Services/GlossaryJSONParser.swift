@@ -228,7 +228,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
     }
 
     let grouping = JSGrouping(rawValue: row.grouping) ?? .required
-
+    
     return JSPattern(
         name: row.name,
         left: toSelector(leftDSL),

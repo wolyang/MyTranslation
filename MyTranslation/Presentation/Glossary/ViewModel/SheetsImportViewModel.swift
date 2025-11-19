@@ -342,7 +342,7 @@ struct SheetImportAdapter {
                     roles: header.value(in: row, for: .roles) ?? "",
                     grouping: header.value(in: row, for: .grouping) ?? "",
                     groupLabel: header.value(in: row, for: .groupLabel) ?? "",
-                    sourceJoiners: header.value(in: row, for: .sourceJoiners) ?? "",
+                    sourceJoiners: header.value(in: row, for: .sourceJoiners, trim: false) ?? "",
                     sourceTemplates: header.value(in: row, for: .sourceTemplates) ?? "",
                     targetTemplates: header.value(in: row, for: .targetTemplates) ?? "",
                     left: header.value(in: row, for: .left) ?? "",
@@ -467,9 +467,10 @@ extension SheetImportAdapter {
             return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "_")).lowercased()
         }
 
-        func value(in row: [String], for column: Column) -> String? {
+        func value(in row: [String], for column: Column, trim: Bool = true) -> String? {
             guard let idx = index[column], idx < row.count else { return nil }
-            let value = row[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+            var value = row[idx]
+            if trim { value = value.trimmingCharacters(in: .whitespacesAndNewlines) }
             return value.isEmpty ? nil : value
         }
     }

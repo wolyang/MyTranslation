@@ -628,11 +628,11 @@ public final class TermMasker {
         let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
         
         let standaloneEntries = entries.filter { !$0.prohibitStandalone }
-        let promotedEntries = promoteProhibitedEntries(in: original, entries: entries, markers: markers)
-        let withMarkerEntries = makeCompositeAppellationTerms(markers: markers, entries: entries)
-        var allowedEntries = standaloneEntries + promotedEntries + withMarkerEntries
+//        let promotedEntries = promoteProhibitedEntries(in: original, entries: entries, markers: markers)
+//        let withMarkerEntries = makeCompositeAppellationTerms(markers: markers, entries: entries)
+        var allowedEntries = standaloneEntries// + promotedEntries + withMarkerEntries
         allowedEntries = filterBySourceOcc(normalizedOriginal, allowedEntries)
-
+        
         var variantsByTarget: [String: [String]] = [:]
         var seenVariantKeysByTarget: [String: Set<String>] = [:]
         var expectedCountsByTarget: [String: Int] = [:]
