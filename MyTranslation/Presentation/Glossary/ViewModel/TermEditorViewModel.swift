@@ -89,8 +89,7 @@ final class TermEditorViewModel {
         var roleOptions: [String] {
             let metaRoles = roles
             if !metaRoles.isEmpty { return metaRoles }
-            let combined = pattern.leftRoles + pattern.rightRoles
-            return combined
+            return pattern.roleListFromSelectors
         }
     }
 
@@ -240,7 +239,7 @@ final class TermEditorViewModel {
                 return ComponentDraft(
                     existingID: comp.persistentModelID,
                     patternID: patternID,
-                    roleName: comp.roles?.first ?? "",
+                    roleName: comp.role ?? "",
                     selectedGroupUID: selectedUID,
                     customGroupName: customName,
                     srcTemplateIndex: srcIdx,
@@ -421,13 +420,14 @@ final class TermEditorViewModel {
         let patternModel = pattern.pattern
         for term in terms {
             if term.components.contains(where: { $0.pattern == patternModel.name }) { continue }
-            let rolesForTerm: [String]
+            let roleForTerm: String?
             if let draft = roleDrafts.first(where: { $0.target.trimmingCharacters(in: .whitespacesAndNewlines) == term.target }) {
-                rolesForTerm = [draft.roleName].filter { !$0.isEmpty }
+                let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
+                roleForTerm = trimmedRole.isEmpty ? nil : trimmedRole
             } else {
-                rolesForTerm = []
+                roleForTerm = nil
             }
-            let component = Glossary.SDModel.SDComponent(pattern: patternModel.name, roles: rolesForTerm.isEmpty ? nil : rolesForTerm, srcTplIdx: 0, tgtTplIdx: 0, term: term)
+            let component = Glossary.SDModel.SDComponent(pattern: patternModel.name, role: roleForTerm, srcTplIdx: 0, tgtTplIdx: 0, term: term)
             context.insert(component)
             term.components.append(component)
             if pattern.grouping != .none {
@@ -457,7 +457,7 @@ final class TermEditorViewModel {
             guard let draft = lookup[compID], let patternID = draft.patternID else { continue }
             component.pattern = patternID
             let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
-            component.roles = trimmedRole.isEmpty ? nil : [trimmedRole]
+            component.role = trimmedRole.isEmpty ? nil : trimmedRole
             if let option = patternOptionMap[patternID] {
                 let normalizedSrc = TermEditorViewModel.normalizeTemplateIndex(draft.srcTemplateIndex, templates: option.sourceTemplates)
                 let normalizedTgt = TermEditorViewModel.normalizeTemplateIndex(draft.tgtTemplateIndex, templates: option.targetTemplates)
@@ -486,10 +486,10 @@ final class TermEditorViewModel {
             guard let patternID = draft.patternID,
                   let option = patternOptionMap[patternID] else { continue }
             let role = draft.roleName.trimmingCharacters(in: .whitespaces)
-            let roles = role.isEmpty ? nil : [role]
+            let roleValue = role.isEmpty ? nil : role
             let srcIdx = TermEditorViewModel.normalizeTemplateIndex(draft.srcTemplateIndex, templates: option.sourceTemplates)
             let tgtIdx = TermEditorViewModel.normalizeTemplateIndex(draft.tgtTemplateIndex, templates: option.targetTemplates)
-            let component = Glossary.SDModel.SDComponent(pattern: patternID, roles: roles, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx, term: term)
+            let component = Glossary.SDModel.SDComponent(pattern: patternID, role: roleValue, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx, term: term)
             context.insert(component)
             term.components.append(component)
             if let name = try resolvedGroupName(from: draft, option: option) {
@@ -606,7 +606,7 @@ final class TermEditorViewModel {
             if !metaRoles.isEmpty {
                 roleOptions = metaRoles
             } else {
-                roleOptions = pattern.leftRoles + pattern.rightRoles
+                roleOptions = pattern.roleListFromSelectors
             }
             let grouping = meta?.grouping ?? .none
             let groupLabel = meta?.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "그룹"
@@ -636,5 +636,11 @@ private extension Optional where Wrapped == String {
         guard let self else { return nil }
         let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private extension Glossary.SDModel.SDPattern {
+    var roleListFromSelectors: [String] {
+        [leftRole.nilIfEmpty, rightRole.nilIfEmpty].compactMap { $0 }
     }
 }

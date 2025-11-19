@@ -283,8 +283,8 @@ enum PreviewData {
     private static func seed(into context: ModelContext) {
         let personPattern = Glossary.SDModel.SDPattern(
             name: "person",
-            leftRoles: ["family"],
-            rightRoles: ["given"],
+            leftRole: "family",
+            rightRole: "given",
             skipPairsIfSameTerm: false,
             sourceTemplates: ["{L}{R}"],
             targetTemplates: ["{L} {R}"],
@@ -322,8 +322,8 @@ enum PreviewData {
         context.insert(givenSource)
         context.insert(given)
 
-        let familyComponent = Glossary.SDModel.SDComponent(pattern: "person", roles: ["family"], srcTplIdx: 0, tgtTplIdx: 0, term: family)
-        let givenComponent = Glossary.SDModel.SDComponent(pattern: "person", roles: ["given"], srcTplIdx: 0, tgtTplIdx: 0, term: given)
+        let familyComponent = Glossary.SDModel.SDComponent(pattern: "person", role: "family", srcTplIdx: 0, tgtTplIdx: 0, term: family)
+        let givenComponent = Glossary.SDModel.SDComponent(pattern: "person", role: "given", srcTplIdx: 0, tgtTplIdx: 0, term: given)
         context.insert(familyComponent)
         context.insert(givenComponent)
         family.components = [familyComponent]

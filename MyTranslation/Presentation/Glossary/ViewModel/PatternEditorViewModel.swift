@@ -48,8 +48,8 @@ final class PatternEditorViewModel {
                 leftRole = metaRoles[0]
                 rightRole = metaRoles[1]
             } else {
-                leftRole = pattern.leftRoles.first ?? metaRoles.first ?? ""
-                rightRole = pattern.rightRoles.first ?? (metaRoles.count == 2 ? metaRoles[1] : "")
+                leftRole = pattern.leftRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? metaRoles.first ?? ""
+                rightRole = pattern.rightRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? (metaRoles.dropFirst().first ?? "")
             }
             grouping = meta?.grouping ?? .none
             groupLabel = meta?.groupLabel ?? "그룹"
@@ -134,8 +134,8 @@ final class PatternEditorViewModel {
         pattern.sourceTemplates = sourceTemplateArray
         pattern.targetTemplates = trimmedTargetTemplates
         pattern.sourceJoiners = sourceJoinerArray
-        pattern.leftRoles = trimmedLeftRole.isEmpty ? [] : [trimmedLeftRole]
-        pattern.rightRoles = trimmedRightRole.isEmpty ? [] : [trimmedRightRole]
+        pattern.leftRole = trimmedLeftRole.isEmpty ? nil : trimmedLeftRole
+        pattern.rightRole = trimmedRightRole.isEmpty ? nil : trimmedRightRole
 
         let meta: Glossary.SDModel.SDPatternMeta
         if let existing = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>(predicate: #Predicate { $0.name == trimmedID })).first {
