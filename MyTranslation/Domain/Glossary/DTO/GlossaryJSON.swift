@@ -22,7 +22,7 @@ public struct JSTerm: Codable, Hashable {
 
 public struct JSComponent: Codable, Hashable {
     public var pattern: String            // ex) "person", "cp", "ultraAffix"
-    public var roles: [String]?           // ex) ["family"], ["given"], nil(무역할)
+    public var role: String?              // ex) "family", "given", nil(무역할)
     public var groups: [String]?          // ex) ["쿠레나이가이"], ["m78","z"], nil
     
     public var srcTplIdx: Int?             // sourceTemplates[] 중 몇 번째? (기본: 0)
@@ -30,7 +30,7 @@ public struct JSComponent: Codable, Hashable {
 }
 
 public struct JSTermSelector: Codable, Hashable {
-    public var roles: [String]?           // 예: ["family"], ["given"], nil
+    public var role: String?              // 예: "family", "given", nil
     public var tagsAll: [String]?         // AND
     public var tagsAny: [String]?         // OR
     public var includeTermKeys: [String]? // 고정 포함

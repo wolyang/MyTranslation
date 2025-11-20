@@ -260,7 +260,11 @@ struct TermEditorView: View {
             if hasPattern {
                 let roles = viewModel.availableRoles(for: patternID)
                 if !roles.isEmpty {
-                    Picker("역할", selection: component.roleName) {
+                    let roleSelection = Binding<String>(
+                        get: { component.roleName.wrappedValue },
+                        set: { component.roleName.wrappedValue = $0 }
+                    )
+                    Picker("역할", selection: roleSelection) {
                         Text("역할 없음").tag("")
                         ForEach(roles, id: \.self) { role in
                             Text(role).tag(role)
@@ -312,9 +316,6 @@ struct TermEditorView: View {
 
     private func templatePicker(title: String, templates: [String], selection: Binding<Int>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.semibold)
             if templates.isEmpty {
                 Text("사용 가능한 템플릿이 없습니다.")
                     .font(.footnote)

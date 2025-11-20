@@ -89,37 +89,55 @@ final class TermEditorViewModel {
         var roleOptions: [String] {
             let metaRoles = roles
             if !metaRoles.isEmpty { return metaRoles }
-            let combined = pattern.leftRoles + pattern.rightRoles
-            return combined
+            return pattern.roleListFromSelectors
         }
     }
 
     enum Mode { case general, pattern }
 
+    // SwiftData 작업을 처리하는 컨텍스트
     let context: ModelContext
+    // 수정 시 기존 용어를 보관해 업서트 여부를 판단
     private let existingTerm: Glossary.SDModel.SDTerm?
+    // 패턴 기반 생성 모드일 때 참고할 패턴 데이터
     let pattern: PatternReference?
+    // 편집 중인 용어 원본을 UI에서 확인할 때 사용
     var editingTerm: Glossary.SDModel.SDTerm? { existingTerm }
 
+    // 일반/패턴 모드를 구분해 저장 플로우를 분기
     var mode: Mode
+    // 일반 모드에서 단일 용어 입력을 위한 초안
     var generalDraft: RoleDraft
+    // 패턴 모드에서 역할별 용어 입력을 위한 초안 목록
     var roleDrafts: [RoleDraft]
+    // 패턴 모드에서 선택된 그룹 UID
     var selectedGroupID: String?
+    // 새로운 그룹 이름 입력값
     var newGroupName: String
+    // 패턴 메타에 정의된 그룹 선택지
     var patternGroups: [GroupOption]
+    // 용어에 연결할 패턴 컴포넌트 초안 목록
     var componentDrafts: [ComponentDraft]
+    // 패턴 선택지 목록(이름, 템플릿, 역할 옵션 포함)
     let patternOptions: [PatternOption]
+    // 패턴 ID로 빠르게 옵션을 찾기 위한 맵
     private let patternOptionMap: [String: PatternOption]
+    // 삭제 예약된 컴포넌트 ID 집합
     private var removedComponentIDs: Set<PersistentIdentifier> = []
+    // 저장 실패 등 오류 메시지 전달용
     var errorMessage: String?
+    // 충돌 시 병합 대상으로 보여줄 용어
     var mergeCandidate: Glossary.SDModel.SDTerm?
+    // 저장 완료 여부를 UI에 알리기 위한 플래그
     var didSave: Bool = false
 
+    // 패턴 메타에서 제공하는 역할 선택지
     var roleOptions: [String] {
         pattern?.roleOptions ?? []
     }
 
 
+    // 기존 용어가 있을 때만 컴포넌트 편집 허용 여부
     var canEditComponents: Bool { editingTerm != nil }
 
     var sortedPatternOptions: [PatternOption] { patternOptions }
@@ -237,10 +255,11 @@ final class TermEditorViewModel {
                 let targetTemplates = option?.targetTemplates ?? []
                 let srcIdx = TermEditorViewModel.normalizeTemplateIndex(comp.srcTplIdx ?? 0, templates: sourceTemplates)
                 let tgtIdx = TermEditorViewModel.normalizeTemplateIndex(comp.tgtTplIdx ?? 0, templates: targetTemplates)
+                let role = comp.role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return ComponentDraft(
                     existingID: comp.persistentModelID,
                     patternID: patternID,
-                    roleName: comp.roles?.first ?? "",
+                    roleName: role,
                     selectedGroupUID: selectedUID,
                     customGroupName: customName,
                     srcTemplateIndex: srcIdx,
@@ -421,13 +440,14 @@ final class TermEditorViewModel {
         let patternModel = pattern.pattern
         for term in terms {
             if term.components.contains(where: { $0.pattern == patternModel.name }) { continue }
-            let rolesForTerm: [String]
+            let roleForTerm: String?
             if let draft = roleDrafts.first(where: { $0.target.trimmingCharacters(in: .whitespacesAndNewlines) == term.target }) {
-                rolesForTerm = [draft.roleName].filter { !$0.isEmpty }
+                let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
+                roleForTerm = trimmedRole.isEmpty ? nil : trimmedRole
             } else {
-                rolesForTerm = []
+                roleForTerm = nil
             }
-            let component = Glossary.SDModel.SDComponent(pattern: patternModel.name, roles: rolesForTerm.isEmpty ? nil : rolesForTerm, srcTplIdx: 0, tgtTplIdx: 0, term: term)
+            let component = Glossary.SDModel.SDComponent(pattern: patternModel.name, role: roleForTerm, srcTplIdx: 0, tgtTplIdx: 0, term: term)
             context.insert(component)
             term.components.append(component)
             if pattern.grouping != .none {
@@ -457,7 +477,7 @@ final class TermEditorViewModel {
             guard let draft = lookup[compID], let patternID = draft.patternID else { continue }
             component.pattern = patternID
             let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
-            component.roles = trimmedRole.isEmpty ? nil : [trimmedRole]
+            component.role = trimmedRole.isEmpty ? nil : trimmedRole
             if let option = patternOptionMap[patternID] {
                 let normalizedSrc = TermEditorViewModel.normalizeTemplateIndex(draft.srcTemplateIndex, templates: option.sourceTemplates)
                 let normalizedTgt = TermEditorViewModel.normalizeTemplateIndex(draft.tgtTemplateIndex, templates: option.targetTemplates)
@@ -486,10 +506,10 @@ final class TermEditorViewModel {
             guard let patternID = draft.patternID,
                   let option = patternOptionMap[patternID] else { continue }
             let role = draft.roleName.trimmingCharacters(in: .whitespaces)
-            let roles = role.isEmpty ? nil : [role]
+            let roleValue = role.isEmpty ? nil : role
             let srcIdx = TermEditorViewModel.normalizeTemplateIndex(draft.srcTemplateIndex, templates: option.sourceTemplates)
             let tgtIdx = TermEditorViewModel.normalizeTemplateIndex(draft.tgtTemplateIndex, templates: option.targetTemplates)
-            let component = Glossary.SDModel.SDComponent(pattern: patternID, roles: roles, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx, term: term)
+            let component = Glossary.SDModel.SDComponent(pattern: patternID, role: roleValue, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx, term: term)
             context.insert(component)
             term.components.append(component)
             if let name = try resolvedGroupName(from: draft, option: option) {
@@ -606,7 +626,7 @@ final class TermEditorViewModel {
             if !metaRoles.isEmpty {
                 roleOptions = metaRoles
             } else {
-                roleOptions = pattern.leftRoles + pattern.rightRoles
+                roleOptions = pattern.roleListFromSelectors
             }
             let grouping = meta?.grouping ?? .none
             let groupLabel = meta?.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "그룹"
@@ -636,5 +656,11 @@ private extension Optional where Wrapped == String {
         guard let self else { return nil }
         let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private extension Glossary.SDModel.SDPattern {
+    var roleListFromSelectors: [String] {
+        [leftRole.nilIfEmpty, rightRole.nilIfEmpty].compactMap { $0 }
     }
 }

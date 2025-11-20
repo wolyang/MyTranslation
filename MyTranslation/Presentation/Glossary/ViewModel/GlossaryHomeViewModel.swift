@@ -14,8 +14,8 @@ final class GlossaryHomeViewModel {
         let groupLabel: String
         let isAppellation: Bool
         let preMask: Bool
-        let leftRoles: Set<String>
-        let rightRoles: Set<String>
+        let leftRole: String?
+        let rightRole: String?
         let pattern: Glossary.SDModel.SDPattern
         let meta: Glossary.SDModel.SDPatternMeta?
     }
@@ -23,11 +23,11 @@ final class GlossaryHomeViewModel {
     struct TermRow: Identifiable, Hashable {
         struct ComponentInfo: Hashable {
             let pattern: String
-            let roles: [String]
+            let role: String?
             let groups: [Group]
             let srcTemplateIndex: Int?
             let tgtTemplateIndex: Int?
-            
+
             struct Group: Hashable { let uid: String; let name: String }
         }
 
@@ -51,7 +51,7 @@ final class GlossaryHomeViewModel {
             // 패턴이 이 Term를 어떤 역할로 참조하는지에 따라 템플릿 렌더링을 다르게 처리한다.
             let tplIndex = comp.tgtTemplateIndex ?? 0
             let template = pattern.pattern.targetTemplates.indices.contains(tplIndex) ? pattern.pattern.targetTemplates[tplIndex] : pattern.pattern.targetTemplates.first ?? "{L}"
-            if pattern.rightRoles.isEmpty {
+            if pattern.pattern.rightRole == nil {
                 return Glossary.Util.renderTarget(template, L: L, R: nil)
             }
             // 그룹 내 다른 Term 탐색은 외부에서 처리되므로 우선 자기 자신만 반영
@@ -189,7 +189,7 @@ final class GlossaryHomeViewModel {
             clone.sources.append(dup)
         }
         for comp in term.components {
-            let dup = Glossary.SDModel.SDComponent(pattern: comp.pattern, roles: comp.roles, srcTplIdx: comp.srcTplIdx, tgtTplIdx: comp.tgtTplIdx, term: clone)
+                let dup = Glossary.SDModel.SDComponent(pattern: comp.pattern, role: comp.role, srcTplIdx: comp.srcTplIdx, tgtTplIdx: comp.tgtTplIdx, term: clone)
             context.insert(dup)
             clone.components.append(dup)
             for link in comp.groupLinks {
@@ -231,8 +231,8 @@ final class GlossaryHomeViewModel {
                 groupLabel: meta?.groupLabel ?? "그룹",
                 isAppellation: pattern.isAppellation,
                 preMask: pattern.preMask,
-                leftRoles: Set(pattern.leftRoles),
-                rightRoles: Set(pattern.rightRoles),
+                leftRole: pattern.leftRole,
+                rightRole: pattern.rightRole,
                 pattern: pattern,
                 meta: meta
             )
@@ -246,7 +246,7 @@ final class GlossaryHomeViewModel {
             let components = term.components.map { comp -> TermRow.ComponentInfo in
                 return .init(
                     pattern: comp.pattern,
-                    roles: comp.roles ?? [],
+                    role: comp.role,
                     groups: comp.groupLinks.map({ .init(uid: $0.group.uid, name: groupLookup[$0.group.uid]?.name ?? "") }),
                     srcTemplateIndex: comp.srcTplIdx,
                     tgtTemplateIndex: comp.tgtTplIdx

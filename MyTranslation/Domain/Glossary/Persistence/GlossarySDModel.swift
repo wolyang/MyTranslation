@@ -80,16 +80,16 @@ extension Glossary.SDModel {
     public final class SDComponent {
         // 이 Term가 어떤 패턴에서 어떤 역할/그룹/템플릿 인덱스를 쓰는지
         var pattern: String                      // ex) "person", "cp", "ultraAffix"
-        var roles: [String]?                     // ["family"], ["given"], nil(무역할)
+        var role: String?                        // "family", "given", nil(무역할)
         var srcTplIdx: Int?                      // 미지정 = 0
         var tgtTplIdx: Int?                      // 미지정 = 0
         @Relationship var term: SDTerm
 
         @Relationship(deleteRule: .cascade) var groupLinks: [SDComponentGroup] = []
 
-        init(pattern: String, roles: [String]? = nil, srcTplIdx: Int? = nil, tgtTplIdx: Int? = nil, term: SDTerm) {
+        init(pattern: String, role: String? = nil, srcTplIdx: Int? = nil, tgtTplIdx: Int? = nil, term: SDTerm) {
             self.pattern = pattern
-            self.roles = roles
+            self.role = role
             self.srcTplIdx = srcTplIdx
             self.tgtTplIdx = tgtTplIdx
             self.term = term
@@ -154,14 +154,14 @@ extension Glossary.SDModel {
         @Attribute(.unique) var name: String          // "person", "cp", "ultraman"...
 
         // Selector(Left) — 전부 칼럼/관계
-        var leftRoles: [String]
+        var leftRole: String?
         var leftTagsAll: [String]
         var leftTagsAny: [String]
         @Relationship var leftIncludeTerms: [SDTerm]
         @Relationship var leftExcludeTerms: [SDTerm]
 
         // Selector(Right)
-        var rightRoles: [String]
+        var rightRole: String?
         var rightTagsAll: [String]
         var rightTagsAny: [String]
         @Relationship var rightIncludeTerms: [SDTerm]
@@ -180,14 +180,14 @@ extension Glossary.SDModel {
         
         var needPairCheck: Bool
         
-        init(name: String, leftRoles: [String] = [], leftTagsAll: [String] = [], leftTagsAny: [String] = [], leftIncludeTerms: [SDTerm] = [], leftExcludeTerms: [SDTerm] = [], rightRoles: [String] = [], rightTagsAll: [String] = [], rightTagsAny: [String] = [], rightIncludeTerms: [SDTerm] = [], rightExcludeTerms: [SDTerm] = [], skipPairsIfSameTerm: Bool = true, sourceTemplates: [String] = [""], targetTemplates: [String] = [""], sourceJoiners: [String] = [""], isAppellation: Bool = false, preMask: Bool = true, needPairCheck: Bool = false) {
+        init(name: String, leftRole: String? = nil, leftTagsAll: [String] = [], leftTagsAny: [String] = [], leftIncludeTerms: [SDTerm] = [], leftExcludeTerms: [SDTerm] = [], rightRole: String? = nil, rightTagsAll: [String] = [], rightTagsAny: [String] = [], rightIncludeTerms: [SDTerm] = [], rightExcludeTerms: [SDTerm] = [], skipPairsIfSameTerm: Bool = true, sourceTemplates: [String] = [""], targetTemplates: [String] = [""], sourceJoiners: [String] = [""], isAppellation: Bool = false, preMask: Bool = true, needPairCheck: Bool = false) {
             self.name = name
-            self.leftRoles = leftRoles
+            self.leftRole = leftRole
             self.leftTagsAll = leftTagsAll
             self.leftTagsAny = leftTagsAny
             self.leftIncludeTerms = leftIncludeTerms
             self.leftExcludeTerms = leftExcludeTerms
-            self.rightRoles = rightRoles
+            self.rightRole = rightRole
             self.rightTagsAll = rightTagsAll
             self.rightTagsAny = rightTagsAny
             self.rightIncludeTerms = rightIncludeTerms

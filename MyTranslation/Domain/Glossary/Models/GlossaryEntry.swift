@@ -313,9 +313,7 @@ extension Glossary {
             var out: [SDComponent] = []
             for t in terms where matched.contains(t.key) {
                 for c in t.components where c.pattern == pat.name {
-                    if !pat.leftRoles.isEmpty {
-                        if let roles = c.roles, !roles.isEmpty, !Set(roles).isDisjoint(with: pat.leftRoles) { out.append(c) }
-                    } else { out.append(c) }
+                    if matchesRole(c.role, required: pat.leftRole) { out.append(c) }
                 }
             }
             return out
@@ -329,9 +327,8 @@ extension Glossary {
 
             for t in terms where matched.contains(t.key) {
                 for c in t.components where c.pattern == pat.name {
-                    let roles = Set(c.roles ?? [])
-                    let isLeft  = pat.leftRoles.isEmpty  || !roles.isDisjoint(with: pat.leftRoles)
-                    let isRight = pat.rightRoles.isEmpty || !roles.isDisjoint(with: pat.rightRoles)
+                    let isLeft  = matchesRole(c.role, required: pat.leftRole)
+                    let isRight = matchesRole(c.role, required: pat.rightRole)
 
                     if !c.groupLinks.isEmpty { hasAnyGroup = true }
 
@@ -377,6 +374,23 @@ extension Glossary {
             }
 
             return pairs
+        }
+
+        @MainActor
+        private static func matchesRole(_ componentRole: String?, required: String?) -> Bool {
+            guard
+                let requiredRole = required?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !requiredRole.isEmpty
+            else {
+                return true
+            }
+            guard
+                let role = componentRole?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !role.isEmpty
+            else {
+                return false
+            }
+            return role == requiredRole
         }
     }
 

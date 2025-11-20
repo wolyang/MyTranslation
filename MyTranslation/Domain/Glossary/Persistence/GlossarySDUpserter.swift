@@ -174,7 +174,7 @@ extension Glossary.SDModel {
                         comp.tgtTplIdx = jc.tgtTplIdx
                     }
                 } else {
-                    comp = SDComponent(pattern: jc.pattern, roles: jc.roles, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
+                    comp = SDComponent(pattern: jc.pattern, role: jc.role, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
                     context.insert(comp)
                     dst.components.append(comp)
                 }
@@ -198,26 +198,26 @@ extension Glossary.SDModel {
             for js in items {
                 let dst = patternMap[js.name] ?? SDPattern(name: js.name)
                 if let l = js.left {
-                    dst.leftRoles = l.roles ?? []
+                    dst.leftRole = l.role
                     dst.leftTagsAll = l.tagsAll ?? []
                     dst.leftTagsAny = l.tagsAny ?? []
                     dst.leftIncludeTerms = try fetchTerms(for: l.includeTermKeys)
                     dst.leftExcludeTerms = try fetchTerms(for: l.excludeTermKeys)
                 } else {
-                    dst.leftRoles = []
+                    dst.leftRole = nil
                     dst.leftTagsAll = []
                     dst.leftTagsAny = []
                     dst.leftIncludeTerms = []
                     dst.leftExcludeTerms = []
                 }
                 if let r = js.right {
-                    dst.rightRoles = r.roles ?? []
+                    dst.rightRole = r.role
                     dst.rightTagsAll = r.tagsAll ?? []
                     dst.rightTagsAny = r.tagsAny ?? []
                     dst.rightIncludeTerms = try fetchTerms(for: r.includeTermKeys)
                     dst.rightExcludeTerms = try fetchTerms(for: r.excludeTermKeys)
                 } else {
-                    dst.rightRoles = []
+                    dst.rightRole = nil
                     dst.rightTagsAll = []
                     dst.rightTagsAny = []
                     dst.rightIncludeTerms = []
@@ -294,16 +294,22 @@ extension Glossary.SDModel {
         }
         
         private func key(of c: SDComponent) -> String {
-            let roleKey = c.roles?.joined(separator: ",") ?? "-"
+            let roleKey = normalizedRoleKey(c.role)
             let groupNames = c.groupLinks.map { $0.group.name }
             let groupKey = groupKey(of: groupNames)
             return "\(c.pattern)|\(roleKey)|\(groupKey)"
         }
 
         private func key(of c: JSComponent) -> String {
-            let roleKey = c.roles?.joined(separator: ",") ?? "-"
+            let roleKey = normalizedRoleKey(c.role)
             let groupKey = groupKey(of: c.groups)
             return "\(c.pattern)|\(roleKey)|\(groupKey)"
+        }
+
+        private func normalizedRoleKey(_ role: String?) -> String {
+            guard let role else { return "-" }
+            let trimmed = role.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "-" : trimmed
         }
 
         private func groupKey(of names: [String]?) -> String {

@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - DSL Helpers
 struct SelectorParseResult {
-    var roles: [String]? = nil
+    var role: String? = nil
     var tagsAll: [String]? = nil
     var tagsAny: [String]? = nil
     var includeRefs: [String] = [] // ref 또는 key 문자열 (원본)
@@ -25,8 +25,8 @@ func parseSelectorDSL(_ s: String?) -> SelectorParseResult {
         let val = token[token.index(after: sep)...].trimmingCharacters(in: .whitespaces)
         switch key.lowercased() {
         case "role":
-            let roles = val.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            result.roles = roles.isEmpty ? nil : roles
+            let role = val.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+            result.role = role
         case "tags":
             let tags = val.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             result.tagsAll = tags.isEmpty ? nil : tags
@@ -120,7 +120,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
     // Components DSL: pattern[:role][-group1|group2][#sN][#tM]; ...
     let components: [JSComponent] = splitSemi(row.components).map { token in
         var pattern = ""
-        var roles: [String]? = nil
+        var role: String? = nil
         var groups: [String]? = nil
         var srcIdx: Int? = nil
         var tgtIdx: Int? = nil
@@ -154,7 +154,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
             let roleSection = roleSplit[1]
             let roleParts = roleSection.split(separator: "-", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
             if let roleName = roleParts.first, !roleName.isEmpty {
-                roles = [roleName]
+                role = roleName
             }
             if roleParts.count == 2 {
                 parsedGroups.append(contentsOf: roleParts[1].split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
@@ -168,7 +168,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
             }
             groups = ordered
         }
-        return JSComponent(pattern: pattern, roles: roles, groups: groups, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx)
+        return JSComponent(pattern: pattern, role: role, groups: groups, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx)
     }
 
     var keySet = used
@@ -203,7 +203,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
     let rightDSL = parseSelectorDSL(row.right)
 
     func toSelector(_ dsl: SelectorParseResult) -> JSTermSelector? {
-        if dsl.roles == nil, dsl.tagsAll == nil, dsl.tagsAny == nil, dsl.includeRefs.isEmpty, dsl.excludeRefs.isEmpty { return nil }
+        if dsl.role == nil, dsl.tagsAll == nil, dsl.tagsAny == nil, dsl.includeRefs.isEmpty, dsl.excludeRefs.isEmpty { return nil }
         let includeKeys = dsl.includeRefs.compactMap { tok -> String? in
             if tok.lowercased().hasPrefix("ref:") {
                 return resolve(tok)
@@ -219,7 +219,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
             }
         }
         return JSTermSelector(
-            roles: dsl.roles,
+            role: dsl.role,
             tagsAll: dsl.tagsAll,
             tagsAny: dsl.tagsAny,
             includeTermKeys: includeKeys.isEmpty ? nil : includeKeys,
@@ -240,7 +240,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
         isAppellation: row.isAppellation,
         preMask: row.preMask,
         displayName: row.displayName,
-        roles: splitSemi(row.roles),
+            roles: splitSemi(row.roles),
         grouping: grouping,
         groupLabel: row.groupLabel,
         defaultProhibitStandalone: row.defProhibit,
