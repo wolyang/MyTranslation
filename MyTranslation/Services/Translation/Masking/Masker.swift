@@ -159,8 +159,8 @@ public final class TermMasker {
     func collectActivatedTermKeys(from entries: [GlossaryEntry], usedKeys: Set<String>) -> Set<String> {
         var activated: Set<String> = []
         for entry in entries {
-            // entry.activatesKeys와 usedKeys가 교집합이 있으면, 이 entry의 key를 활성화
-            if !entry.activatesKeys.isEmpty, !entry.activatesKeys.isDisjoint(with: usedKeys) {
+            // entry.activatorKeys와 usedKeys가 교집합이 있으면, 이 entry의 key를 활성화
+            if !entry.activatorKeys.isEmpty, !entry.activatorKeys.isDisjoint(with: usedKeys) {
                 switch entry.origin {
                 case let .termStandalone(termId):
                     activated.insert(termId)
@@ -177,21 +177,22 @@ public final class TermMasker {
     ///   - allEntries: 모든 GlossaryEntry 배열
     ///   - activatedKeys: 활성화된 Term 키들
     /// - Returns: 활성화된 Entry 배열
-    func promoteActivatedEntries(from allEntries: [GlossaryEntry], activatedKeys: Set<String>) -> [GlossaryEntry] {
-        var promoted: [GlossaryEntry] = []
-        for entry in allEntries {
-            let entryKey: String
-            switch entry.origin {
-            case let .termStandalone(termId):
-                entryKey = termId
-            case let .composer(composerId, _, _, _):
-                entryKey = composerId
-            }
-            if activatedKeys.contains(entryKey) {
-                promoted.append(entry)
-            }
+    func promoteActivatedEntries(in original: String, from allEntries: [GlossaryEntry]) -> [GlossaryEntry] {
+        let standaloneEntriesInText = allEntries.filter { entry in
+            guard entry.prohibitStandalone else { return false }
+            let normSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
+            return original.contains(normSource)
         }
-        return promoted
+        let usedKeys = collectUsedTermKeys(from: standaloneEntriesInText)
+        let activatedKeys = collectActivatedTermKeys(from: allEntries, usedKeys: usedKeys)
+        
+        return allEntries.filter {
+             if case let .termStandalone(termId) = $0.origin {
+                 activatedKeys.contains(termId)
+             } else {
+                 false
+             }
+         }
     }
 
     /// GlossaryEntry.Origin의 고유 키를 생성 (중복 제거용)
@@ -581,7 +582,8 @@ public final class TermMasker {
     ///   - original: 용어 검사를 수행할 원문 텍스트
     ///   - entries: 용어집 엔트리 목록
     /// - Returns: 원문에 등장한 인물 용어의 target/variants 정보 배열
-    func makeNameGlossaries(forOriginalText original: String, entries: [GlossaryEntry]) -> [NameGlossary] {
+    func makeNameGlossaries(seg: Segment, entries: [GlossaryEntry]) -> [NameGlossary] {
+        let original = seg.originalText
         guard !original.isEmpty else { return [] }
 
         let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
@@ -593,9 +595,7 @@ public final class TermMasker {
         let patternPromoted = promoteProhibitedEntries(in: original, entries: entries)
 
         // 3) Term-to-Term 활성화
-        let usedKeys = collectUsedTermKeys(from: standaloneEntries)
-        let activatedKeys = collectActivatedTermKeys(from: entries, usedKeys: usedKeys)
-        let termPromoted = promoteActivatedEntries(from: entries, activatedKeys: activatedKeys)
+        let termPromoted = promoteActivatedEntries(in: original, from: entries)
 
         // 4) 모든 허용 엔트리 합치기 (중복 제거)
         var combined = standaloneEntries

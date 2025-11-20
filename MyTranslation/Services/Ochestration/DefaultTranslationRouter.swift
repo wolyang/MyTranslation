@@ -279,7 +279,7 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         let nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = {
             return maskedPacks.map { pack in
-                termMasker.makeNameGlossaries(forOriginalText: pack.seg.originalText, entries: glossaryEntries)
+                termMasker.makeNameGlossaries(seg: pack.seg, entries: glossaryEntries)
             }
         }()
 
