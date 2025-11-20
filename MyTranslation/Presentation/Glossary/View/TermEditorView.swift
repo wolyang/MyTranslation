@@ -260,7 +260,11 @@ struct TermEditorView: View {
             if hasPattern {
                 let roles = viewModel.availableRoles(for: patternID)
                 if !roles.isEmpty {
-                    Picker("역할", selection: component.roleName) {
+                    let roleSelection = Binding<String>(
+                        get: { component.roleName.wrappedValue },
+                        set: { component.roleName.wrappedValue = $0 }
+                    )
+                    Picker("역할", selection: roleSelection) {
                         Text("역할 없음").tag("")
                         ForEach(roles, id: \.self) { role in
                             Text(role).tag(role)
