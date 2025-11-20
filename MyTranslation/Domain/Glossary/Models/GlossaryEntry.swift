@@ -378,11 +378,19 @@ extension Glossary {
 
         @MainActor
         private static func matchesRole(_ componentRole: String?, required: String?) -> Bool {
-            guard let trimmedRequired = required?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedRequired.isEmpty else {
+            guard
+                let requiredRole = required?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !requiredRole.isEmpty
+            else {
                 return true
             }
-            guard let role = componentRole?.trimmingCharacters(in: .whitespacesAndNewlines), !role.isEmpty else { return false }
-            return role == trimmedRequired
+            guard
+                let role = componentRole?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !role.isEmpty
+            else {
+                return false
+            }
+            return role == requiredRole
         }
     }
 
