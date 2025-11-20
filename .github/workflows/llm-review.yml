@@ -52,7 +52,7 @@ jobs:
               });
 
               // --- 2) 디프 축약(비용 세이프가드)
-              const MAX_TOTAL = Number(process.env.MAX_TOTAL_CHARS || 8000);
+              const MAX_TOTAL = Number(process.env.MAX_TOTAL_CHARS || 16000);
               const MAX_PER   = Number(process.env.MAX_PER_FILE || 1200);
               const IMPORTANT = new Set(['.swift','.kt','.java','.m','.mm','.cpp','.cc','.c','.ts','.tsx','.js','.jsx','.py','.rb','.go','.rs','.php']);
               const extOf = (p) => (p.lastIndexOf('.')>=0 ? p.slice(p.lastIndexOf('.')).toLowerCase() : '');
