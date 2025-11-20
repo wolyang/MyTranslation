@@ -114,6 +114,9 @@ extension Glossary.SDModel {
             // Phase 1: 모든 Term을 생성/업데이트하고, activatedBy 정보 수집
             var activationMap: [String: [String]] = [:]  // termKey → activatorKeys
             for src in items {
+                // 입력값 정제(공백 제거 후 중복 제거)
+                let trimmedActivators = Array(LinkedHashSet(src.activatedByKeys ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+
                 let dst: SDTerm
                 if let existing = map[src.key] {
                     try update(term: existing, with: src)
@@ -127,9 +130,11 @@ extension Glossary.SDModel {
                 }
                 try SourceIndexMaintainer.rebuild(for: dst, in: context)
 
-                // activatedByKeys 정보 수집
-                if let activatorKeys = src.activatedByKeys, !activatorKeys.isEmpty {
-                    activationMap[src.key] = activatorKeys
+                // activatedByKeys 정보 수집 (overwrite 모드에서는 빈 배열도 저장해 기존 관계 제거)
+                if merge == .overwrite {
+                    activationMap[src.key] = trimmedActivators
+                } else if !trimmedActivators.isEmpty {
+                    activationMap[src.key] = trimmedActivators
                 }
             }
 
