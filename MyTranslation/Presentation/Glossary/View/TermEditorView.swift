@@ -316,9 +316,6 @@ struct TermEditorView: View {
 
     private func templatePicker(title: String, templates: [String], selection: Binding<Int>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.semibold)
             if templates.isEmpty {
                 Text("사용 가능한 템플릿이 없습니다.")
                     .font(.footnote)
