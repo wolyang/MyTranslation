@@ -4,6 +4,8 @@ import SwiftUI
 struct TermEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var viewModel: TermEditorViewModel
+    @State private var showingTermPicker = false
+    @State private var availableTerms: [(key: String, target: String)] = []
 
     var body: some View {
         NavigationStack {
@@ -91,12 +93,37 @@ struct TermEditorView: View {
             Toggle("호칭 여부", isOn: $viewModel.generalDraft.isAppellation)
             Toggle("Pre-mask", isOn: $viewModel.generalDraft.preMask)
         }
-        Section("조건부 활성화") {
-            formTextField(
-                "활성화 조건 (Term 키)",
-                text: $viewModel.generalDraft.activatedBy,
-                help: "세미콜론(;)으로 구분해 이 용어를 활성화하는 Term 키를 입력하세요. 지정된 Term이 동일 세그먼트에 출현하면 이 용어가 활성화됩니다."
-            )
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("활성화 조건")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Button {
+                        if availableTerms.isEmpty {
+                            availableTerms = (try? viewModel.fetchAllTermsForPicker()) ?? []
+                        }
+                        showingTermPicker = true
+                    } label: {
+                        Label("Term 추가", systemImage: "plus.circle.fill")
+                            .font(.subheadline)
+                    }
+                }
+
+                if viewModel.generalDraft.activatedByArray.isEmpty {
+                    Text("지정된 Term이 동일 세그먼트에 출현하면 이 용어가 활성화됩니다.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    activatorChips
+                }
+            }
+        }
+        .sheet(isPresented: $showingTermPicker) {
+            TermPickerSheet(terms: availableTerms) { selectedKey in
+                viewModel.addActivatorTerm(key: selectedKey)
+            }
         }
     }
 
@@ -388,6 +415,33 @@ struct TermEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private var activatorChips: some View {
+        FlowLayout(spacing: 8) {
+            ForEach(viewModel.generalDraft.activatedByArray, id: \.self) { termKey in
+                HStack(spacing: 4) {
+                    Text(viewModel.termTarget(for: termKey) ?? termKey)
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+
+                    Button {
+                        viewModel.removeActivatorTerm(key: termKey)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 4)
+                }
+                .background(.quaternary)
+                .cornerRadius(12)
+            }
+        }
+        .padding(.top, 4)
+    }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
@@ -403,6 +457,52 @@ struct TermEditorView: View {
                 }
             }
             .keyboardShortcut(.defaultAction)
+        }
+    }
+}
+
+// MARK: - FlowLayout
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = FlowResult(in: proposal.replacingUnspecifiedDimensions().width, subviews: subviews, spacing: spacing)
+        return result.size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = FlowResult(in: bounds.width, subviews: subviews, spacing: spacing)
+        for (index, subview) in subviews.enumerated() {
+            let position = result.positions[index]
+            subview.place(at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y), proposal: .unspecified)
+        }
+    }
+
+    struct FlowResult {
+        var size: CGSize
+        var positions: [CGPoint]
+
+        init(in maxWidth: CGFloat, subviews: Subviews, spacing: CGFloat) {
+            var positions: [CGPoint] = []
+            var lineHeight: CGFloat = 0
+            var currentX: CGFloat = 0
+            var currentY: CGFloat = 0
+
+            for subview in subviews {
+                let size = subview.sizeThatFits(.unspecified)
+                if currentX + size.width > maxWidth && currentX > 0 {
+                    currentX = 0
+                    currentY += lineHeight + spacing
+                    lineHeight = 0
+                }
+                positions.append(CGPoint(x: currentX, y: currentY))
+                currentX += size.width + spacing
+                lineHeight = max(lineHeight, size.height)
+            }
+
+            self.size = CGSize(width: maxWidth, height: currentY + lineHeight)
+            self.positions = positions
         }
     }
 }

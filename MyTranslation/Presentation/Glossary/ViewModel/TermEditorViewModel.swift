@@ -157,6 +157,36 @@ final class TermEditorViewModel {
         patternOption(for: id)?.displayName ?? "패턴 선택"
     }
 
+    // MARK: - Activator Term Management
+
+    func addActivatorTerm(key: String) {
+        let current = generalDraft.activatedByArray
+        if !current.contains(key) {
+            let updated = (current + [key]).joined(separator: ";")
+            generalDraft.activatedBy = updated
+        }
+    }
+
+    func removeActivatorTerm(key: String) {
+        let current = generalDraft.activatedByArray
+        let filtered = current.filter { $0 != key }
+        generalDraft.activatedBy = filtered.joined(separator: ";")
+    }
+
+    func fetchAllTermsForPicker() throws -> [(key: String, target: String)] {
+        let descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(
+            sortBy: [SortDescriptor(\.target)]
+        )
+        let terms = try context.fetch(descriptor)
+        return terms.map { (key: $0.key, target: $0.target) }
+    }
+
+    func termTarget(for key: String) -> String? {
+        let predicate = #Predicate<Glossary.SDModel.SDTerm> { $0.key == key }
+        let descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(predicate: predicate)
+        return try? context.fetch(descriptor).first?.target
+    }
+
     func availableRoles(for id: String?) -> [String] {
         patternOption(for: id)?.roleOptions ?? []
     }
