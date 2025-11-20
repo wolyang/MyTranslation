@@ -172,27 +172,34 @@ public final class TermMasker {
         return activated
     }
 
-    /// activatedKeys에 해당하는 entries를 추출한다 (정규화를 위해 승격).
+    /// Term-to-Term 활성화를 통해 승격되는 entries를 추출한다.
     /// - Parameters:
     ///   - allEntries: 모든 GlossaryEntry 배열
-    ///   - activatedKeys: 활성화된 Term 키들
+    ///   - standaloneEntries: prohibitStandalone이 아닌 Entry 배열
+    ///   - normalizedOriginal: 정규화된 원문 텍스트
     /// - Returns: 활성화된 Entry 배열
-    func promoteActivatedEntries(in original: String, from allEntries: [GlossaryEntry]) -> [GlossaryEntry] {
-        let standaloneEntriesInText = allEntries.filter { entry in
-            guard entry.prohibitStandalone else { return false }
+    func promoteActivatedEntries(
+        from allEntries: [GlossaryEntry],
+        standaloneEntries: [GlossaryEntry],
+        normalizedOriginal: String
+    ) -> [GlossaryEntry] {
+        // 1. 원문에 등장하는 standalone entries만 필터링
+        let standaloneEntriesInText = standaloneEntries.filter { entry in
             let normSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
-            return original.contains(normSource)
+            return normalizedOriginal.contains(normSource)
         }
+
+        // 2. usedKeys 수집
         let usedKeys = collectUsedTermKeys(from: standaloneEntriesInText)
+
+        // 3. activatedKeys 수집
         let activatedKeys = collectActivatedTermKeys(from: allEntries, usedKeys: usedKeys)
-        
+
+        // 4. activatedKeys에 해당하는 termStandalone entries 반환
         return allEntries.filter {
-             if case let .termStandalone(termId) = $0.origin {
-                 activatedKeys.contains(termId)
-             } else {
-                 false
-             }
-         }
+            guard case let .termStandalone(termId) = $0.origin else { return false }
+            return activatedKeys.contains(termId)
+        }
     }
 
     /// GlossaryEntry.Origin의 고유 키를 생성 (중복 제거용)
@@ -595,7 +602,11 @@ public final class TermMasker {
         let patternPromoted = promoteProhibitedEntries(in: original, entries: entries)
 
         // 3) Term-to-Term 활성화
-        let termPromoted = promoteActivatedEntries(in: original, from: entries)
+        let termPromoted = promoteActivatedEntries(
+            from: entries,
+            standaloneEntries: standaloneEntries,
+            normalizedOriginal: normalizedOriginal
+        )
 
         // 4) 모든 허용 엔트리 합치기 (중복 제거)
         var combined = standaloneEntries
