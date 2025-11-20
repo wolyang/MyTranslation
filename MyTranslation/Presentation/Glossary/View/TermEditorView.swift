@@ -91,6 +91,13 @@ struct TermEditorView: View {
             Toggle("호칭 여부", isOn: $viewModel.generalDraft.isAppellation)
             Toggle("Pre-mask", isOn: $viewModel.generalDraft.preMask)
         }
+        Section("조건부 활성화") {
+            formTextField(
+                "활성화 조건 (Term 키)",
+                text: $viewModel.generalDraft.activatedBy,
+                help: "세미콜론(;)으로 구분해 이 용어를 활성화하는 Term 키를 입력하세요. 지정된 Term이 동일 세그먼트에 출현하면 이 용어가 활성화됩니다."
+            )
+        }
     }
 
     @ViewBuilder

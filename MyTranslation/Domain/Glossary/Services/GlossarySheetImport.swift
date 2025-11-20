@@ -21,6 +21,22 @@ extension Glossary.Sheet {
     }
 
     struct ValuesResponse: Decodable { let values: [[String]]? }
+
+    // 파싱된 Term 데이터 (upsert 전 intermediate 형태)
+    struct ParsedTerm {
+        let key: String
+        let target: String
+        let variants: [String]
+        let sources: [SourceData]
+        let isAppellation: Bool
+        let preMask: Bool
+        let activatedByKeys: [String]  // 신규: activated_by 컬럼에서 파싱된 Term 키들
+
+        struct SourceData {
+            let text: String
+            let prohibitStandalone: Bool
+        }
+    }
     
     static func fetchSheetTabs(spreadsheetId: String) async throws -> [(title: String, id: Int)] {
         let fields = "sheets.properties(title,sheetId)"

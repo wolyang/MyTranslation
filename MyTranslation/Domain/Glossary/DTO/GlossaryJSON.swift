@@ -18,6 +18,7 @@ public struct JSTerm: Codable, Hashable {
     public var components: [JSComponent]
     public var isAppellation: Bool
     public var preMask: Bool
+    public var activatedByKeys: [String]?  // 이 Term을 활성화하는 Term 키들 (nil = [])
 }
 
 public struct JSComponent: Codable, Hashable {

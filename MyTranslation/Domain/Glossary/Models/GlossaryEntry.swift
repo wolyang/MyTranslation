@@ -22,6 +22,10 @@ public struct GlossaryEntry: Sendable, Hashable {
         case composer(composerId: String, leftKey: String, rightKey: String?, needPairCheck: Bool)
     }
     public var origin: Origin
+
+    // 조건부 활성화 관계 정보
+    public var activatorKeys: Set<String> = []   // 이 Entry를 활성화하는 Term 키들
+    public var activatesKeys: Set<String> = []   // 이 Entry가 활성화하는 Term 키들
 }
 
 public enum ScriptKind: Int16, Sendable { case unknown=0, hangul=1, cjk=2, latin=3, mixed=4 }
@@ -90,6 +94,11 @@ extension Glossary {
             var entries: [GlossaryEntry] = []
             for key in matchedTermKey {
                 guard let t = termByKey[key], let ms = matchedSourcesByKey[key] else { continue }
+
+                // 활성화 관계 정보 추출
+                let activatorKeys = Set(t.activators.map { $0.key })
+                let activatesKeys = Set(t.activates.map { $0.key })
+
                 for s in t.sources {
                     guard ms.contains(s.text) else { continue }
                     entries.append(GlossaryEntry(
@@ -99,7 +108,9 @@ extension Glossary {
                         preMask: t.preMask,
                         isAppellation: t.isAppellation,
                         prohibitStandalone: s.prohibitStandalone,
-                        origin: .termStandalone(termKey: t.key)
+                        origin: .termStandalone(termKey: t.key),
+                        activatorKeys: activatorKeys,
+                        activatesKeys: activatesKeys
                     ))
                 }
             }
@@ -258,6 +269,12 @@ extension Glossary {
                     for (lComp, rComp) in pairs {
                         let leftTerm = lComp.term
                         let rightTerm = rComp.term
+
+                        // composer의 activates는 L과 R의 activates 합집합
+                        var composerActivatesKeys = Set<String>()
+                        composerActivatesKeys.formUnion(leftTerm.activates.map { $0.key })
+                        composerActivatesKeys.formUnion(rightTerm.activates.map { $0.key })
+
                         let srcTplIdx = lComp.srcTplIdx ?? rComp.srcTplIdx ?? 0
                         let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
                         let srcTpl = pat.sourceTemplates[safe: srcTplIdx] ?? pat.sourceTemplates.first ?? "{L}{J}{R}"
@@ -275,7 +292,9 @@ extension Glossary {
                                     preMask: pat.preMask,
                                     isAppellation: pat.isAppellation,
                                     prohibitStandalone: false,
-                                    origin: .composer(composerId: pat.name, leftKey: leftTerm.key, rightKey: rightTerm.key, needPairCheck: pat.needPairCheck)
+                                    origin: .composer(composerId: pat.name, leftKey: leftTerm.key, rightKey: rightTerm.key, needPairCheck: pat.needPairCheck),
+                                    activatorKeys: [],  // composer는 activator 없음
+                                    activatesKeys: composerActivatesKeys
                                 ))
                             }
                         }
@@ -284,6 +303,10 @@ extension Glossary {
                     let lefts = try matchedLeftComponents(for: pat, terms: allTerms, matched: matchedTerms)
                     for lComp in lefts {
                         let t = lComp.term
+
+                        // 단일 컴포넌트의 activates
+                        let composerActivatesKeys = Set(t.activates.map { $0.key })
+
                         let srcTplIdx = lComp.srcTplIdx ?? 0
                         let tgtTplIdx = lComp.tgtTplIdx ?? 0
                         let srcTpl = pat.sourceTemplates[safe: srcTplIdx] ?? pat.sourceTemplates.first ?? "{L}"
@@ -299,7 +322,9 @@ extension Glossary {
                                 preMask: pat.preMask,
                                 isAppellation: pat.isAppellation,
                                 prohibitStandalone: false,
-                                origin: .composer(composerId: pat.name, leftKey: t.key, rightKey: nil, needPairCheck: false)
+                                origin: .composer(composerId: pat.name, leftKey: t.key, rightKey: nil, needPairCheck: false),
+                                activatorKeys: [],
+                                activatesKeys: composerActivatesKeys
                             ))
                         }
                     }
