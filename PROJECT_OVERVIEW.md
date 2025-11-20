@@ -1,0 +1,354 @@
+# PROJECT_OVERVIEW.md — Project Overview
+
+## 프로젝트 개요
+
+MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
+
+주요 특징:
+
+* WKWebView로 웹 페이지를 로딩하고, 페이지 본문을 세그먼트 단위로 추출
+* Apple Foundation Models (AFM), Google Translate, DeepL 등 **여러 번역 엔진** 사용
+* 번역 결과에 대해 **온디바이스 Foundation Model 기반 후처리(포스트에딧, 비교, 리랭킹)** 지원
+* Glossary/마스킹 시스템으로 인명·용어 번역 품질 제어
+
+---
+
+## 아키텍처 개요
+
+이 프로젝트는 대략 아래 레이어로 나뉩니다.
+
+* **Application**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
+* **Domain**: 번역/세그먼트/Glossary 등 비즈니스 도메인 모델과 계약(프로토콜)
+* **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등)
+* **Services**: 번역 엔진/라우터, 마스킹, Web 렌더링, FM 파이프라인 등
+* **Persistence**: SwiftData 기반 Glossary 저장소, 설정, 캐시/키 관리
+* **Utils**: 공통 유틸리티
+
+### 1. 번역 파이프라인 흐름
+
+웹 페이지 번역은 대략 다음 단계를 거칩니다.
+
+1. **Content Extraction**
+
+   * WKWebView에 JS를 주입해 `data-seg-id`를 붙인 세그먼트 단위 텍스트를 추출
+2. **Translation Routing**
+
+   * `TranslationRouter`가 AFM / Google / DeepL 중 하나 또는 여러 개를 선택해 호출
+3. **Translation Streaming**
+
+   * `AsyncThrowingStream` 기반으로 partial/final 결과를 스트리밍
+4. **Post-Processing (FM 파이프라인)**
+
+   * 온디바이스 LLM으로 스타일 보정(포스트에딧), 엔진 간 비교, 리랭킹 옵션 처리
+5. **Rendering**
+
+   * 인라인 교체(InlineReplacer) 또는 오버레이(OverlayRenderer) 방식으로 결과 반영
+
+---
+
+## 주요 컴포넌트/모듈
+
+### 1. Translation Router (`Services/Ochestration/`)
+
+* `TranslationRouter` 프로토콜과 기본 구현체 `DefaultTranslationRouter`.
+* 역할:
+
+  * 번역 요청을 스트리밍 형태로 오케스트레이션
+  * 캐시를 먼저 조회하고 필요 시 엔진 호출
+  * AFM, Google, DeepL 등으로 라우팅
+  * Glossary 적용을 위한 훅 제공
+* 스트림 이벤트(`TranslationStreamingContract`) 예:
+
+  * `cachedHit` → `requestScheduled` → `partial`/`final` → `failed` → `completed`
+
+### 2. Translation Engines (`Services/Translation/Engines/`)
+
+각 엔진은 `TranslationEngine` 프로토콜을 구현합니다.
+
+* **AFMEngine**: Apple `Translation` 프레임워크 + Foundation Models 기반
+* **GoogleEngine**: Google Translate V2 API
+* **DeepLEngine**: DeepL API (free tier 포함)
+
+반환 타입은 공통적으로 `AsyncThrowingStream<[TranslationResult], Error>`.
+
+### 3. FM (Foundation Model) Pipeline (`Services/Translation/FM/`)
+
+온디바이스 LLM을 이용한 번역 품질 향상 파이프라인.
+
+* `FMOrchestrator`: 포스트에딧, 비교, 리랭킹 단계 오케스트레이션
+* `FMModelManager`: 로컬 모델 라이프사이클 관리
+* `FMPostEditor`: 스타일 기반 포스트에딧
+* `CrossEngineComparer`, `Reranker`: 다중 엔진 결과 비교/리랭킹
+
+구성은 `FMConfig`로 제어:
+
+```
+FMConfig(
+    enablePostEdit: true,
+    enableComparer: false,
+    enableRerank: false
+)
+```
+
+### 4. Glossary System (`Domain/Glossary/`)
+
+SwiftData 기반 Glossary 시스템.
+
+* 모델: `SDTerm`, `SDPattern`, `SDComponent`, `SDTag`
+* 인덱싱: `GlossarySDSourceIndexMaintainer`
+* Import: `GlossarySheetImport`로 Google Sheets에서 불러오기
+* Service: `Glossary.Service`가 Glossary 조회/적용 로직 제공
+
+### 5. Web Rendering (`Services/WebRendering/`)
+
+WKWebView 번역 결과 반영.
+
+* `ContentExtractor`: 세그먼트 추출 및 `data-seg-id` 주입
+* `InlineReplacer`: JS 브리지(`window.__afmInline.upsertPayload`)로 인라인 교체
+* `OverlayRenderer`: 세그먼트 선택 및 오버레이 기반 렌더링
+* `SelectionBridge`: 텍스트 선택 이벤트 Swift 쪽으로 전달
+
+### 6. Masking (`Services/Translation/Masking/`)
+
+민감한 용어/인명을 보호하기 위한 마스킹 로직.
+
+* `TermMasker`: 마스킹/언마스킹 처리 및 정규화 로직
+* `MaskedPack`: 원문/마스킹된 텍스트/락 정보 묶음
+* **Hangul handling**: 한글 조사 선택을 위해 받침(종성) 여부를 판별하는 `hangulFinalJongInfo()` 로직을 포함해,
+  `이/가`, `을/를`, `은/는`, `과/와`, `으로/로` 등 조사 자동 판정 기능을 제공
+
+(`Services/Translation/Masking/`)
+
+민감한 용어/인명을 보호하기 위한 마스킹 로직.
+
+* `TermMasker`: 마스킹/언마스킹 및 한글 조사 처리
+* `MaskedPack`: 원문/마스킹된 텍스트/락 정보 묶음
+
+### 7. Dependency Injection
+
+* `AppContainer`: DI 컨테이너
+
+  * SwiftData ModelContext
+  * 번역 엔진들
+  * `DefaultTranslationRouter`
+  * Glossary 서비스
+  * FM 파이프라인 구성
+
+### 8. State Management
+
+* `BrowserViewModel`: 페이지 번역 상태, 언어 설정, `translateStream()`로 스트리밍 제어
+* `GlossaryViewModel`: Glossary CRUD 및 SwiftData 연동
+
+### 9. Persistence & Configuration
+
+* SwiftData: 용어/패턴 저장
+* UserSettings: 번역/엔진/스타일 설정
+* API Keys: `Info.plist` 기반 (Google/DeepL)
+
+---
+
+## 프로젝트 구조
+
+예시:
+
+```
+MyTranslation/
+├── Application/
+├── Domain/
+│   ├── Cache/
+│   ├── Glossary/
+│   ├── Models/
+│   ├── Translation/
+│   └── ValueObjects/
+├── Presentation/
+│   ├── Browser/
+│   ├── Glossary/
+│   └── Settings/
+├── Services/
+│   ├── Adapters/
+│   ├── Ochestration/
+│   ├── Translation/
+│   └── WebRendering/
+├── Persistence/
+└── Utils/
+```
+
+---
+
+## 핵심 타입/모듈 목록
+
+> 이 목록은 **핵심 타입/모듈**만 요약합니다. 변경 시 반드시 최신 상태로 유지해야 합니다.
+
+* `AppContainer`
+* `BrowserViewModel`
+* `GlossaryViewModel`
+* `TranslationRouter` / `DefaultTranslationRouter`
+* `TranslationEngine` (AFM/Google/DeepL)
+* `TermMasker`
+* `ContentExtractor` / `InlineReplacer` / `OverlayRenderer`
+* `FMOrchestrator`, `FMPostEditor`, `CrossEngineComparer`, `Reranker`
+
+---
+
+## Build & Test
+
+> ⚠ Xcode + iOS 시뮬레이터가 설치된 macOS 환경에서만 실행 가능합니다.
+
+### Build
+
+```
+xcodebuild -scheme MyTranslation -configuration Debug build
+xcodebuild -scheme MyTranslation -configuration Release build
+```
+
+### Test
+
+```
+xcodebuild test -scheme MyTranslation -destination 'platform=iOS Simulator,name=iPhone 15'
+xcodebuild test -scheme MyTranslation -only-testing:MyTranslationTests
+xcodebuild test -scheme MyTranslation -only-testing:MyTranslationTests/MyTranslationTests/testExample
+```
+
+### Open in Xcode
+
+```
+open MyTranslation.xcodeproj
+```
+
+## ## Common Development Patterns
+
+### 1. Adding a New Translation Engine
+
+1. `Services/Translation/Engines/<EngineName>/` 경로에 클라이언트 생성
+2. `TranslationEngine` 프로토콜 구현 (스트리밍 지원 필수)
+3. `EngineTag` enum에 엔진 식별자 추가
+4. `AppContainer` 및 `DefaultTranslationRouter`에 등록
+5. UI 측 `EnginePickerOptionsView` 업데이트
+
+### 2. Modifying Translation Stream
+
+스트리밍 계약은 `Domain/Translation/TranslationStreamingContract.swift`에 정의되어 있으며 이벤트 순서는 반드시 유지해야 합니다:
+
+1. `cachedHit`
+2. `requestScheduled`
+3. `partial` / `final`
+4. `failed`
+5. `completed`
+
+라우팅 로직 변경 시 `DefaultTranslationRouter.translateStream()`을 수정합니다.
+
+### 3. Working with Glossary Models
+
+Glossary는 SwiftData 기반이며 `Glossary.SDModel` 네임스페이스 아래에 모델이 위치합니다.
+
+* 모든 Glossary 조작은 **`@MainActor`** 컨텍스트 내에서 수행
+* 비즈니스 로직은 `GlossaryService`를 통해 처리 (직접 모델 접근 지양)
+* 인덱스 관리는 `GlossarySDSourceIndexMaintainer`에 의해 자동 수행
+
+### 4. Testing Translation Pipeline
+
+주요 프로토콜에 대한 Mock 구현을 사용해 번역 파이프라인을 테스트합니다:
+
+* `TranslationEngine` → 스트리밍 테스트 결과를 반환하는 mock
+* `CacheStore` → 결정적 테스트를 위한 인메모리 캐시
+* `PostEditor`, `ResultComparer` → NOP 또는 테스트 더블 구현
+
+---
+
+## Configuration
+
+### 1. API Keys
+
+API 키는 `MyTranslation/Resources/Info.plist`에 저장됩니다:
+
+* `GoogleAPIKey`
+* `DeepLAuthKey`
+
+⚠️ **보안 주의:** 프로덕션 환경에서는 Info.plist에 API 키를 포함하지 말고, 환경 변수나 보안 저장소 사용을 고려합니다.
+
+### 2. Feature Flags
+
+Foundation Model 파이프라인의 기능 플래그는 `AppContainer` 초기화 시 설정합니다:
+
+```
+FMConfig(
+    enablePostEdit: true,
+    enableComparer: false,
+    enableRerank: false
+)
+```
+
+### 3. Translation Settings
+
+`UserSettings`에서 설정 가능한 항목:
+
+* URL별 소스/타깃 언어 설정 (`BrowserViewModel.languagePreferenceByURL`)
+* 기본 번역 엔진 선택
+* 번역 스타일 (`TranslationStyle` 값 객체)
+* Glossary 적용 여부 토글
+
+---
+
+## 아키텍처 & 디자인 원칙
+
+이 프로젝트는 전통적인 레이어드 아키텍처에 **클린 아키텍처(Clean Architecture)** 개념을 일부 섞어서 설계하는 것을 지향합니다.
+
+### 1. 레이어 개념
+
+* **Domain 레이어**
+
+  * 번역, Glossary, 세그먼트, FM 파이프라인 등 "문제 영역 자체"를 표현하는 레이어입니다.
+  * 비즈니스 규칙, 도메인 모델, 값 객체, 인터페이스(프로토콜)를 정의합니다.
+  * 외부 프레임워크(iOS UI, 네트워크 클라이언트, DB 등)에 최대한 의존하지 않도록 합니다.
+
+* **Application / Services 레이어**
+
+  * Domain 레이어의 규칙을 이용해 실제 유스케이스를 수행하는 애플리케이션 서비스 레이어입니다.
+  * `TranslationRouter`, FM 파이프라인 오케스트레이션, Glossary 서비스 등이 여기에 속합니다.
+  * 외부 인프라(네트워크, WebView, 번역 엔진 클라이언트)를 조합해 도메인 규칙을 수행합니다.
+
+* **Presentation 레이어**
+
+  * SwiftUI View 및 ViewModel로 구성된 레이어입니다.
+  * ViewModel은 가능한 한 UI 상태 관리와 애플리케이션 서비스 호출에만 집중하고,
+    Domain/Services 레이어의 구체 구현에 강하게 결합되지 않도록 합니다.
+
+* **Infrastructure 레이어 (Adapters, Persistence, WebRendering 등)**
+
+  * 번역 엔진 API 클라이언트, WKWebView 연동, SwiftData, 로컬 저장소 등
+    "환경 의존적인 것"을 캡슐화하는 레이어입니다.
+  * Domain / Application에서 정의한 인터페이스를 구현하는 어댑터 역할을 합니다.
+
+### 2. 의존성 방향 (Dependency Rule)
+
+* 의존성은 가능한 한 **바깥 → 안쪽**(UI → Services → Domain) 방향으로만 흐르도록 합니다.
+* Domain 레이어는 어떤 상위 레이어(Presentation, Infrastructure)에 대해서도 알지 못해야 합니다.
+* 구체 구현(예: 특정 번역 엔진, 특정 WebView 연동 방식)에 대한 의존성은
+  Domain이 아닌 Services/Infrastructure 레이어에 머무르게 합니다.
+
+### 3. DI(Dependency Injection)와 결합도
+
+* `AppContainer`는 DI 컨테이너로서, 상위 레이어에서 사용할 구체 구현을 조립하는 역할을 합니다.
+* ViewModel / Services는 가능하면 프로토콜(또는 추상 타입)에 의존하게 하고,
+  실제 인스턴스 생성은 `AppContainer`나 팩토리에서 담당하는 것을 권장합니다.
+* 이렇게 하면 번역 엔진 교체, FM 파이프라인 구성을 변경하는 등의 작업을
+  Domain/Presentation 코드를 최소 변경으로 수행할 수 있습니다.
+
+### 4. 테스트 가능성
+
+* Domain 레이어의 타입과 규칙은 **순수 Swift 코드**로 유지해 단위 테스트를 쉽게 합니다.
+* 번역 엔진, WebView, 네트워크 연동 등은 프로토콜로 추상화하고,
+  테스트 환경에서는 인메모리/목(Mock) 구현으로 교체할 수 있게 설계합니다.
+
+### 5. 기능 단위 확장 전략
+
+* 새로운 번역 관련 기능(예: 새로운 후처리 단계, 새로운 Glossary 규칙)을 추가할 때는:
+
+  1. 우선 Domain/Services 레이어에 필요한 타입/인터페이스를 정의하고,
+  2. Infrastructure 레이어에서 실제 구현을 추가한 뒤,
+  3. 마지막으로 Presentation 레이어에서 이를 사용하는 방향으로 확장합니다.
+* 이 순서를 지키면 UI에서 출발해 무작정 아래로 파고드는 것보다
+  구조를 일관되게 유지하기 쉽습니다.
+
+> 위 원칙들은 "완전한 정석 클린 아키텍처" 구현을 강제하기보다는,
+> 현재 코드 구조를 크게 벗어나지 않는 선에서 **의존성 방향과 책임 분리를 의식적으로 유지하기 위한 가이드**입니다.
