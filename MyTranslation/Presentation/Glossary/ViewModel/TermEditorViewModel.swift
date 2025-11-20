@@ -236,10 +236,11 @@ final class TermEditorViewModel {
                 let targetTemplates = option?.targetTemplates ?? []
                 let srcIdx = TermEditorViewModel.normalizeTemplateIndex(comp.srcTplIdx ?? 0, templates: sourceTemplates)
                 let tgtIdx = TermEditorViewModel.normalizeTemplateIndex(comp.tgtTplIdx ?? 0, templates: targetTemplates)
+                let role = comp.role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return ComponentDraft(
                     existingID: comp.persistentModelID,
                     patternID: patternID,
-                    roleName: comp.role ?? "",
+                    roleName: role,
                     selectedGroupUID: selectedUID,
                     customGroupName: customName,
                     srcTemplateIndex: srcIdx,

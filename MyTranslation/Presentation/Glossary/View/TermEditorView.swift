@@ -121,15 +121,9 @@ struct TermEditorView: View {
         ForEach($viewModel.roleDrafts) { $draft in
             Section(header: Text(draft.roleName.isEmpty ? "항목" : draft.roleName)) {
                 if !viewModel.roleOptions.isEmpty {
-                    let existingRole = draft.roleName
-                    let roleOptions = viewModel.roleOptions
-                    let needsExistingTag = !existingRole.isEmpty && !roleOptions.contains(existingRole)
                     Picker("역할", selection: $draft.roleName) {
                         Text("역할 없음").tag("")
-                        if needsExistingTag {
-                            Text(existingRole).tag(existingRole)
-                        }
-                        ForEach(roleOptions, id: \.self) { option in
+                        ForEach(viewModel.roleOptions, id: \.self) { option in
                             Text(option).tag(option)
                         }
                     }
@@ -265,14 +259,9 @@ struct TermEditorView: View {
 
             if hasPattern {
                 let roles = viewModel.availableRoles(for: patternID)
-                let existingRole = component.roleName.wrappedValue
-                let needsExistingRole = !existingRole.isEmpty && !roles.contains(existingRole)
                 if !roles.isEmpty {
                     Picker("역할", selection: component.roleName) {
                         Text("역할 없음").tag("")
-                        if needsExistingRole {
-                            Text(existingRole).tag(existingRole)
-                        }
                         ForEach(roles, id: \.self) { role in
                             Text(role).tag(role)
                         }
