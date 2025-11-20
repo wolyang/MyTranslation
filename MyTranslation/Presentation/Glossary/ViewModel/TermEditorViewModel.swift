@@ -95,30 +95,49 @@ final class TermEditorViewModel {
 
     enum Mode { case general, pattern }
 
+    // SwiftData 작업을 처리하는 컨텍스트
     let context: ModelContext
+    // 수정 시 기존 용어를 보관해 업서트 여부를 판단
     private let existingTerm: Glossary.SDModel.SDTerm?
+    // 패턴 기반 생성 모드일 때 참고할 패턴 데이터
     let pattern: PatternReference?
+    // 편집 중인 용어 원본을 UI에서 확인할 때 사용
     var editingTerm: Glossary.SDModel.SDTerm? { existingTerm }
 
+    // 일반/패턴 모드를 구분해 저장 플로우를 분기
     var mode: Mode
+    // 일반 모드에서 단일 용어 입력을 위한 초안
     var generalDraft: RoleDraft
+    // 패턴 모드에서 역할별 용어 입력을 위한 초안 목록
     var roleDrafts: [RoleDraft]
+    // 패턴 모드에서 선택된 그룹 UID
     var selectedGroupID: String?
+    // 새로운 그룹 이름 입력값
     var newGroupName: String
+    // 패턴 메타에 정의된 그룹 선택지
     var patternGroups: [GroupOption]
+    // 용어에 연결할 패턴 컴포넌트 초안 목록
     var componentDrafts: [ComponentDraft]
+    // 패턴 선택지 목록(이름, 템플릿, 역할 옵션 포함)
     let patternOptions: [PatternOption]
+    // 패턴 ID로 빠르게 옵션을 찾기 위한 맵
     private let patternOptionMap: [String: PatternOption]
+    // 삭제 예약된 컴포넌트 ID 집합
     private var removedComponentIDs: Set<PersistentIdentifier> = []
+    // 저장 실패 등 오류 메시지 전달용
     var errorMessage: String?
+    // 충돌 시 병합 대상으로 보여줄 용어
     var mergeCandidate: Glossary.SDModel.SDTerm?
+    // 저장 완료 여부를 UI에 알리기 위한 플래그
     var didSave: Bool = false
 
+    // 패턴 메타에서 제공하는 역할 선택지
     var roleOptions: [String] {
         pattern?.roleOptions ?? []
     }
 
 
+    // 기존 용어가 있을 때만 컴포넌트 편집 허용 여부
     var canEditComponents: Bool { editingTerm != nil }
 
     var sortedPatternOptions: [PatternOption] { patternOptions }
