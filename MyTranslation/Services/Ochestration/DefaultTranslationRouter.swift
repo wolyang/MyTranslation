@@ -443,30 +443,34 @@ final class DefaultTranslationRouter: TranslationRouter {
         var output = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
 //        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
         
-        output = termMasker.normalizeEntitiesAndParticles(
-            in: output,
-            locksByToken: pack.locks,
-            names: [],
-            mode: .tokensOnly
-        )
-//        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
+        output = termMasker.normalizeVariantsAndParticles(in: output, entries: nameGlossaries)
+        output = termMasker.normalizeTokensAndParticles(in: output, locksByToken: pack.locks)
         
-        output = termMasker.unlockTermsSafely(
-            output,
-            locks: pack.locks
-        )
-//        print("[T] router.processStream [\(pack.seg.id)] UNLOCKED TERMS RESULT: \(output)")
-
-        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
-            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
-            output = termMasker.normalizeEntitiesAndParticles(
-                in: output,
-                locksByToken: [:],
-                names: nameGlossaries,
-                mode: .namesOnly
-            )
-//            print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES 2 RESULT: \(output)")
-        }
+//        // 마스킹된 토큰을 언마스킹하고 조사를 보정한다.
+//        output = termMasker.normalizeEntitiesAndParticles(
+//            in: output,
+//            locksByToken: pack.locks,
+//            names: [],
+//            mode: .tokensOnly
+//        )
+////        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
+//        
+//        output = termMasker.unlockTermsSafely(
+//            output,
+//            locks: pack.locks
+//        )
+////        print("[T] router.processStream [\(pack.seg.id)] UNLOCKED TERMS RESULT: \(output)")
+//
+//        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
+//            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
+//            output = termMasker.normalizeEntitiesAndParticles(
+//                in: output,
+//                locksByToken: [:],
+//                names: nameGlossaries,
+//                mode: .namesOnly
+//            )
+////            print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES 2 RESULT: \(output)")
+//        }
 
         if pack.locks.values.count == 1,
            let target = pack.locks.values.first?.target
