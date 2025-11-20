@@ -155,24 +155,29 @@ extension Glossary.SDModel {
         }
 
         private func setupActivatorRelationships(activationMap: [String: [String]], termMap: [String: SDTerm]) throws {
-            // overwrite 모드일 때는 기존 관계 전부 제거 후 재설정
-            if merge == .overwrite {
-                for (termKey, _) in activationMap {
-                    guard let term = termMap[termKey] else { continue }
-                    // 기존 activators 관계 제거 (양방향 제거)
-                    for activator in term.activators {
-                        activator.activates.removeAll { $0.key == termKey }
-                    }
-                    term.activators.removeAll()
-                }
-            }
-
-            // 새로운 관계 설정
+            // 새로운 관계 설정 (activators만 수정하면 activates는 inverse에 의해 자동 관리됨)
             for (termKey, activatorKeys) in activationMap {
                 guard let term = termMap[termKey] else { continue }
 
+                // overwrite 모드일 때는 기존 관계를 먼저 정리
+                if merge == .overwrite {
+                    // 기존 activators를 모두 제거하고 새로 설정
+                    let oldActivators = term.activators
+                    for oldActivator in oldActivators {
+                        if let idx = term.activators.firstIndex(where: { $0.key == oldActivator.key }) {
+                            term.activators.remove(at: idx)
+                        }
+                    }
+                }
+
+                // 새 activator 추가
                 for activatorKey in activatorKeys {
-                    // activatorKey에 해당하는 Term 찾기 (전체 DB에서, 현재 import에 없을 수도 있음)
+                    // 이미 관계가 설정되어 있으면 스킵
+                    if term.activators.contains(where: { $0.key == activatorKey }) {
+                        continue
+                    }
+
+                    // activatorKey에 해당하는 Term 찾기
                     let activator: SDTerm?
                     if let found = termMap[activatorKey] {
                         activator = found
@@ -189,13 +194,8 @@ extension Glossary.SDModel {
                         continue
                     }
 
-                    // 중복 체크 후 양방향 관계 설정
-                    if !term.activators.contains(where: { $0.key == activatorKey }) {
-                        term.activators.append(activator)
-                    }
-                    if !activator.activates.contains(where: { $0.key == termKey }) {
-                        activator.activates.append(term)
-                    }
+                    // activators에만 추가 (activates는 자동 관리됨)
+                    term.activators.append(activator)
                 }
             }
         }

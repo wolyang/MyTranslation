@@ -469,11 +469,13 @@ final class TermEditorViewModel {
     private func applyActivators(_ activatorKeys: [String], to term: Glossary.SDModel.SDTerm) throws {
         let trimmed = activatorKeys.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
 
-        // 1) 기존 activators 중 새 목록에 없는 것 제거 (양방향 제거)
-        for activator in term.activators where !trimmed.contains(activator.key) {
-            activator.activates.removeAll { $0.key == term.key }
+        // 1) 기존 activators 중 새 목록에 없는 것 제거
+        let oldActivators = term.activators
+        for activator in oldActivators where !trimmed.contains(activator.key) {
+            if let idx = term.activators.firstIndex(where: { $0.key == activator.key }) {
+                term.activators.remove(at: idx)
+            }
         }
-        term.activators.removeAll { !trimmed.contains($0.key) }
 
         // 2) 새 목록에 있는 activator 추가
         for activatorKey in trimmed {
@@ -491,11 +493,8 @@ final class TermEditorViewModel {
                 continue
             }
 
-            // 양방향 관계 설정
+            // activators에만 추가 (activates는 inverse에 의해 자동 관리됨)
             term.activators.append(activator)
-            if !activator.activates.contains(where: { $0.key == term.key }) {
-                activator.activates.append(term)
-            }
         }
     }
 

@@ -25,8 +25,8 @@ extension Glossary.SDModel {
         @Relationship(deleteRule: .cascade) var termTagLinks: [SDTermTagLink] = []
 
         // 조건부 활성화 관계 (Term 간 상호 참조)
-        @Relationship(inverse: \SDTerm.activates) var activators: [SDTerm] = []  // 이 Term을 활성화하는 Term 목록
-        @Relationship(inverse: \SDTerm.activators) var activates: [SDTerm] = []  // 이 Term이 활성화하는 Term 목록
+        @Relationship(deleteRule: .nullify, inverse: \SDTerm.activates) var activators: [SDTerm] = []  // 이 Term을 활성화하는 Term 목록
+        var activates: [SDTerm] = []  // 이 Term이 활성화하는 Term 목록 (inverse에 의해 자동 관리)
         
         init(
             key: String,
