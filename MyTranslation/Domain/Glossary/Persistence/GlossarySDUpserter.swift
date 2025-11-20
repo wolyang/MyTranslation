@@ -110,7 +110,13 @@ extension Glossary.SDModel {
         private func upsertTerms(_ items: [JSTerm]) throws {
             var map: [String: SDTerm] = [:]
             for t in try context.fetch(FetchDescriptor<SDTerm>()) { map[t.key] = t }
+
+            // Phase 1: 모든 Term을 생성/업데이트하고, activatedBy 정보 수집
+            var activationMap: [String: [String]] = [:]  // termKey → activatorKeys
             for src in items {
+                // 입력값 정제(공백 제거 후 중복 제거)
+                let trimmedActivators = Array(LinkedHashSet(src.activatedByKeys ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+
                 let dst: SDTerm
                 if let existing = map[src.key] {
                     try update(term: existing, with: src)
@@ -123,7 +129,17 @@ extension Glossary.SDModel {
                     dst = created
                 }
                 try SourceIndexMaintainer.rebuild(for: dst, in: context)
+
+                // activatedByKeys 정보 수집 (overwrite 모드에서는 빈 배열도 저장해 기존 관계 제거)
+                if merge == .overwrite {
+                    activationMap[src.key] = trimmedActivators
+                } else if !trimmedActivators.isEmpty {
+                    activationMap[src.key] = trimmedActivators
+                }
             }
+
+            // Phase 2: 모든 Term이 존재하는 상태에서 activator 관계 설정
+            try setupActivatorRelationships(activationMap: activationMap, termMap: map)
         }
         
         private func update(term dst: SDTerm, with src: JSTerm) throws {
@@ -139,8 +155,54 @@ extension Glossary.SDModel {
             upsertSources(term: dst, with: src)
 
             try upsertComponents(term: dst, with: src)
-            
+
             try ensureTags(dst, names: src.tags)
+        }
+
+        private func setupActivatorRelationships(activationMap: [String: [String]], termMap: [String: SDTerm]) throws {
+            // 새로운 관계 설정 (activators만 수정하면 activates는 inverse에 의해 자동 관리됨)
+            for (termKey, activatorKeys) in activationMap {
+                guard let term = termMap[termKey] else { continue }
+
+                // overwrite 모드일 때는 기존 관계를 먼저 정리
+                if merge == .overwrite {
+                    // 기존 activators를 모두 제거하고 새로 설정
+                    let oldActivators = term.activators
+                    for oldActivator in oldActivators {
+                        if let idx = term.activators.firstIndex(where: { $0.key == oldActivator.key }) {
+                            term.activators.remove(at: idx)
+                        }
+                    }
+                }
+
+                // 새 activator 추가
+                for activatorKey in activatorKeys {
+                    // 이미 관계가 설정되어 있으면 스킵
+                    if term.activators.contains(where: { $0.key == activatorKey }) {
+                        continue
+                    }
+
+                    // activatorKey에 해당하는 Term 찾기
+                    let activator: SDTerm?
+                    if let found = termMap[activatorKey] {
+                        activator = found
+                    } else {
+                        // DB에서 조회
+                        let pred = #Predicate<SDTerm> { $0.key == activatorKey }
+                        var desc = FetchDescriptor<SDTerm>(predicate: pred)
+                        desc.fetchLimit = 1
+                        activator = try context.fetch(desc).first
+                    }
+
+                    guard let activator = activator else {
+                        print("[Import][Warning] Activator Term not found: \(activatorKey) for term: \(termKey)")
+                        continue
+                    }
+
+                    // activators에만 추가 (activates는 자동 관리됨)
+                    term.activators.append(activator)
+                }
+            }
         }
         
         private func upsertSources(term dst: SDTerm, with src: JSTerm) {

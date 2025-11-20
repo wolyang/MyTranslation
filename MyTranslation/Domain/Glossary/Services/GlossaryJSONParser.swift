@@ -76,6 +76,7 @@ struct TermRow {
     let components: String
     let isAppellation: Bool
     let preMask: Bool
+    let activatedBy: String
 }
 
 struct PatternRow {
@@ -116,6 +117,12 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
 
     let variants = splitSemi(row.variants)
     let tags = splitSemi(row.tags)
+
+    // activatedBy 파싱: 쉼표 또는 세미콜론으로 분리, 공백 trim
+    let activatedByKeys = row.activatedBy
+        .split(whereSeparator: { $0 == "," || $0 == ";" })
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
 
     // Components DSL: pattern[:role][-group1|group2][#sN][#tM]; ...
     let components: [JSComponent] = splitSemi(row.components).map { token in
@@ -188,7 +195,8 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
         tags: tags,
         components: components,
         isAppellation: row.isAppellation,
-        preMask: row.preMask
+        preMask: row.preMask,
+        activatedByKeys: activatedByKeys.isEmpty ? nil : activatedByKeys
     )
 }
 

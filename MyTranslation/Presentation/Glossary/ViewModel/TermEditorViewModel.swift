@@ -16,6 +16,7 @@ final class TermEditorViewModel {
         var prohibitStandaloneDefault: Bool
         var isAppellation: Bool
         var preMask: Bool
+        var activatedBy: String  // 조건부 활성화: 이 Term을 활성화하는 Term 키들 (세미콜론 분리)
 
         mutating func applyDefaults(from pattern: PatternReference) {
             isAppellation = pattern.defaultIsAppellation
@@ -38,6 +39,11 @@ final class TermEditorViewModel {
         var tagArray: [String] {
             tags.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
+
+        var activatedByArray: [String] {
+            activatedBy.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+
         private static func splitSources(from text: String) -> [String] {
             text.split(whereSeparator: { $0 == ";" || $0 == "\n" })
                 .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -151,6 +157,36 @@ final class TermEditorViewModel {
         patternOption(for: id)?.displayName ?? "패턴 선택"
     }
 
+    // MARK: - Activator Term Management
+
+    func addActivatorTerm(key: String) {
+        let current = generalDraft.activatedByArray
+        if !current.contains(key) {
+            let updated = (current + [key]).joined(separator: ";")
+            generalDraft.activatedBy = updated
+        }
+    }
+
+    func removeActivatorTerm(key: String) {
+        let current = generalDraft.activatedByArray
+        let filtered = current.filter { $0 != key }
+        generalDraft.activatedBy = filtered.joined(separator: ";")
+    }
+
+    func fetchAllTermsForPicker() throws -> [(key: String, target: String)] {
+        let descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(
+            sortBy: [SortDescriptor(\.target)]
+        )
+        let terms = try context.fetch(descriptor)
+        return terms.map { (key: $0.key, target: $0.target) }
+    }
+
+    func termTarget(for key: String) -> String? {
+        let predicate = #Predicate<Glossary.SDModel.SDTerm> { $0.key == key }
+        let descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(predicate: predicate)
+        return try? context.fetch(descriptor).first?.target
+    }
+
     func availableRoles(for id: String?) -> [String] {
         patternOption(for: id)?.roleOptions ?? []
     }
@@ -230,7 +266,8 @@ final class TermEditorViewModel {
                 tags: term.termTagLinks.map { $0.tag.name }.joined(separator: ";"),
                 prohibitStandaloneDefault: true,
                 isAppellation: term.isAppellation,
-                preMask: term.preMask
+                preMask: term.preMask,
+                activatedBy: term.activators.map { $0.key }.joined(separator: ";")
             )
             roleDrafts = []
             patternGroups = []
@@ -278,22 +315,23 @@ final class TermEditorViewModel {
                                       tags: "",
                                       prohibitStandaloneDefault: defaults.defaultProhibitStandalone,
                                       isAppellation: defaults.defaultIsAppellation,
-                                      preMask: defaults.defaultPreMask)
+                                      preMask: defaults.defaultPreMask,
+                                      activatedBy: "")
                 draft.applyDefaults(from: defaults)
                 return draft
             }
             roleDrafts = rds
             if rds.isEmpty {
-                roleDrafts = [RoleDraft(roleName: "기본", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask)]
+                roleDrafts = [RoleDraft(roleName: "기본", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask, activatedBy: "")]
             }
-            generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask)
+            generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: defaults.defaultProhibitStandalone, isAppellation: defaults.defaultIsAppellation, preMask: defaults.defaultPreMask, activatedBy: "")
             patternGroups = defaults.groups.map { GroupOption(id: $0.uid, name: $0.name) }.sorted { $0.name < $1.name }
             selectedGroupID = nil
             newGroupName = ""
             componentDrafts = []
         } else {
             mode = .general
-            generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: true, isAppellation: false, preMask: false)
+            generalDraft = RoleDraft(roleName: "", sourcesOK: "", sourcesProhibit: "", target: "", variants: "", tags: "", prohibitStandaloneDefault: true, isAppellation: false, preMask: false, activatedBy: "")
             roleDrafts = []
             patternGroups = []
             selectedGroupID = nil
@@ -396,6 +434,7 @@ final class TermEditorViewModel {
         term.preMask = draft.preMask
         saveOrUpdateSources(for: term, draft: draft)
         try? applyTags(draft.tagArray, to: term)
+        try? applyActivators(draft.activatedByArray, to: term)
     }
 
     private func applySources(draft: RoleDraft, to term: Glossary.SDModel.SDTerm) {
@@ -424,6 +463,38 @@ final class TermEditorViewModel {
             let link = Glossary.SDModel.SDTermTagLink(term: term, tag: tag)
             context.insert(link)
             term.termTagLinks.append(link)
+        }
+    }
+
+    private func applyActivators(_ activatorKeys: [String], to term: Glossary.SDModel.SDTerm) throws {
+        let trimmed = activatorKeys.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+
+        // 1) 기존 activators 중 새 목록에 없는 것 제거
+        let oldActivators = term.activators
+        for activator in oldActivators where !trimmed.contains(activator.key) {
+            if let idx = term.activators.firstIndex(where: { $0.key == activator.key }) {
+                term.activators.remove(at: idx)
+            }
+        }
+
+        // 2) 새 목록에 있는 activator 추가
+        for activatorKey in trimmed {
+            // 이미 관계가 설정되어 있으면 스킵
+            if term.activators.contains(where: { $0.key == activatorKey }) {
+                continue
+            }
+
+            // activator Term 찾기
+            let pred = #Predicate<Glossary.SDModel.SDTerm> { $0.key == activatorKey }
+            var desc = FetchDescriptor<Glossary.SDModel.SDTerm>(predicate: pred)
+            desc.fetchLimit = 1
+            guard let activator = try context.fetch(desc).first else {
+                print("[TermEditor][Warning] Activator Term not found: \(activatorKey)")
+                continue
+            }
+
+            // activators에만 추가 (activates는 inverse에 의해 자동 관리됨)
+            term.activators.append(activator)
         }
     }
 

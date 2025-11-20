@@ -131,6 +131,79 @@ public final class TermMasker {
         return promoted
     }
 
+    /// 주어진 entries에서 사용된 모든 Term 키를 수집한다.
+    /// - Parameter entries: GlossaryEntry 배열
+    /// - Returns: Entry에 포함된 모든 Term 키의 집합
+    func collectUsedTermKeys(from entries: [GlossaryEntry]) -> Set<String> {
+        var used: Set<String> = []
+        for entry in entries {
+            switch entry.origin {
+            case let .termStandalone(termId):
+                used.insert(termId)
+            case let .composer(composerId, leftId, rightId, _):
+                used.insert(composerId)
+                used.insert(leftId)
+                if let rightId = rightId {
+                    used.insert(rightId)
+                }
+            }
+        }
+        return used
+    }
+
+    /// usedKeys에 의해 활성화되는 Term 키들을 수집한다.
+    /// - Parameters:
+    ///   - entries: 모든 GlossaryEntry 배열
+    ///   - usedKeys: 현재 Segment에서 사용된 Term 키들
+    /// - Returns: 활성화되는 Term 키의 집합
+    func collectActivatedTermKeys(from entries: [GlossaryEntry], usedKeys: Set<String>) -> Set<String> {
+        var activated: Set<String> = []
+        for entry in entries {
+            // entry.activatesKeys와 usedKeys가 교집합이 있으면, 이 entry의 key를 활성화
+            if !entry.activatesKeys.isEmpty, !entry.activatesKeys.isDisjoint(with: usedKeys) {
+                switch entry.origin {
+                case let .termStandalone(termId):
+                    activated.insert(termId)
+                case let .composer(composerId, _, _, _):
+                    activated.insert(composerId)
+                }
+            }
+        }
+        return activated
+    }
+
+    /// activatedKeys에 해당하는 entries를 추출한다 (정규화를 위해 승격).
+    /// - Parameters:
+    ///   - allEntries: 모든 GlossaryEntry 배열
+    ///   - activatedKeys: 활성화된 Term 키들
+    /// - Returns: 활성화된 Entry 배열
+    func promoteActivatedEntries(from allEntries: [GlossaryEntry], activatedKeys: Set<String>) -> [GlossaryEntry] {
+        var promoted: [GlossaryEntry] = []
+        for entry in allEntries {
+            let entryKey: String
+            switch entry.origin {
+            case let .termStandalone(termId):
+                entryKey = termId
+            case let .composer(composerId, _, _, _):
+                entryKey = composerId
+            }
+            if activatedKeys.contains(entryKey) {
+                promoted.append(entry)
+            }
+        }
+        return promoted
+    }
+
+    /// GlossaryEntry.Origin의 고유 키를 생성 (중복 제거용)
+    private func originKey(_ origin: GlossaryEntry.Origin) -> String {
+        switch origin {
+        case let .termStandalone(termId):
+            return "term:\(termId)"
+        case let .composer(composerId, _, _, _):
+            return "composer:\(composerId)"
+        }
+    }
+
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
     public func maskWithLocks(
@@ -512,9 +585,33 @@ public final class TermMasker {
         guard !original.isEmpty else { return [] }
 
         let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
-        
+
+        // 1) 기본: prohibitStandalone이 아닌 엔트리
         let standaloneEntries = entries.filter { !$0.prohibitStandalone }
-        var allowedEntries = standaloneEntries
+
+        // 2) Pattern 기반 활성화: promoteProhibitedEntries 통합
+        let patternPromoted = promoteProhibitedEntries(in: original, entries: entries)
+
+        // 3) Term-to-Term 활성화
+        let usedKeys = collectUsedTermKeys(from: standaloneEntries)
+        let activatedKeys = collectActivatedTermKeys(from: entries, usedKeys: usedKeys)
+        let termPromoted = promoteActivatedEntries(from: entries, activatedKeys: activatedKeys)
+
+        // 4) 모든 허용 엔트리 합치기 (중복 제거)
+        var combined = standaloneEntries
+        combined.append(contentsOf: patternPromoted)
+        combined.append(contentsOf: termPromoted)
+
+        // 중복 제거: origin 기준으로 유일성 보장
+        var seen: Set<String> = []
+        var allowedEntries: [GlossaryEntry] = []
+        for entry in combined {
+            let key = originKey(entry.origin)
+            if seen.insert(key).inserted {
+                allowedEntries.append(entry)
+            }
+        }
+
         allowedEntries = filterBySourceOcc(normalizedOriginal, allowedEntries)
         
         var variantsByTarget: [String: [String]] = [:]
