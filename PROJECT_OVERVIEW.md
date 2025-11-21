@@ -133,6 +133,7 @@ WKWebView 번역 결과 반영.
   * `DefaultTranslationRouter`
   * Glossary 서비스
   * FM 파이프라인 구성
+  * Masking: `SegmentPieces` 기반 마스킹/정규화 컨텍스트 조립
 
 ### 8. State Management
 
@@ -185,6 +186,7 @@ MyTranslation/
 * `TranslationRouter` / `DefaultTranslationRouter`
 * `TranslationEngine` (AFM/Google/DeepL)
 * `TermMasker`
+* `SegmentPieces`
 * `ContentExtractor` / `InlineReplacer` / `OverlayRenderer`
 * `FMOrchestrator`, `FMPostEditor`, `CrossEngineComparer`, `Reranker`
 
