@@ -18,6 +18,7 @@ struct URLBarView: View {
     var onSelectTargetLanguage: (AppLanguage) -> Void = { _ in }
     var onTapMore: (() -> Void)? = nil
 
+    @Environment(\.scenePhase) private var scenePhase
     @FocusState var isFocused: Bool
     @AppStorage("recentURLs") var recentURLsData: Data = Data()
     @AppStorage("recentURLLimit") var recentURLLimit: Int = 8
@@ -27,6 +28,7 @@ struct URLBarView: View {
     @State var originalURLBeforeEditing: String = ""
     @State var didCommitDuringEditing: Bool = false
     @State var isShowingEngineOptions: Bool = false
+    @State var pasteboardURLString: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -35,8 +37,10 @@ struct URLBarView: View {
                     urlString: $urlString,
                     isFocused: $isFocused,
                     goButtonSymbolName: goButtonSymbolName,
+                    pasteboardURLString: pasteboardURLString,
                     onCommit: commitGo,
-                    onClear: { urlString = "" }
+                    onClear: { urlString = "" },
+                    onPasteAndGo: pasteAndGo
                 )
                 .background(fieldHeightReader)
                 .overlay(alignment: .topLeading) {
@@ -97,6 +101,11 @@ struct URLBarView: View {
         }
         .onChange(of: recentURLLimit) { _, newValue in
             trimRecents(to: newValue)
+        }
+        .onAppear(perform: refreshPasteboardURL)
+        .onChange(of: scenePhase) { _, newValue in
+            guard newValue == .active else { return }
+            refreshPasteboardURL()
         }
         .zIndex(2)
     }

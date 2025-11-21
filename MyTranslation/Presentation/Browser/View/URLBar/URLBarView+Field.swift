@@ -1,5 +1,6 @@
 // File: URLBarView+Field.swift
 import SwiftUI
+import UIKit
 
 extension URLBarView {
     /// 포커스 상태 변화에 따라 편집 상태와 URL 복원을 제어합니다.
@@ -47,6 +48,32 @@ extension URLBarView {
     func endEditing() {
         isFocused = false
     }
+
+    /// 클립보드에서 URL을 읽어 주소창에 노출할지 갱신합니다.
+    func refreshPasteboardURL() {
+        let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        pasteboardURLString = normalizedClipboardURLString(from: clipboardText)
+    }
+
+    /// 브라우저가 열 수 있는 형식인지 검사하고 스킴을 보정한 URL 문자열을 반환합니다.
+    func normalizedClipboardURLString(from text: String) -> String? {
+        guard text.isEmpty == false else { return nil }
+        if let url = URL(string: text), let host = url.host, url.scheme != nil {
+            return url.absoluteString
+        }
+        if let url = URL(string: "https://" + text), let host = url.host, host.isEmpty == false {
+            return url.absoluteString
+        }
+        return nil
+    }
+
+    /// 클립보드 URL을 주소창에 붙여넣고 즉시 이동합니다.
+    func pasteAndGo() {
+        refreshPasteboardURL()
+        guard let pasteboardURLString else { return }
+        urlString = pasteboardURLString
+        commitGo()
+    }
 }
 
 /// URL 입력 텍스트 필드를 구성하는 뷰입니다.
@@ -54,8 +81,10 @@ struct URLBarField: View {
     @Binding var urlString: String
     var isFocused: FocusState<Bool>.Binding
     var goButtonSymbolName: String
+    var pasteboardURLString: String?
     var onCommit: () -> Void
     var onClear: () -> Void
+    var onPasteAndGo: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -72,6 +101,17 @@ struct URLBarField: View {
                 Button(action: onClear) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let pasteboardURLString {
+                Button(action: onPasteAndGo) {
+                    Image(systemName: "doc.on.clipboard.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .font(.title3)
+                        .accessibilityLabel("클립보드 URL 붙여넣기")
+                        .accessibilityValue(pasteboardURLString)
                 }
                 .buttonStyle(.plain)
             }
