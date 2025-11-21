@@ -202,6 +202,105 @@ public final class TermMasker {
         }
     }
 
+    // MARK: - SegmentPieces 생성
+
+    private func splitTextBySource(_ text: String, source: String) -> [String] {
+        var parts: [String] = []
+        var remaining = text
+
+        while let range = remaining.range(of: source) {
+            if range.lowerBound > remaining.startIndex {
+                parts.append(String(remaining[remaining.startIndex..<range.lowerBound]))
+            }
+            parts.append(source)
+            remaining = String(remaining[range.upperBound...])
+        }
+
+        if !remaining.isEmpty {
+            parts.append(remaining)
+        }
+
+        return parts
+    }
+
+    func buildSegmentPieces(
+        segment: Segment,
+        glossary allEntries: [GlossaryEntry]
+    ) -> (pieces: SegmentPieces, activatedEntries: [GlossaryEntry]) {
+        let text = segment.originalText
+        guard !text.isEmpty, !allEntries.isEmpty else {
+            return (
+                pieces: SegmentPieces(segmentID: segment.id, pieces: [.text(text)]),
+                activatedEntries: []
+            )
+        }
+
+        // 1) 기본 활성화 (단독 허용)
+        let standaloneEntries = allEntries.filter { !$0.prohibitStandalone }
+
+        // 2) Pattern 기반 활성화
+        let patternPromoted = promoteProhibitedEntries(in: text, entries: allEntries)
+
+        // 3) Term-to-Term 활성화
+        let termPromoted = promoteActivatedEntries(
+            from: allEntries,
+            standaloneEntries: standaloneEntries,
+            original: text
+        )
+
+        // 4) 활성화 엔트리 합치기 (source 기준 중복 제거)
+        var combined = standaloneEntries
+        combined.append(contentsOf: patternPromoted)
+        combined.append(contentsOf: termPromoted)
+
+        var seenSource: Set<String> = []
+        var allowedEntries: [GlossaryEntry] = []
+        for entry in combined {
+            if seenSource.insert(entry.source).inserted {
+                allowedEntries.append(entry)
+            }
+        }
+
+        // 5) 긴 용어가 덮는 짧은 용어 제외
+        allowedEntries = filterBySourceOcc(segment, allowedEntries)
+
+        // 6) Longest-first 분할
+        let sorted = allowedEntries.sorted { $0.source.count > $1.source.count }
+        var pieces: [SegmentPieces.Piece] = [.text(text)]
+
+        for entry in sorted {
+            guard !entry.source.isEmpty else { continue }
+            var newPieces: [SegmentPieces.Piece] = []
+
+            for piece in pieces {
+                switch piece {
+                case .text(let str):
+                    if str.contains(entry.source) {
+                        let parts = splitTextBySource(str, source: entry.source)
+                        for part in parts {
+                            if part == entry.source {
+                                newPieces.append(.term(entry))
+                            } else {
+                                newPieces.append(.text(part))
+                            }
+                        }
+                    } else {
+                        newPieces.append(.text(str))
+                    }
+                case .term:
+                    newPieces.append(piece)
+                }
+            }
+
+            pieces = newPieces
+        }
+
+        return (
+            pieces: SegmentPieces(segmentID: segment.id, pieces: pieces),
+            activatedEntries: allowedEntries
+        )
+    }
+
     /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
     /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
     public func maskWithLocks(
@@ -276,6 +375,48 @@ public final class TermMasker {
 
         self.nextIndex = localNextIndex
         return .init(seg: segment, masked: out, tags: tags, locks: locks)
+    }
+
+    // SegmentPieces 기반 마스킹
+    func maskFromPieces(
+        pieces: SegmentPieces,
+        segment: Segment
+    ) -> MaskedPack {
+        var out = ""
+        var locks: [String: LockInfo] = [:]
+        var localNextIndex = self.nextIndex
+
+        for piece in pieces.pieces {
+            switch piece {
+            case .text(let str):
+                out += str
+            case .term(let entry):
+                if entry.preMask {
+                    let token = Self.makeToken(prefix: "E", index: localNextIndex)
+                    localNextIndex += 1
+                    out += token
+
+                    if entry.isAppellation {
+                        out = surroundTokenWithNBSP(out, token: token)
+                    }
+
+                    let (b, r) = hangulFinalJongInfo(entry.target)
+                    locks[token] = LockInfo(
+                        placeholder: token,
+                        target: entry.target,
+                        endsWithBatchim: b,
+                        endsWithRieul: r,
+                        isAppellation: entry.isAppellation
+                    )
+                } else {
+                    out += entry.source
+                }
+            }
+        }
+
+        out = insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(out)
+        self.nextIndex = localNextIndex
+        return .init(seg: segment, masked: out, tags: [], locks: locks)
     }
 
     // (C) 언마스킹: 유니크 토큰으로 직접 복원
@@ -562,9 +703,16 @@ public final class TermMasker {
     }
     
     struct NameGlossary {
+        struct FallbackTerm: Sendable {
+            let termKey: String
+            let target: String
+            let variants: [String]
+        }
+
         let target: String
         let variants: [String]
         let expectedCount: Int   // 원문에서 이 이름이 등장한 횟수
+        let fallbackTerms: [FallbackTerm]?  // Pattern fallback용
     }
 
     /// 원문에 등장한 인물 용어만 선별하여 정규화용 이름 정보를 생성한다.
@@ -644,7 +792,84 @@ public final class TermMasker {
         }.sorted { lhs, rhs in
             if lhs.count != rhs.count { return lhs.count > rhs.count }
             return lhs.target < rhs.target
-        }.map { NameGlossary(target: $0.target, variants: $0.variants, expectedCount: $0.count) }
+        }.map { NameGlossary(target: $0.target, variants: $0.variants, expectedCount: $0.count, fallbackTerms: nil) }
+    }
+
+    /// SegmentPieces 기반 정규화용 NameGlossary 생성
+    func makeNameGlossariesFromPieces(
+        pieces: SegmentPieces,
+        allEntries: [GlossaryEntry]
+    ) -> [NameGlossary] {
+        let unmaskedEntries = pieces.detectedTerms.filter { !$0.preMask }
+        guard !unmaskedEntries.isEmpty else { return [] }
+
+        var variantsByTarget: [String: [String]] = [:]
+        var seenVariantKeysByTarget: [String: Set<String>] = [:]
+        var expectedCountsByTarget: [String: Int] = [:]
+        var fallbackByTarget: [String: [NameGlossary.FallbackTerm]] = [:]
+
+        for entry in unmaskedEntries {
+            let target = entry.target
+            guard target.isEmpty == false else { continue }
+
+            if variantsByTarget[target] == nil {
+                variantsByTarget[target] = []
+            }
+
+            if !entry.variants.isEmpty {
+                var bucket = variantsByTarget[target] ?? []
+                var seen = seenVariantKeysByTarget[target, default: []]
+                for variant in entry.variants where !variant.isEmpty {
+                    if seen.insert(variant).inserted {
+                        bucket.append(variant)
+                    }
+                }
+                variantsByTarget[target] = bucket
+                seenVariantKeysByTarget[target] = seen
+            }
+
+            let count = pieces.pieces.filter {
+                if case .term(let e) = $0, e.target == target {
+                    return true
+                }
+                return false
+            }.count
+            expectedCountsByTarget[target, default: 0] += count
+
+            // Pattern fallback 구성 (origin에서 구성 Term 키를 추출)
+            if case let .composer(_, leftKey, rightKey, _) = entry.origin {
+                var termKeys: [String] = [leftKey]
+                if let r = rightKey { termKeys.append(r) }
+
+                var fallbacks: [NameGlossary.FallbackTerm] = []
+                for key in termKeys {
+                    guard let fallbackEntry = allEntries.first(where: {
+                        if case let .termStandalone(termKey) = $0.origin { return termKey == key }
+                        return false
+                    }) else { continue }
+                    fallbacks.append(
+                        .init(termKey: key, target: fallbackEntry.target, variants: Array(fallbackEntry.variants))
+                    )
+                }
+                if fallbacks.isEmpty == false {
+                    fallbackByTarget[target, default: []].append(contentsOf: fallbacks)
+                }
+            }
+        }
+
+        guard variantsByTarget.isEmpty == false else { return [] }
+
+        return variantsByTarget.map { target, variants in
+            (
+                target: target,
+                variants: variants,
+                count: expectedCountsByTarget[target] ?? 0,
+                fallbackTerms: fallbackByTarget[target]
+            )
+        }.sorted { lhs, rhs in
+            if lhs.count != rhs.count { return lhs.count > rhs.count }
+            return lhs.target < rhs.target
+        }.map { NameGlossary(target: $0.target, variants: $0.variants, expectedCount: $0.count, fallbackTerms: $0.fallbackTerms) }
     }
     
     /// 실제 등장 위치를 기준으로, 긴 용어에 완전히 덮이는 짧은 용어는 이 세그먼트에선 제외
@@ -1152,13 +1377,26 @@ public final class TermMasker {
         let textNFC = text.precomposedStringWithCompatibilityMapping
         func esc(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
 
-        // 1) variant → entry 매핑 준비
+        // 1) variant → canonical target 매핑 준비
         //    target 자신도 포함 (canonical이 이미 쓰인 경우에도 usage 카운트 등 맞추려면)
-        var variantMap: [String: NameGlossary] = [:]
+        var variantMap: [String: String] = [:]
         for e in entries {
-            variantMap[e.target] = e
-            for v in e.variants {
-                variantMap[v] = e
+            let sortedVariants = e.variants.sorted { $0.count > $1.count }
+            if variantMap[e.target] == nil { variantMap[e.target] = e.target }
+            for v in sortedVariants where !v.isEmpty {
+                if variantMap[v] == nil { variantMap[v] = e.target }
+            }
+        }
+
+        // Pattern Fallback variants는 2순위로 추가 (기존 매핑을 덮지 않음)
+        for e in entries {
+            guard let fallbackTerms = e.fallbackTerms else { continue }
+            for fallback in fallbackTerms {
+                if variantMap[fallback.target] == nil { variantMap[fallback.target] = fallback.target }
+                let sortedVariants = fallback.variants.sorted { $0.count > $1.count }
+                for v in sortedVariants where !v.isEmpty {
+                    if variantMap[v] == nil { variantMap[v] = fallback.target }
+                }
             }
         }
 
@@ -1188,9 +1426,7 @@ public final class TermMasker {
         for r in matches.reversed() {
             let nsOut = out as NSString
             let found = nsOut.substring(with: r)
-            guard let entry = variantMap[found] else { continue }
-
-            let canon = entry.target
+            guard let canon = variantMap[found] else { continue }
             let (has, rieul) = hangulFinalJongInfo(canon)
 
             // (a) variant/target → target으로 통일
