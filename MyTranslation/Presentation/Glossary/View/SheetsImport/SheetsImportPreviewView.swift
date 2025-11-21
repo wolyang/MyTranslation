@@ -52,7 +52,7 @@ struct SheetsImportPreviewView: View {
         HStack {
             Text(title)
             Spacer()
-            Text("신규 \(bucket.newCount) / 갱신 \(bucket.updateCount) / 삭제 \(bucket.deleteCount)")
+            Text("신규 \(bucket.newCount) / 갱신 \(bucket.updateCount) / 변경없음 \(bucket.unchangedCount) / 삭제 \(bucket.deleteCount)")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

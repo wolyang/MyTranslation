@@ -14,7 +14,12 @@ extension Glossary.SDModel {
     enum ImportMergePolicy { case keepExisting, overwrite }
     
     struct ImportDryRunReport: Sendable {
-        struct Bucket: Sendable { let newCount: Int; let updateCount: Int; let deleteCount: Int }
+        struct Bucket: Sendable {
+            let newCount: Int
+            let updateCount: Int
+            let unchangedCount: Int
+            let deleteCount: Int
+        }
         struct KeyCollision: Sendable, Hashable { let key: String; let count: Int }
         let terms: Bucket
         let patterns: Bucket
@@ -56,17 +61,39 @@ extension Glossary.SDModel {
         // 결과 예상 시뮬레이션 함수
         func dryRun(bundle: JSBundle) throws -> ImportDryRunReport {
             let existingTerms = try context.fetch(FetchDescriptor<SDTerm>())
-            let existingTermKeys = Set(existingTerms.map { $0.key })
-            let existingPatternIds = try fetchAllKeys(SDPattern.self, key: \SDPattern.name)
+            let existingPatterns = try context.fetch(FetchDescriptor<SDPattern>())
+            let metaMap = try fetchPatternMetaMap()
+
             let incomingTermKeys = bundle.terms.map { $0.key }
             let incomingPatternIds = bundle.patterns.map { $0.name }
-            let incomingTermKeySet = Set(incomingTermKeys)
-            let incomingPatternIdSet = Set(incomingPatternIds)
-            let tNew = incomingTermKeySet.subtracting(existingTermKeys).count
-            let tUpd = incomingTermKeySet.intersection(existingTermKeys).count
+
+            let existingTermSnapshots = Dictionary(uniqueKeysWithValues: existingTerms.map { ($0.key, termSnapshot(of: $0)) })
+            let existingPatternSnapshots = Dictionary(
+                uniqueKeysWithValues: existingPatterns.map { pattern in
+                    (pattern.name, patternSnapshot(of: pattern, meta: metaMap[pattern.name]))
+                }
+            )
+
+            let incomingTerms = deduplicatedMap(bundle.terms, key: \JSTerm.key)
+            let incomingPatterns = deduplicatedMap(bundle.patterns, key: \JSPattern.name)
+
+            var tNew = 0
+            var tUpd = 0
+            var tSame = 0
+            for (key, term) in incomingTerms {
+                if let existing = existingTermSnapshots[key] {
+                    if existing == termSnapshot(of: term) {
+                        tSame += 1
+                    } else {
+                        tUpd += 1
+                    }
+                } else {
+                    tNew += 1
+                }
+            }
             let tDel: Int
             if sync.removeMissingTerms {
-                let candidates = existingTermKeys.subtracting(incomingTermKeySet)
+                let candidates = Set(existingTermSnapshots.keys).subtracting(incomingTerms.keys)
                 if let filter = sync.termDeletionFilter {
                     tDel = candidates.filter { filter($0) }.count
                 } else {
@@ -75,11 +102,23 @@ extension Glossary.SDModel {
             } else {
                 tDel = 0
             }
-            let pNew = incomingPatternIdSet.subtracting(existingPatternIds).count
-            let pUpd = incomingPatternIdSet.intersection(existingPatternIds).count
+            var pNew = 0
+            var pUpd = 0
+            var pSame = 0
+            for (name, pattern) in incomingPatterns {
+                if let existing = existingPatternSnapshots[name] {
+                    if existing == patternSnapshot(of: pattern, meta: metaMap[name]) {
+                        pSame += 1
+                    } else {
+                        pUpd += 1
+                    }
+                } else {
+                    pNew += 1
+                }
+            }
             let pDel: Int
             if sync.removeMissingPatterns {
-                let candidates = existingPatternIds.subtracting(incomingPatternIdSet)
+                let candidates = Set(existingPatternSnapshots.keys).subtracting(incomingPatterns.keys)
                 if let filter = sync.patternDeletionFilter {
                     pDel = candidates.filter { filter($0) }.count
                 } else {
@@ -99,8 +138,8 @@ extension Glossary.SDModel {
             if !termCollisions.isEmpty { warns.append("Duplicate Term keys in import: \(termCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             if !patternCollisions.isEmpty { warns.append("Duplicate Pattern ids in import: \(patternCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             return ImportDryRunReport(
-                terms: .init(newCount: tNew, updateCount: tUpd, deleteCount: tDel),
-                patterns: .init(newCount: pNew, updateCount: pUpd, deleteCount: pDel),
+                terms: .init(newCount: tNew, updateCount: tUpd, unchangedCount: tSame, deleteCount: tDel),
+                patterns: .init(newCount: pNew, updateCount: pUpd, unchangedCount: pSame, deleteCount: pDel),
                 warnings: warns,
                 termKeyCollisions: termCollisions,
                 patternKeyCollisions: patternCollisions
@@ -147,16 +186,17 @@ extension Glossary.SDModel {
                 dst.target = src.target
                 dst.isAppellation = src.isAppellation
                 dst.preMask = src.preMask
+                dst.variants = orderedUnique(src.variants)
             } else {
                 if dst.target.isEmpty { dst.target = src.target }
+                dst.variants = mergeSet(dst.variants, src.variants)
             }
-            dst.variants = mergeSet(dst.variants, src.variants)
 
             upsertSources(term: dst, with: src)
 
             try upsertComponents(term: dst, with: src)
 
-            try ensureTags(dst, names: src.tags)
+            try ensureTags(dst, names: src.tags, removingMissing: merge == .overwrite)
         }
 
         private func setupActivatorRelationships(activationMap: [String: [String]], termMap: [String: SDTerm]) throws {
@@ -208,7 +248,9 @@ extension Glossary.SDModel {
         private func upsertSources(term dst: SDTerm, with src: JSTerm) {
             var existingByText: [String: SDSource] = [:]
             for s in dst.sources { existingByText[s.text] = s }
+            var seen: Set<String> = []
             for js in src.sources {
+                seen.insert(js.source)
                 if let s = existingByText[js.source] {
                     if merge == .overwrite {
                         s.prohibitStandalone = js.prohibitStandalone
@@ -217,6 +259,14 @@ extension Glossary.SDModel {
                     let s = SDSource(text: js.source, prohibitStandalone: js.prohibitStandalone, term: dst)
                     context.insert(s)
                     dst.sources.append(s)
+                }
+            }
+            if merge == .overwrite {
+                for (text, source) in existingByText where !seen.contains(text) {
+                    if let idx = dst.sources.firstIndex(where: { $0 === source }) {
+                        dst.sources.remove(at: idx)
+                    }
+                    context.delete(source)
                 }
             }
         }
@@ -425,7 +475,7 @@ extension Glossary.SDModel {
             return g
         }
         
-        private func ensureTags(_ term: SDTerm, names: [String]) throws {
+        private func ensureTags(_ term: SDTerm, names: [String], removingMissing: Bool) throws {
             var existing: [String: SDTag] = [:]
             for link in term.termTagLinks { existing[link.tag.name] = link.tag }
             for name in names {
@@ -435,6 +485,16 @@ extension Glossary.SDModel {
                     context.insert(link)
                     term.termTagLinks.append(link)
                     tag.termLinks.append(link)
+                }
+            }
+            if removingMissing {
+                let incoming = Set(names)
+                for (name, tag) in existing where !incoming.contains(name) {
+                    if let linkIdx = term.termTagLinks.firstIndex(where: { $0.tag.name == name }) {
+                        let link = term.termTagLinks.remove(at: linkIdx)
+                        context.delete(link)
+                    }
+                    tag.termLinks.removeAll(where: { $0.term.key == term.key })
                 }
             }
         }
@@ -452,6 +512,197 @@ extension Glossary.SDModel {
         private func mergeSet<T: Hashable>(_ a: [T], _ b: [T]) -> [T] {
             let set = LinkedHashSet<T>(a) + b
             return Array(set)
+        }
+
+        private func orderedUnique<T: Hashable>(_ values: [T]) -> [T] {
+            Array(LinkedHashSet<T>(values))
+        }
+
+        private func deduplicatedMap<Element, Key: Hashable>(_ items: [Element], key: KeyPath<Element, Key>) -> [Key: Element] {
+            var out: [Key: Element] = [:]
+            for item in items {
+                let k = item[keyPath: key]
+                if out[k] == nil { out[k] = item }
+            }
+            return out
+        }
+
+        private func termSnapshot(of term: SDTerm) -> TermSnapshot {
+            let sourceSet = Set(term.sources.map { SourceSnapshot(text: $0.text, prohibitStandalone: $0.prohibitStandalone) })
+            let componentSet = Set(term.components.map { comp in
+                let groups = comp.groupLinks.map { $0.group.name }
+                return ComponentSnapshot(
+                    pattern: comp.pattern,
+                    roleKey: normalizedRoleKey(comp.role),
+                    groupKey: groupKey(of: groups),
+                    srcTplIdx: comp.srcTplIdx,
+                    tgtTplIdx: comp.tgtTplIdx
+                )
+            })
+            let activators = Set(term.activators.map { $0.key })
+            let tags = Set(term.termTagLinks.map { $0.tag.name })
+            return TermSnapshot(
+                target: term.target,
+                variants: orderedUnique(term.variants),
+                tags: tags,
+                sources: sourceSet,
+                components: componentSet,
+                isAppellation: term.isAppellation,
+                preMask: term.preMask,
+                activatorKeys: activators
+            )
+        }
+
+        private func termSnapshot(of term: JSTerm) -> TermSnapshot {
+            let sourceSet = Set(term.sources.map { SourceSnapshot(text: $0.source, prohibitStandalone: $0.prohibitStandalone) })
+            let componentSet = Set(term.components.map { comp in
+                ComponentSnapshot(
+                    pattern: comp.pattern,
+                    roleKey: normalizedRoleKey(comp.role),
+                    groupKey: groupKey(of: comp.groups),
+                    srcTplIdx: comp.srcTplIdx,
+                    tgtTplIdx: comp.tgtTplIdx
+                )
+            })
+            let activators = Set((term.activatedByKeys ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+            return TermSnapshot(
+                target: term.target,
+                variants: orderedUnique(term.variants),
+                tags: Set(term.tags),
+                sources: sourceSet,
+                components: componentSet,
+                isAppellation: term.isAppellation,
+                preMask: term.preMask,
+                activatorKeys: activators
+            )
+        }
+
+        private func patternSnapshot(of pattern: SDPattern, meta: SDPatternMeta?) -> PatternSnapshot {
+            PatternSnapshot(
+                name: pattern.name,
+                left: selectorSnapshot(role: pattern.leftRole, tagsAll: pattern.leftTagsAll, tagsAny: pattern.leftTagsAny, include: pattern.leftIncludeTerms, exclude: pattern.leftExcludeTerms),
+                right: selectorSnapshot(role: pattern.rightRole, tagsAll: pattern.rightTagsAll, tagsAny: pattern.rightTagsAny, include: pattern.rightIncludeTerms, exclude: pattern.rightExcludeTerms),
+                skipPairsIfSameTerm: pattern.skipPairsIfSameTerm,
+                sourceTemplates: pattern.sourceTemplates,
+                targetTemplates: pattern.targetTemplates,
+                sourceJoiners: pattern.sourceJoiners,
+                isAppellation: pattern.isAppellation,
+                preMask: pattern.preMask,
+                needPairCheck: pattern.needPairCheck,
+                displayName: meta?.displayName ?? pattern.name,
+                roles: meta?.roles ?? [],
+                grouping: meta?.grouping ?? .optional,
+                groupLabel: meta?.groupLabel ?? "그룹",
+                defaultProhibitStandalone: meta?.defaultProhibitStandalone ?? true,
+                defaultIsAppellation: meta?.defaultIsAppellation ?? false,
+                defaultPreMask: meta?.defaultPreMask ?? false
+            )
+        }
+
+        private func patternSnapshot(of pattern: JSPattern, meta _: SDPatternMeta?) -> PatternSnapshot {
+            let trimmedDisplay = pattern.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = trimmedDisplay.isEmpty ? pattern.name : trimmedDisplay
+            let trimmedLabel = pattern.groupLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let groupLabel = trimmedLabel.isEmpty ? "그룹" : trimmedLabel
+            PatternSnapshot(
+                name: pattern.name,
+                left: selectorSnapshot(pattern.left),
+                right: selectorSnapshot(pattern.right),
+                skipPairsIfSameTerm: pattern.skipPairsIfSameTerm,
+                sourceTemplates: pattern.sourceTemplates,
+                targetTemplates: pattern.targetTemplates,
+                sourceJoiners: pattern.sourceJoiners.isEmpty ? [""] : pattern.sourceJoiners,
+                isAppellation: pattern.isAppellation,
+                preMask: pattern.preMask,
+                needPairCheck: pattern.needPairCheck,
+                displayName: displayName,
+                roles: pattern.roles,
+                grouping: SDPatternGrouping(rawValue: pattern.grouping.rawValue) ?? .optional,
+                groupLabel: groupLabel,
+                defaultProhibitStandalone: pattern.defaultProhibitStandalone,
+                defaultIsAppellation: pattern.defaultIsAppellation,
+                defaultPreMask: pattern.defaultPreMask
+            )
+        }
+
+        private func selectorSnapshot(_ selector: JSTermSelector?) -> SelectorSnapshot {
+            guard let selector else {
+                return SelectorSnapshot(role: nil, tagsAll: [], tagsAny: [], includeKeys: [], excludeKeys: [])
+            }
+            return SelectorSnapshot(
+                role: selector.role,
+                tagsAll: (selector.tagsAll ?? []).sorted(),
+                tagsAny: (selector.tagsAny ?? []).sorted(),
+                includeKeys: (selector.includeTermKeys ?? []).sorted(),
+                excludeKeys: (selector.excludeTermKeys ?? []).sorted()
+            )
+        }
+
+        private func selectorSnapshot(role: String?, tagsAll: [String], tagsAny: [String], include: [SDTerm], exclude: [SDTerm]) -> SelectorSnapshot {
+            SelectorSnapshot(
+                role: role,
+                tagsAll: tagsAll.sorted(),
+                tagsAny: tagsAny.sorted(),
+                includeKeys: include.map { $0.key }.sorted(),
+                excludeKeys: exclude.map { $0.key }.sorted()
+            )
+        }
+
+        private func fetchPatternMetaMap() throws -> [String: SDPatternMeta] {
+            let metaList = try context.fetch(FetchDescriptor<SDPatternMeta>())
+            return Dictionary(uniqueKeysWithValues: metaList.map { ($0.name, $0) })
+        }
+
+        private struct TermSnapshot: Hashable {
+            let target: String
+            let variants: [String]
+            let tags: Set<String>
+            let sources: Set<SourceSnapshot>
+            let components: Set<ComponentSnapshot>
+            let isAppellation: Bool
+            let preMask: Bool
+            let activatorKeys: Set<String>
+        }
+
+        private struct SourceSnapshot: Hashable {
+            let text: String
+            let prohibitStandalone: Bool
+        }
+
+        private struct ComponentSnapshot: Hashable {
+            let pattern: String
+            let roleKey: String
+            let groupKey: String
+            let srcTplIdx: Int?
+            let tgtTplIdx: Int?
+        }
+
+        private struct PatternSnapshot: Hashable {
+            let name: String
+            let left: SelectorSnapshot
+            let right: SelectorSnapshot
+            let skipPairsIfSameTerm: Bool
+            let sourceTemplates: [String]
+            let targetTemplates: [String]
+            let sourceJoiners: [String]
+            let isAppellation: Bool
+            let preMask: Bool
+            let needPairCheck: Bool
+            let displayName: String
+            let roles: [String]
+            let grouping: SDPatternGrouping
+            let groupLabel: String
+            let defaultProhibitStandalone: Bool
+            let defaultIsAppellation: Bool
+            let defaultPreMask: Bool
+        }
+
+        private struct SelectorSnapshot: Hashable {
+            let role: String?
+            let tagsAll: [String]
+            let tagsAny: [String]
+            let includeKeys: [String]
+            let excludeKeys: [String]
         }
         
         private func deleteMissing(bundle: JSBundle) throws {
@@ -544,6 +795,7 @@ extension Glossary.SDModel {
                 HStack {
                     Label("+\(b.newCount)", systemImage: "plus.circle").foregroundStyle(.green)
                     Label("±\(b.updateCount)", systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.blue)
+                    Label("=\(b.unchangedCount)", systemImage: "equal").foregroundStyle(.secondary)
                     Label("−\(b.deleteCount)", systemImage: "trash").foregroundStyle(.red)
                 }
             }
