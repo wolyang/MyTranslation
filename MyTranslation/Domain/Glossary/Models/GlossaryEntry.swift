@@ -73,7 +73,7 @@ extension Glossary {
             // 2) 후보 Term 로드
             let candidateTerms = try Store.fetchTerms(keys: candidateKeys, ctx: context)
             let oneCharTerms = try Store.fetchOneCharTerms(ctx: context)
-            let terms = candidateTerms + oneCharTerms
+            let terms = Array(Set(candidateTerms + oneCharTerms))
             termByKey = Dictionary(uniqueKeysWithValues: terms.map { ($0.key, $0) })
 
             // 3) AC 구성 및 매치 스캔
@@ -166,9 +166,12 @@ extension Glossary {
         
         @MainActor
         static func fetchOneCharTerms(ctx: ModelContext) throws -> [SDTerm] {
-            let pred = #Predicate<SDSource> { $0.text.count == 1 }
-            let oneCharSources = try ctx.fetch(FetchDescriptor<SDSource>(predicate: pred))
-            return Array(Set(oneCharSources.compactMap { $0.term }))
+            let allSources = try ctx.fetch(FetchDescriptor<SDSource>())
+            
+            let oneCharSources = allSources.filter { $0.text.count == 1 }
+            
+            let terms = oneCharSources.compactMap { $0.term }
+            return Array(Set(terms))
         }
     }
 

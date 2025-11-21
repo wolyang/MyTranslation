@@ -263,9 +263,30 @@ final class DefaultTranslationRouter: TranslationRouter {
         engine: TranslationEngine,
         termMasker: TermMasker
     ) -> MaskingContext {
-        let maskedPacks: [MaskedPack] = segments.map { segment in
-            termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries)
+        var allSegmentPieces: [SegmentPieces] = []
+        var maskedPacks: [MaskedPack] = []
+        var nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = []
+
+        for segment in segments {
+            let (pieces, _) = termMasker.buildSegmentPieces(
+                segment: segment,
+                glossary: glossaryEntries
+            )
+            allSegmentPieces.append(pieces)
+
+            let pack = termMasker.maskFromPieces(
+                pieces: pieces,
+                segment: segment
+            )
+            maskedPacks.append(pack)
+
+            let nameGlossaries = termMasker.makeNameGlossariesFromPieces(
+                pieces: pieces,
+                allEntries: glossaryEntries
+            )
+            nameGlossariesPerSegment.append(nameGlossaries)
         }
+
         let maskedSegments: [Segment] = maskedPacks.map { pack in
             Segment(
                 id: pack.seg.id,
@@ -277,16 +298,11 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
         }
 
-        let nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = {
-            return maskedPacks.map { pack in
-                termMasker.makeNameGlossaries(forOriginalText: pack.seg.originalText, entries: glossaryEntries)
-            }
-        }()
-
         return MaskingContext(
             maskedSegments: maskedSegments,
             maskedPacks: maskedPacks,
             nameGlossariesPerSegment: nameGlossariesPerSegment,
+            segmentPieces: allSegmentPieces,
             engineTag: engine.tag
         )
     }
@@ -487,6 +503,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         let maskedSegments: [Segment]
         let maskedPacks: [MaskedPack]
         let nameGlossariesPerSegment: [[TermMasker.NameGlossary]]
+        let segmentPieces: [SegmentPieces]
         let engineTag: EngineTag
     }
 
