@@ -6,6 +6,7 @@ public struct TranslationStreamPayload: Codable, Sendable, Equatable {
     public let segmentID: String
     public let originalText: String
     public let translatedText: String?
+    public let preNormalizedText: String?
     public let engineID: TranslationEngineID
     public let sequence: Int
 
@@ -13,12 +14,14 @@ public struct TranslationStreamPayload: Codable, Sendable, Equatable {
         segmentID: String,
         originalText: String,
         translatedText: String?,
+        preNormalizedText: String? = nil,
         engineID: TranslationEngineID,
         sequence: Int
     ) {
         self.segmentID = segmentID
         self.originalText = originalText
         self.translatedText = translatedText
+        self.preNormalizedText = preNormalizedText
         self.engineID = engineID
         self.sequence = sequence
     }
