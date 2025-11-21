@@ -590,6 +590,7 @@ private extension BrowserViewModel {
             segmentID: payload.segmentID,
             originalText: payload.originalText,
             translatedText: translated,
+            preNormalizedText: payload.preNormalizedText,
             engineID: payload.engineID,
             sequence: payload.sequence
         )
@@ -648,6 +649,7 @@ private extension BrowserViewModel {
                 segmentID: payload.segmentID,
                 originalText: payload.originalText,
                 translatedText: text,
+                preNormalizedText: payload.preNormalizedText,
                 engineID: payload.engineID,
                 sequence: payload.sequence
             )

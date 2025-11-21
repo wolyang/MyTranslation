@@ -15,6 +15,8 @@ extension BrowserViewModel {
         cancelOverlayTranslationTasks()
         selectedSegment = segment
 
+        let primaryEngine = settings.preferredEngine
+        let primaryPayload = cachedTranslationPayload(for: segment.id, engineID: primaryEngine.rawValue)
         let targetEngines = overlayTargetEngines(for: showOriginal, selectedEngine: settings.preferredEngine)
         var translations: [OverlayState.Translation] = []
         var enginesToFetch: [EngineTag] = []
@@ -41,6 +43,9 @@ extension BrowserViewModel {
             selectedText: segment.originalText,
             improvedText: nil,
             anchor: anchor,
+            primaryEngineTitle: overlaySectionTitle(for: primaryEngine),
+            primaryFinalText: primaryPayload?.translatedText,
+            primaryPreNormalizedText: primaryPayload?.preNormalizedText,
             translations: translations,
             showsOriginalSection: showOriginal == false
         )
@@ -130,11 +135,16 @@ private extension BrowserViewModel {
         }
     }
 
-    /// 현재 페이지 캐시에 저장된 세그먼트 번역을 조회한다.
-    func cachedTranslation(for segmentID: String, engineID: TranslationEngineID) -> String? {
+    /// 현재 페이지 캐시에 저장된 세그먼트 번역 페이로드를 조회한다.
+    func cachedTranslationPayload(for segmentID: String, engineID: TranslationEngineID) -> TranslationStreamPayload? {
         guard let state = currentPageTranslation,
               let buffer = state.buffersByEngine[engineID] else { return nil }
-        return buffer.ordered.first(where: { $0.segmentID == segmentID })?.translatedText
+        return buffer.ordered.first(where: { $0.segmentID == segmentID })
+    }
+
+    /// 현재 페이지 캐시에 저장된 세그먼트 번역을 조회한다.
+    func cachedTranslation(for segmentID: String, engineID: TranslationEngineID) -> String? {
+        return cachedTranslationPayload(for: segmentID, engineID: engineID)?.translatedText
     }
 
     /// 오버레이 번역 Task 저장에 사용할 고유 키를 생성한다.

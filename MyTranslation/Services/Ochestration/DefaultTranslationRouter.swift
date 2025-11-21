@@ -396,6 +396,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     segmentID: originalSegment.id,
                     originalText: originalSegment.originalText,
                     translatedText: finalResult.text,
+                    preNormalizedText: result.text,
                     engineID: finalResult.engine.rawValue,
                     sequence: seq
                 )

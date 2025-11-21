@@ -80,6 +80,9 @@ extension BrowserViewModel {
         var selectedText: String
         var improvedText: String?
         var anchor: CGRect
+        var primaryEngineTitle: String
+        var primaryFinalText: String?
+        var primaryPreNormalizedText: String?
         var translations: [Translation] = []
         var showsOriginalSection: Bool = true
     }
