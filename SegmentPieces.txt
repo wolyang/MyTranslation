@@ -1,0 +1,76 @@
+# Segment에서 원문의 등장 순서가 보존된 GlossaryEntry 배열 생성 로직 아이디어 요약
+
+※ 이 문서의 변수명(fullSegmentText, termCandidates 등)은
+"로직 설명을 위한 가상의 입력 이름"이며,
+실제 코드의 동일 변수명을 의미하지 않습니다.
+
+## 0. 목적
+한 세그먼트의 텍스트를 텍스트 조각과 용어 GlossaryEntry 조각으로 쪼개어,
+겹치지 않는 구조를 만든 뒤, 정규화·마스킹·언마스킹에서 일관된 기준으로 활용한다.
+
+## 1. GlossaryEntry
+- source: 원문 표기
+- target: 표준 번역
+- variants: 번역문 변형들
+- preMask: 마스킹 여부
+
+## 2. SegmentPieces 구조
+세그먼트를 텍스트/용어가 섞인 조각 배열로 나타낸다.
+
+SegmentPiece:
+- text(String)
+- term(GlossaryEntry)
+
+SegmentPieces: [SegmentPiece]
+
+초기 상태:
+[.text(fullSegmentText)]
+
+## 3. SegmentPieces 생성 알고리즘 (Longest-first)
+termCandidates(긴 source → 짧은 source 순) 순서로 다음을 수행:
+
+각 entry에 대해:
+- SegmentPieces를 왼→오 순회
+- piece가 .text(str)일 때만 entry.source를 검색
+- 등장 위치들을 모두 찾고, 그 str 조각을
+[.text, .term(entry), .text, ...] 형태로 분해하여 교체
+- .term(...) 조각은 다시 split하지 않음
+→ 긴 용어가 짧은 용어를 덮는 구조가 됨
+→ 겹침 문제 제거, 원문 등장 순서 유지
+
+## 4. entries 생성 규칙
+최종 SegmentPieces를 왼→오 순회하여,
+.term(entry)만 순서대로 추출해 entries 배열을 만든다.
+entries는 “원문 등장 순서 보존용 힌트”이며,
+정규화 시 ‘우선순위 참고 정보’로만 사용한다.
+
+## 5. 마스킹에서의 활용
+SegmentPieces를 좌→우 순회하면서:
+- text → 그대로 출력
+- term(entry):
+- preMask == true → 토큰(__ENT#k__)으로 치환하고 maskedEntries에 기록
+- preMask == false → 원문 그대로 두고 unmaskedEntries에 기록
+
+결과:
+- maskedSourceText
+- maskedEntries / unmaskedEntries
+
+이 정보는 번역 결과 후처리에서 그대로 사용된다.
+
+## 6. 번역 결과 후처리(정규화 → 언마스킹)에서의 활용
+
+### 6-1. 정규화 (preMask == false 대상)
+- 토큰(__ENT#k__)이 들어간 영역은 정규화 탐색에서 스킵
+- variants 매칭 → entry.target으로 치환
+- 치환 시 바로 옆 조사만 국소 보정
+- entries(원문 순서)는 애매한 후보 중 우선순위 힌트로만 사용
+
+### 6-2. 언마스킹 (preMask == true 대상)
+- 번역문 내 토큰을 왼→오 탐색
+- maskedEntries에서 대응 entry를 순서대로 꺼냄
+- 토큰 → entry.target으로 치환
+- 이때도 바로 옆 조사만 국소 보정
+
+→ SegmentPieces와 entries는
+마스킹, 정규화, 언마스킹 전 과정에서
+“세그먼트 내 용어 위치 맥락”을 유지하기 위한 공통 기준이 됨.
