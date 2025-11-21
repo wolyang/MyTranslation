@@ -181,12 +181,12 @@ public final class TermMasker {
     func promoteActivatedEntries(
         from allEntries: [GlossaryEntry],
         standaloneEntries: [GlossaryEntry],
-        normalizedOriginal: String
+        original: String
     ) -> [GlossaryEntry] {
         // 1. 원문에 등장하는 standalone entries만 필터링
         let standaloneEntriesInText = standaloneEntries.filter { entry in
-            let normSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
-            return normalizedOriginal.contains(normSource)
+            let source = entry.source
+            return original.contains(source)
         }
 
         // 2. usedKeys 수집
@@ -199,16 +199,6 @@ public final class TermMasker {
         return allEntries.filter {
             guard case let .termStandalone(termId) = $0.origin else { return false }
             return activatedKeys.contains(termId)
-        }
-    }
-
-    /// GlossaryEntry.Origin의 고유 키를 생성 (중복 제거용)
-    private func originKey(_ origin: GlossaryEntry.Origin) -> String {
-        switch origin {
-        case let .termStandalone(termId):
-            return "term:\(termId)"
-        case let .composer(composerId, _, _, _):
-            return "composer:\(composerId)"
         }
     }
 
@@ -279,13 +269,6 @@ public final class TermMasker {
                 endsWithRieul: r,
                 isAppellation: e.isAppellation
             )
-        }
-        print("[\(segment.id)] \(text)\nlocks: \(locks)")
-        if segment.id == "6fe649a90d58421b714fff75be638186a68fc481" {
-            let containXD = entries.contains { e in
-                e.source == "艾空"
-            }
-            print("entries contains 艾空: \(containXD)")
         }
 
         // (5) 토큰 좌우 문장부호 인접 시 공백 삽입
@@ -593,8 +576,6 @@ public final class TermMasker {
         let original = seg.originalText
         guard !original.isEmpty else { return [] }
 
-        let normalizedOriginal = original.precomposedStringWithCompatibilityMapping.lowercased()
-
         // 1) 기본: prohibitStandalone이 아닌 엔트리
         let standaloneEntries = entries.filter { !$0.prohibitStandalone }
 
@@ -605,7 +586,7 @@ public final class TermMasker {
         let termPromoted = promoteActivatedEntries(
             from: entries,
             standaloneEntries: standaloneEntries,
-            normalizedOriginal: normalizedOriginal
+            original: original
         )
 
         // 4) 모든 허용 엔트리 합치기 (중복 제거)
@@ -613,17 +594,17 @@ public final class TermMasker {
         combined.append(contentsOf: patternPromoted)
         combined.append(contentsOf: termPromoted)
 
-        // 중복 제거: origin 기준으로 유일성 보장
-        var seen: Set<String> = []
+        // 중복 제거
+        var seenSource: Set<String> = []
         var allowedEntries: [GlossaryEntry] = []
         for entry in combined {
-            let key = originKey(entry.origin)
-            if seen.insert(key).inserted {
+            let source = entry.source
+            if seenSource.insert(source).inserted {
                 allowedEntries.append(entry)
             }
         }
 
-        allowedEntries = filterBySourceOcc(normalizedOriginal, allowedEntries)
+        allowedEntries = filterBySourceOcc(seg, allowedEntries)
         
         var variantsByTarget: [String: [String]] = [:]
         var seenVariantKeysByTarget: [String: Set<String>] = [:]
@@ -631,15 +612,14 @@ public final class TermMasker {
 
         for entry in allowedEntries {
             guard !entry.target.isEmpty else { continue }
-            let normalizedSource = entry.source.precomposedStringWithCompatibilityMapping.lowercased()
-            guard normalizedOriginal.contains(normalizedSource) else { continue }
+            let source = entry.source
+            guard original.contains(source) else { continue }
 
             if !entry.variants.isEmpty {
                 var bucket = variantsByTarget[entry.target, default: []]
                 var seen = seenVariantKeysByTarget[entry.target, default: []]
                 for variant in entry.variants where !variant.isEmpty {
-                    let key = normKey(variant)
-                    if seen.insert(key).inserted {
+                    if seen.insert(variant).inserted {
                         bucket.append(variant)
                     }
                 }
@@ -649,8 +629,8 @@ public final class TermMasker {
                 variantsByTarget[entry.target] = []
             }
             
-            if normalizedOriginal.contains(normalizedSource) {
-                let occ = normalizedOriginal.components(separatedBy: normalizedSource).count - 1
+            if original.contains(source) {
+                let occ = original.components(separatedBy: source).count - 1
                 if occ > 0 {
                     expectedCountsByTarget[entry.target, default: 0] += occ
                 }
@@ -668,7 +648,8 @@ public final class TermMasker {
     }
     
     /// 실제 등장 위치를 기준으로, 긴 용어에 완전히 덮이는 짧은 용어는 이 세그먼트에선 제외
-    private func filterBySourceOcc(_ normalizedOriginal: String, _ allowedEntries: [GlossaryEntry]) -> [GlossaryEntry] {
+    private func filterBySourceOcc(_ seg: Segment, _ allowedEntries: [GlossaryEntry]) -> [GlossaryEntry] {
+        let normalizedOriginal = seg.originalText
         struct SourceOcc {
             let entry: GlossaryEntry
             let normSource: String
@@ -680,7 +661,7 @@ public final class TermMasker {
         var occList: [SourceOcc] = []
         for e in allowedEntries {
             guard !e.target.isEmpty else { continue }
-            let normSource = e.source.precomposedStringWithCompatibilityMapping.lowercased()
+            let normSource = e.source
             let positions = allOccurrences(of: normSource, in: normalizedOriginal)
             guard !positions.isEmpty else { continue }   // 이 세그먼트엔 안 나옴
             occList.append(SourceOcc(entry: e, normSource: normSource, length: normSource.count, positions: positions))
@@ -1109,10 +1090,6 @@ public final class TermMasker {
         return out
     }
     
-    private func normKey(_ s: String) -> String {
-        s.precomposedStringWithCompatibilityMapping.lowercased()
-    }
-    
     enum EntityMode { case tokensOnly, namesOnly, both }
     
     // 토큰 언마스킹
@@ -1202,7 +1179,6 @@ public final class TermMasker {
         var out = textNFC
         var matches: [NSRange] = []
         let ns = out as NSString
-
         rx.enumerateMatches(in: out, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
             guard let r = m?.range(at: 1) else { return }
             matches.append(r)
@@ -1309,9 +1285,7 @@ public final class TermMasker {
 
     // 이름 매핑
     private func canonicalFor(_ matched: String, entries: [NameGlossary], nameUsage: inout [String: Int]) -> String {
-        let key = normKey(matched)
-        
-        if let direct = entries.first(where: { normKey($0.target) == key }) {
+        if let direct = entries.first(where: { $0.target == matched }) {
             let t = direct.target
             nameUsage[t, default: 0] += 1
             return t
@@ -1320,7 +1294,7 @@ public final class TermMasker {
         var candidates: [NameGlossary] = []
         for e in entries {
             for v in e.variants {
-                if normKey(v) == key {
+                if v == matched {
                     candidates.append(e)
                     break
                 }
