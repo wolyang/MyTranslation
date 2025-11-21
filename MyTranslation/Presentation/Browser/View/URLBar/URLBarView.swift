@@ -13,6 +13,7 @@ struct URLBarView: View {
 
     var currentPageURLString: String
     var onGo: (String) -> Void
+    var onRefresh: (String) -> Void = { _ in }
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
     var onSelectSourceLanguage: (SourceLanguageSelection) -> Void = { _ in }
     var onSelectTargetLanguage: (AppLanguage) -> Void = { _ in }

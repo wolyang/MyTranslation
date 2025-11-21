@@ -158,6 +158,10 @@ struct BrowserRootView: View {
                     vm.load(urlString: url)
                     triggerTranslationSession()
                 },
+                onRefresh: { url in
+                    vm.refreshAndReload(urlString: url)
+                    triggerTranslationSession()
+                },
                 onSelectEngine: { engine, wasShowingOriginal in
                     vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
                 },

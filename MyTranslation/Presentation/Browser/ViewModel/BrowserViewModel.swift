@@ -54,6 +54,7 @@ final class BrowserViewModel: ObservableObject {
     var noBodyTextRetryCount = 0
     var selectedSegment: Segment?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
+    private var bypassCacheNextTranslation = false
     /// 페이지 URL별로 사용자가 선택한 언어를 기억해 동일 페이지 재방문 시 재사용한다.
     private var languagePreferenceByURL: [URL: PageLanguagePreference] = [:]
 
