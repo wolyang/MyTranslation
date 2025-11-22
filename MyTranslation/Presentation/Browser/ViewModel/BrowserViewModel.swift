@@ -59,6 +59,7 @@ final class BrowserViewModel: ObservableObject {
 
     let extractor: ContentExtractor
     let router: TranslationRouter
+    let cache: CacheStore
     let replacer: InlineReplacer
     let settings: UserSettings
 //    let overlay: OverlayRenderer
@@ -67,6 +68,7 @@ final class BrowserViewModel: ObservableObject {
     init(
         extractor: ContentExtractor = WKContentExtractor(),
         router: TranslationRouter,
+        cache: CacheStore,
         replacer: InlineReplacer,
 //        fmQuery: FMQueryService,
         settings: UserSettings,
@@ -75,6 +77,7 @@ final class BrowserViewModel: ObservableObject {
     ) {
         self.extractor = extractor
         self.router = router
+        self.cache = cache
         self.replacer = replacer
 //        self.fmQuery = fmQuery
         self.settings = settings

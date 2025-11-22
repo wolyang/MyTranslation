@@ -35,7 +35,11 @@ extension URLBarView {
         updateRecents(with: trimmed)
         didCommitDuringEditing = true
         isFocused = false
-        onGo(trimmed)
+        if isRefreshAction {
+            onRefresh(trimmed)
+        } else {
+            onGo(trimmed)
+        }
     }
 
     /// 추천 목록에서 선택한 URL을 즉시 입력에 반영합니다.

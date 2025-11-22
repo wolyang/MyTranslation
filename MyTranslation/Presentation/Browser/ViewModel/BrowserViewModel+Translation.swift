@@ -80,6 +80,25 @@ extension BrowserViewModel {
         }
     }
 
+    /// 새로고침 버튼 동작에 맞춰 기존 번역을 지우고 Glossary부터 다시 로드하도록 설정한다.
+    func refreshAndReload(urlString: String) {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return }
+        let segmentIDs = lastSegments.map { $0.id }
+
+        if let webView = attachedWebView {
+            cancelActiveTranslation()
+            clearTranslationArtifacts(on: webView)
+            if segmentIDs.isEmpty == false {
+                cache.clearBySegmentIDs(segmentIDs)
+            }
+        } else if segmentIDs.isEmpty == false {
+            cache.clearBySegmentIDs(segmentIDs)
+        }
+
+        load(urlString: trimmed)
+    }
+
     /// 현재 페이지 전체를 번역하도록 비동기 작업을 시작한다.
     func requestTranslation(on webView: WKWebView) {
         print(
@@ -681,7 +700,7 @@ private extension BrowserViewModel {
 extension BrowserViewModel {
     /// 페이지별 언어 선호를 기반으로 엔진 호출 옵션을 조립한다.
     func makeTranslationOptions(using preference: PageLanguagePreference) -> TranslationOptions {
-        TranslationOptions(
+        return TranslationOptions(
             preserveFormatting: true,
             style: .neutralDictionaryTone,
             applyGlossary: true,
@@ -694,6 +713,25 @@ extension BrowserViewModel {
     /// 대상 언어가 CJK인지에 따라 토큰 간 공백 삽입 여부를 결정한다.
     private func spacingBehavior(for preference: PageLanguagePreference) -> TokenSpacingBehavior {
         preference.target.isCJK ? .disabled : .isolatedSegments
+    }
+
+    func clearTranslationArtifacts(on webView: WKWebView) {
+        let executor = WKWebViewScriptAdapter(webView: webView)
+        replacer.restore(using: executor)
+        replacer.setPairs([], using: executor, observer: .restart)
+        closeOverlay()
+
+        if let coordinator = webView.navigationDelegate as? WebContainerView.Coordinator {
+            coordinator.resetMarks()
+        }
+
+        currentPageTranslation = nil
+        lastSegments = []
+        lastStreamPayloads = []
+        failedSegmentIDs = []
+        translationProgress = 0
+        noBodyTextRetryCount = 0
+        isTranslating = false
     }
 
     private struct PreparedState: Sendable {

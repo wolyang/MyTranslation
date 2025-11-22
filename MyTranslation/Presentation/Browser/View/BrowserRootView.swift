@@ -30,6 +30,7 @@ struct BrowserRootView: View {
             wrappedValue: BrowserViewModel(
                 extractor: WKContentExtractor(),
                 router: container.router,
+                cache: container.cache,
                 replacer: WebViewInlineReplacer(),
 //                fmQuery: container.fmQuery,
                 settings: container.settings
@@ -156,6 +157,10 @@ struct BrowserRootView: View {
                 currentPageURLString: vm.currentPageURLString,
                 onGo: { url in
                     vm.load(urlString: url)
+                    triggerTranslationSession()
+                },
+                onRefresh: { url in
+                    vm.refreshAndReload(urlString: url)
                     triggerTranslationSession()
                 },
                 onSelectEngine: { engine, wasShowingOriginal in
