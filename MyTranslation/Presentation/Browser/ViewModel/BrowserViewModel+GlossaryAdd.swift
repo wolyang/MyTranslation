@@ -19,11 +19,22 @@ extension BrowserViewModel {
             }
         }()
 
+        var matched: GlossaryAddSheetState.MatchedTerm? = nil
+        if kind == .original,
+           let overlay = overlayState,
+           let metadata = overlay.primaryHighlightMetadata,
+           let entry = metadata.matchedEntryForOriginal(nsRange: selectedRange, in: overlay.selectedText) {
+            if case let .termStandalone(termKey) = entry.origin {
+                matched = .init(key: termKey, entry: entry)
+            }
+        }
+
         glossaryAddSheet = GlossaryAddSheetState(
             selectedText: trimmed,
             selectedRange: selectedRange,
             section: section,
-            selectionKind: kind
+            selectionKind: kind,
+            matchedTerm: matched
         )
     }
 }

@@ -90,6 +90,7 @@ struct BrowserRootView: View {
                     state: sheetState,
                     onAddNew: { openTermEditor(from: sheetState) },
                     onAppendToExisting: { prepareTermPicker(for: sheetState) },
+                    onEditExisting: { key in openExistingTerm(key: key) },
                     onCancel: {
                         pendingVariantText = nil
                         vm.glossaryAddSheet = nil
@@ -390,6 +391,33 @@ struct BrowserRootView: View {
             }
         } catch {
             Log.error(error.localizedDescription)
+            glossaryErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func openExistingTerm(key: String, variant: String? = nil) {
+        do {
+            let predicate = #Predicate<Glossary.SDModel.SDTerm> { $0.key == key }
+            var descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(predicate: predicate)
+            descriptor.includePendingChanges = true
+            guard let term = try modelContext.fetch(descriptor).first else {
+                glossaryErrorMessage = "선택한 용어를 찾을 수 없습니다."
+                return
+            }
+            let editor = try TermEditorViewModel(context: modelContext, termID: term.persistentModelID, patternID: nil)
+            if let variant = variant?.trimmingCharacters(in: .whitespacesAndNewlines), variant.isEmpty == false {
+                var list = editor.generalDraft.variants.split(separator: ";").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                if list.contains(variant) == false {
+                    list.append(variant)
+                }
+                editor.generalDraft.variants = list.joined(separator: ";")
+            }
+            pendingVariantText = nil
+            pendingTermEditorViewModel = nil
+            vm.glossaryAddSheet = nil
+            isTermPickerPresented = false
+            activeTermEditorViewModel = editor
+        } catch {
             glossaryErrorMessage = error.localizedDescription
         }
     }

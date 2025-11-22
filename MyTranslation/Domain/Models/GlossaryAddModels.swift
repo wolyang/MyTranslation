@@ -15,11 +15,17 @@ struct GlossaryAddSheetState: Identifiable, Equatable {
         case translated
     }
 
+    struct MatchedTerm: Equatable {
+        let key: String
+        let entry: GlossaryEntry
+    }
+
     let id: UUID = UUID()
     let selectedText: String
     let selectedRange: NSRange
     let section: OverlayTextSection
     let selectionKind: SelectionKind
+    let matchedTerm: MatchedTerm?
 
     var sectionDescription: String {
         switch section {

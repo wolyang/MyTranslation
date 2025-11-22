@@ -37,3 +37,11 @@ public struct TermRange: Sendable, Equatable, Hashable {
         case normalized  // preMask = false
     }
 }
+
+public extension TermHighlightMetadata {
+    /// 원문 하이라이트에서 선택된 NSRange와 정확히 겹치는 용어를 반환합니다.
+    func matchedEntryForOriginal(nsRange: NSRange, in text: String) -> GlossaryEntry? {
+        guard let range = Range(nsRange, in: text) else { return nil }
+        return originalTermRanges.first(where: { $0.range == range })?.entry
+    }
+}
