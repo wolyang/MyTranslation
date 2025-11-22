@@ -236,6 +236,151 @@ struct MyTranslationTests {
     }
 
     @Test
+    func maskFromPiecesTracksRanges() {
+        let text = "Hello 최강자님"
+        let segment = Segment(
+            id: "seg2",
+            url: URL(string: "https://example.com")!,
+            indexInPage: 0,
+            originalText: text,
+            normalizedText: text,
+            domRange: nil
+        )
+        let entry = GlossaryEntry(
+            source: "최강자",
+            target: "Choigangja",
+            variants: [],
+            preMask: true,
+            isAppellation: true,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "t2")
+        )
+
+        let masker = TermMasker()
+        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [entry])
+        let pack = masker.maskFromPieces(pieces: pieces, segment: segment)
+
+        #expect(pack.tokenEntries.count == 1)
+        #expect(pack.maskedRanges.count == 1)
+        if let token = pack.tokenEntries.keys.first,
+           let range = pack.maskedRanges.first(where: { $0.type == .masked })?.range {
+            #expect(String(pack.masked[range]) == token)
+        } else {
+            #expect(false, "마스킹된 토큰과 range를 찾지 못했습니다.")
+        }
+    }
+
+    @Test
+    func normalizeWithOrderTracksNormalizedRanges() {
+        let original = "I love grey and grey"
+        let translation = "나는 grey와 grey를 좋아함"
+        let entry = GlossaryEntry(
+            source: "grey",
+            target: "gray",
+            variants: ["grey"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "grey")
+        )
+
+        let r1 = original.range(of: "grey")!
+        let r2 = original.range(of: "grey", range: r1.upperBound..<original.endIndex)!
+        let pieces = SegmentPieces(
+            segmentID: "seg3",
+            originalText: original,
+            pieces: [
+                .text(String(original[original.startIndex..<r1.lowerBound]), range: original.startIndex..<r1.lowerBound),
+                .term(entry, range: r1),
+                .text(String(original[r1.upperBound..<r2.lowerBound]), range: r1.upperBound..<r2.lowerBound),
+                .term(entry, range: r2),
+                .text(String(original[r2.upperBound..<original.endIndex]), range: r2.upperBound..<original.endIndex)
+            ]
+        )
+
+        let name = TermMasker.NameGlossary(target: "gray", variants: ["grey"], expectedCount: 2, fallbackTerms: nil)
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: translation,
+            pieces: pieces,
+            nameGlossaries: [name]
+        )
+
+        #expect(result.text.contains("gray"))
+        #expect(result.ranges.count == 2)
+        for range in result.ranges {
+            #expect(String(result.text[range.range]) == "gray")
+            #expect(range.type == .normalized)
+        }
+    }
+
+    @Test
+    func unmaskWithOrderTracksRanges() {
+        let original = "안녕 최강자님과 용사님"
+        let entry1 = GlossaryEntry(
+            source: "최강자",
+            target: "Choigangja",
+            variants: [],
+            preMask: true,
+            isAppellation: true,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "e1")
+        )
+        let entry2 = GlossaryEntry(
+            source: "용사",
+            target: "Yongsa",
+            variants: [],
+            preMask: true,
+            isAppellation: true,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "e2")
+        )
+
+        guard let r1 = original.range(of: "최강자"),
+              let r2 = original.range(of: "용사") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let pieces = SegmentPieces(
+            segmentID: "seg4",
+            originalText: original,
+            pieces: [
+                .text(String(original[original.startIndex..<r1.lowerBound]), range: original.startIndex..<r1.lowerBound),
+                .term(entry1, range: r1),
+                .text(String(original[r1.upperBound..<r2.lowerBound]), range: r1.upperBound..<r2.lowerBound),
+                .term(entry2, range: r2),
+                .text(String(original[r2.upperBound..<original.endIndex]), range: r2.upperBound..<original.endIndex)
+            ]
+        )
+
+        let textWithTokens = "안녕 __E#1__님과 __E#2__님"
+        let locks: [String: LockInfo] = [
+            "__E#1__": .init(placeholder: "__E#1__", target: entry1.target, endsWithBatchim: false, endsWithRieul: false, isAppellation: true),
+            "__E#2__": .init(placeholder: "__E#2__", target: entry2.target, endsWithBatchim: false, endsWithRieul: false, isAppellation: true)
+        ]
+        let tokenEntries: [String: GlossaryEntry] = [
+            "__E#1__": entry1,
+            "__E#2__": entry2
+        ]
+
+        let masker = TermMasker()
+        let result = masker.unmaskWithOrder(
+            in: textWithTokens,
+            pieces: pieces,
+            locksByToken: locks,
+            tokenEntries: tokenEntries
+        )
+
+        #expect(result.text.contains(entry1.target))
+        #expect(result.text.contains(entry2.target))
+        #expect(result.ranges.count == 2)
+        for range in result.ranges {
+            #expect(range.type == .masked)
+        }
+    }
+
+    @Test
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [

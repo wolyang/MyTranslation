@@ -32,7 +32,7 @@ public struct TermRange: Sendable, Equatable, Hashable {
         self.type = type
     }
 
-    public enum TermType: Sendable, Equatable {
+    public enum TermType: String, Sendable, Equatable {
         case masked      // preMask = true
         case normalized  // preMask = false
     }
