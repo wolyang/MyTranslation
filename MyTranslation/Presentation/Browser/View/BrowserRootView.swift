@@ -234,6 +234,7 @@ struct BrowserRootView: View {
             ZStack(alignment: .topLeading) {
                 WebContainerView(
                     request: vm.request,
+                    requestID: vm.requestID,
                     onAttach: { webView in vm.attachWebView(webView) },
                     onDidFinish: { webView, url in
                         vm.onWebViewDidFinishLoad(webView, url: url)
