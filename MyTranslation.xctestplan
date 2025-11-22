@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "4F11F895-7800-4AE3-8189-3E904C663BBC",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:MyTranslation.xcodeproj",
+      "identifier" : "D22417BC2E8CFC700012F1F1",
+      "name" : "MyTranslation"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:MyTranslation.xcodeproj",
+        "identifier" : "D22417CB2E8CFC730012F1F1",
+        "name" : "MyTranslationTests"
+      }
+    }
+  ],
+  "version" : 1
+}

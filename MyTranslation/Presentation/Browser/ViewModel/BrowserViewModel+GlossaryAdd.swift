@@ -95,7 +95,8 @@ enum GlossaryAddCandidateUtil {
         finalText: String?,
         preNormalizedText: String?,
         selectionAnchor: Int,
-        maxCount: Int = 8
+        maxCount: Int = 8,
+        maxScanCount: Int = 300
     ) -> (candidates: [GlossaryAddSheetState.UnmatchedTermCandidate], truncated: Bool) {
         let rangesForAnchor: [TermRange] = {
             if finalText != nil {
@@ -123,45 +124,52 @@ enum GlossaryAddCandidateUtil {
 
         let loweredSelection = selectedText.lowercased()
 
-        let candidates: [GlossaryAddSheetState.UnmatchedTermCandidate] = metadata.originalTermRanges.enumerated().flatMap { index, termRange in
+        var candidates: [GlossaryAddSheetState.UnmatchedTermCandidate] = []
+
+        let scanList = metadata.originalTermRanges.prefix(maxScanCount)
+
+        for (index, termRange) in scanList.enumerated() {
             let source = termRange.entry.source
             if let before = remainingMatchedBeforeAnchor[source], before > 0 {
                 remainingMatchedBeforeAnchor[source] = before - 1
                 remainingMatchedCount[source] = max((remainingMatchedCount[source] ?? 0) - 1, 0)
-                return [GlossaryAddSheetState.UnmatchedTermCandidate]()
+                continue
             }
             if let count = remainingMatchedCount[source], count > 0 {
                 remainingMatchedCount[source] = count - 1
-                return [GlossaryAddSheetState.UnmatchedTermCandidate]()
+                continue
             }
 
             let entry = termRange.entry
             let score = bestSimilarityScore(for: entry, against: loweredSelection)
             switch entry.origin {
             case let .termStandalone(key):
-                return [GlossaryAddSheetState.UnmatchedTermCandidate(
+                candidates.append(GlossaryAddSheetState.UnmatchedTermCandidate(
                     termKey: key,
                     entry: entry,
                     appearanceOrder: index,
                     similarity: score
-                )]
+                ))
             case let .composer(_, leftKey, rightKey, _):
                 let keys = [leftKey, rightKey].compactMap { $0 }
                 if keys.isEmpty {
-                    return [GlossaryAddSheetState.UnmatchedTermCandidate(
+                    candidates.append(GlossaryAddSheetState.UnmatchedTermCandidate(
                         termKey: nil,
                         entry: entry,
                         appearanceOrder: index,
                         similarity: score
-                    )]
-                }
-                return keys.map { key in
-                    GlossaryAddSheetState.UnmatchedTermCandidate(
-                        termKey: key,
-                        entry: entry,
-                        appearanceOrder: index,
-                        similarity: score
-                    )
+                    ))
+                } else {
+                    for key in keys {
+                        candidates.append(
+                            GlossaryAddSheetState.UnmatchedTermCandidate(
+                                termKey: key,
+                                entry: entry,
+                                appearanceOrder: index,
+                                similarity: score
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -195,7 +203,7 @@ enum GlossaryAddCandidateUtil {
         }()
 
         let limited = maxCount > 0 ? Array(sorted.prefix(maxCount)) : sorted
-        let truncated = sorted.count > limited.count
+        let truncated = sorted.count > limited.count || metadata.originalTermRanges.count > scanList.count
         return (limited, truncated)
     }
 
