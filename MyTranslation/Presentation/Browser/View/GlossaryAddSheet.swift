@@ -2,17 +2,40 @@ import SwiftUI
 
 struct GlossaryAddSheet: View {
     let state: GlossaryAddSheetState
-    let onAddNew: () -> Void
+    let onAddNew: (String?) -> Void
     let onAppendToExisting: () -> Void
     let onAppendCandidate: (String) -> Void
     let onEditExisting: (String) -> Void
     let onCancel: () -> Void
+
+    @State private var sourceInput: String
+    @FocusState private var isSourceFieldFocused: Bool
+
+    init(
+        state: GlossaryAddSheetState,
+        onAddNew: @escaping (String?) -> Void,
+        onAppendToExisting: @escaping () -> Void,
+        onAppendCandidate: @escaping (String) -> Void,
+        onEditExisting: @escaping (String) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.state = state
+        self.onAddNew = onAddNew
+        self.onAppendToExisting = onAppendToExisting
+        self.onAppendCandidate = onAppendCandidate
+        self.onEditExisting = onEditExisting
+        self.onCancel = onCancel
+        _sourceInput = State(initialValue: state.selectionKind == .translated ? state.originalText : "")
+    }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 sectionHeader
                 selectedTextCard
+                if state.selectionKind == .translated {
+                    sourceInputField
+                }
                 if state.selectionKind == .original {
                     originalActionButtons
                 } else {
@@ -75,7 +98,7 @@ struct GlossaryAddSheet: View {
             }
 
             Button {
-                onAddNew()
+                onAddNew(nil)
             } label: {
                 Label("새 용어로 추가", systemImage: "plus.circle.fill")
                     .frame(maxWidth: .infinity)
@@ -94,15 +117,24 @@ struct GlossaryAddSheet: View {
                         candidateRow(candidate)
                     }
                 }
+            } else if let message = state.recommendationMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("추천 없음")
+                        .font(.subheadline.weight(.semibold))
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Button {
-                onAddNew()
+                onAddNew(sourceInput.trimmingCharacters(in: .whitespacesAndNewlines))
             } label: {
                 Label("새 용어로 추가", systemImage: "plus.circle.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(isAddNewDisabled)
 
             Button {
                 onAppendToExisting()
@@ -176,5 +208,33 @@ struct GlossaryAddSheet: View {
         }
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var sourceInputField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("원문 범위 선택")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            TextEditor(text: $sourceInput)
+                .frame(minHeight: 80, maxHeight: 140)
+                .padding(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
+                .focused($isSourceFieldFocused)
+            Text("필요한 원문 구간만 입력하세요. 지정하지 않으면 기본 원문 전체가 사용됩니다.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var isAddNewDisabled: Bool {
+        if state.selectionKind == .translated {
+            return sourceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return false
     }
 }

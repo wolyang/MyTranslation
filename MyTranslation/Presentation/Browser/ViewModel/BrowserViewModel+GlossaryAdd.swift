@@ -25,6 +25,16 @@ extension BrowserViewModel {
             kind: kind,
             selectionAnchor: selectedRange.location
         )
+        let recommendationMessage: String? = {
+            guard kind == .translated else { return nil }
+            if overlayState?.primaryHighlightMetadata == nil {
+                return "하이라이트 정보가 없어 추천을 계산할 수 없습니다."
+            }
+            if candidates.isEmpty {
+                return "추천할 용어가 없습니다. 새 용어 추가나 직접 선택을 진행해 주세요."
+            }
+            return nil
+        }()
 
         glossaryAddSheet = GlossaryAddSheetState(
             selectedText: trimmed,
@@ -33,7 +43,8 @@ extension BrowserViewModel {
             section: section,
             selectionKind: kind,
             matchedTerm: matched,
-            unmatchedCandidates: candidates
+            unmatchedCandidates: candidates,
+            recommendationMessage: recommendationMessage
         )
     }
 
@@ -100,33 +111,47 @@ enum GlossaryAddCandidateUtil {
 
         let loweredSelection = selectedText.lowercased()
 
-        let candidates: [GlossaryAddSheetState.UnmatchedTermCandidate] = metadata.originalTermRanges.enumerated().compactMap { index, termRange in
+        let candidates: [GlossaryAddSheetState.UnmatchedTermCandidate] = metadata.originalTermRanges.enumerated().flatMap { index, termRange in
             let source = termRange.entry.source
             if let before = remainingMatchedBeforeAnchor[source], before > 0 {
                 remainingMatchedBeforeAnchor[source] = before - 1
                 remainingMatchedCount[source] = max((remainingMatchedCount[source] ?? 0) - 1, 0)
-                return nil
+                return []
             }
             if let count = remainingMatchedCount[source], count > 0 {
                 remainingMatchedCount[source] = count - 1
-                return nil
+                return []
             }
 
             let entry = termRange.entry
             let score = bestSimilarityScore(for: entry, against: loweredSelection)
-            let termKey: String?
             switch entry.origin {
             case let .termStandalone(key):
-                termKey = key
-            case let .composer(composerId, _, _, _):
-                termKey = composerId
+                return [GlossaryAddSheetState.UnmatchedTermCandidate(
+                    termKey: key,
+                    entry: entry,
+                    appearanceOrder: index,
+                    similarity: score
+                )]
+            case let .composer(_, leftKey, rightKey, _):
+                let keys = [leftKey, rightKey].compactMap { $0 }
+                if keys.isEmpty {
+                    return [GlossaryAddSheetState.UnmatchedTermCandidate(
+                        termKey: nil,
+                        entry: entry,
+                        appearanceOrder: index,
+                        similarity: score
+                    )]
+                }
+                return keys.map { key in
+                    GlossaryAddSheetState.UnmatchedTermCandidate(
+                        termKey: key,
+                        entry: entry,
+                        appearanceOrder: index,
+                        similarity: score
+                    )
+                }
             }
-            return .init(
-                termKey: termKey,
-                entry: entry,
-                appearanceOrder: index,
-                similarity: score
-            )
         }
 
         return candidates.sorted { lhs, rhs in

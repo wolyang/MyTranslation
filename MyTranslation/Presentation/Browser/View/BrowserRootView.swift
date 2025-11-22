@@ -88,7 +88,7 @@ struct BrowserRootView: View {
             .sheet(item: $vm.glossaryAddSheet) { sheetState in
                 GlossaryAddSheet(
                     state: sheetState,
-                    onAddNew: { openTermEditor(from: sheetState) },
+                    onAddNew: { source in openTermEditor(from: sheetState, sourceOverride: source) },
                     onAppendToExisting: { prepareTermPicker(for: sheetState) },
                     onAppendCandidate: { key in
                         openExistingTerm(key: key, variant: sheetState.selectedText)
@@ -336,7 +336,7 @@ struct BrowserRootView: View {
         triggerTranslationSession()
     }
 
-    private func openTermEditor(from state: GlossaryAddSheetState) {
+    private func openTermEditor(from state: GlossaryAddSheetState, sourceOverride: String? = nil) {
         do {
             let editor = try TermEditorViewModel(context: modelContext, termID: nil, patternID: nil)
             let trimmed = state.selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -345,6 +345,12 @@ struct BrowserRootView: View {
                 editor.generalDraft.sourcesOK = trimmed
             case .translated:
                 editor.generalDraft.variants = trimmed
+                let source = (sourceOverride?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                if let source {
+                    editor.generalDraft.sourcesOK = source
+                } else {
+                    editor.generalDraft.sourcesOK = state.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
             }
             activeTermEditorViewModel = editor
             vm.glossaryAddSheet = nil

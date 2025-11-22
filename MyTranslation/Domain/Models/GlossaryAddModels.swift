@@ -36,6 +36,7 @@ struct GlossaryAddSheetState: Identifiable, Equatable {
     let selectionKind: SelectionKind
     let matchedTerm: MatchedTerm?
     let unmatchedCandidates: [UnmatchedTermCandidate]
+    let recommendationMessage: String?
 
     var sectionDescription: String {
         switch section {
