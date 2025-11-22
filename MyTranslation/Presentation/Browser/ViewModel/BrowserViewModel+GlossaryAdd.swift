@@ -107,6 +107,11 @@ enum GlossaryAddCandidateUtil {
         var remainingMatchedCount: [String: Int] = [:]
         var remainingMatchedBeforeAnchor: [String: Int] = [:]
         let anchorText = finalText ?? preNormalizedText ?? ""
+        let matchedOffsets = rangesForAnchor
+            .map { $0.range.lowerBound.utf16Offset(in: anchorText) }
+            .sorted()
+        let firstMatchedStart = matchedOffsets.first
+        let lastMatchedStart = matchedOffsets.last
 
         for range in rangesForAnchor.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
             remainingMatchedCount[range.entry.source, default: 0] += 1
@@ -161,12 +166,33 @@ enum GlossaryAddCandidateUtil {
             }
         }
 
-        let sorted = candidates.sorted { lhs, rhs in
-            if abs(lhs.similarity - rhs.similarity) > 0.001 {
-                return lhs.similarity > rhs.similarity
+        let sorted: [GlossaryAddSheetState.UnmatchedTermCandidate] = {
+            if let last = lastMatchedStart, selectionAnchor > last {
+                // 선택 위치가 마지막 매칭 뒤라면 뒤쪽(등장 순서가 큰) 후보 우선
+                return candidates.sorted { lhs, rhs in
+                    if abs(lhs.similarity - rhs.similarity) > 0.001 {
+                        return lhs.similarity > rhs.similarity
+                    }
+                    return lhs.appearanceOrder > rhs.appearanceOrder
+                }
+            } else if let first = firstMatchedStart, selectionAnchor < first {
+                // 선택 위치가 첫 매칭 앞이라면 앞쪽 후보 우선
+                return candidates.sorted { lhs, rhs in
+                    if abs(lhs.similarity - rhs.similarity) > 0.001 {
+                        return lhs.similarity > rhs.similarity
+                    }
+                    return lhs.appearanceOrder < rhs.appearanceOrder
+                }
+            } else {
+                // 중간이면 기존 정렬(등장 순서 오름차순)
+                return candidates.sorted { lhs, rhs in
+                    if abs(lhs.similarity - rhs.similarity) > 0.001 {
+                        return lhs.similarity > rhs.similarity
+                    }
+                    return lhs.appearanceOrder < rhs.appearanceOrder
+                }
             }
-            return lhs.appearanceOrder < rhs.appearanceOrder
-        }
+        }()
 
         let limited = maxCount > 0 ? Array(sorted.prefix(maxCount)) : sorted
         let truncated = sorted.count > limited.count
