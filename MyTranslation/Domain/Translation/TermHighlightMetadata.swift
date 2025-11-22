@@ -44,4 +44,13 @@ public extension TermHighlightMetadata {
         guard let range = Range(nsRange, in: text) else { return nil }
         return originalTermRanges.first(where: { $0.range == range })?.entry
     }
+
+    /// 원문 하이라이트 중 정규화/언마스킹 결과에 반영되지 않은 항목을 반환합니다.
+    func unmatchedOriginalEntries() -> [GlossaryEntry] {
+        let matchedSources = Set(finalTermRanges.map { $0.entry.source } +
+                                 (preNormalizedTermRanges ?? []).map { $0.entry.source })
+        return originalTermRanges
+            .filter { matchedSources.contains($0.entry.source) == false }
+            .map { $0.entry }
+    }
 }

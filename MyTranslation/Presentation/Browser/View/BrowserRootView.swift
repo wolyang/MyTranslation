@@ -90,6 +90,9 @@ struct BrowserRootView: View {
                     state: sheetState,
                     onAddNew: { openTermEditor(from: sheetState) },
                     onAppendToExisting: { prepareTermPicker(for: sheetState) },
+                    onAppendCandidate: { key in
+                        openExistingTerm(key: key, variant: sheetState.selectedText)
+                    },
                     onEditExisting: { key in openExistingTerm(key: key) },
                     onCancel: {
                         pendingVariantText = nil
@@ -102,13 +105,10 @@ struct BrowserRootView: View {
             .sheet(
                 isPresented: $isTermPickerPresented,
                 onDismiss: {
-                    Log.info("on TermPickerDismiss")
                     if let pending = pendingTermEditorViewModel {
-                        Log.info("pendingTermEditorViewModel exist")
                         pendingTermEditorViewModel = nil
                         activeTermEditorViewModel = pending
                     } else {
-                        Log.info("pendingTermEditorViewModel not exist")
                     }
                 },
                 content: {
@@ -365,10 +365,8 @@ struct BrowserRootView: View {
     }
 
     private func appendVariant(to termKey: String) {
-        Log.info("pendingVariantText: \(String(describing: pendingVariantText)), appendVariant to \(termKey)")
         guard let variant = pendingVariantText?.trimmingCharacters(in: .whitespacesAndNewlines),
               variant.isEmpty == false else {
-            Log.info("cancelled to appendVariant")
             return
         }
         do {
@@ -386,7 +384,6 @@ struct BrowserRootView: View {
                 vm.glossaryAddSheet = nil
                 pendingVariantText = nil
                 pendingTermEditorViewModel = editor
-                Log.info("pendingTermEditorViewModel set")
                 isTermPickerPresented = false
             }
         } catch {

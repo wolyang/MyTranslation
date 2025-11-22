@@ -20,12 +20,22 @@ struct GlossaryAddSheetState: Identifiable, Equatable {
         let entry: GlossaryEntry
     }
 
+    struct UnmatchedTermCandidate: Identifiable, Equatable {
+        let id: UUID = UUID()
+        let termKey: String?
+        let entry: GlossaryEntry
+        let appearanceOrder: Int
+        let similarity: Double
+    }
+
     let id: UUID = UUID()
     let selectedText: String
+    let originalText: String
     let selectedRange: NSRange
     let section: OverlayTextSection
     let selectionKind: SelectionKind
     let matchedTerm: MatchedTerm?
+    let unmatchedCandidates: [UnmatchedTermCandidate]
 
     var sectionDescription: String {
         switch section {
