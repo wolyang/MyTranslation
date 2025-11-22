@@ -5,6 +5,7 @@ import UIKit
 @MainActor
 struct WebContainerView: UIViewRepresentable {
     let request: URLRequest?
+    let requestID: UUID
     var onAttach: ((WKWebView) -> Void)? = nil
     var onDidFinish: ((WKWebView, URL) -> Void)? = nil
     var onSelectSegment: ((String, CGRect) -> Void)? = nil
@@ -24,13 +25,32 @@ struct WebContainerView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         guard let req = request else { return }
-        // 동일 URL이면 강제 reload, 아니면 새 요청 로드
-        if uiView.url == nil {
+
+        let currentURL = uiView.url?.absoluteString ?? "nil"
+        let requestURL = req.url?.absoluteString ?? "nil"
+        let alreadyProcessed = context.coordinator.lastProcessedRequestID == requestID
+
+        print("[WebContainer] updateUIView current=\(currentURL) req=\(requestURL) reqID=\(requestID) processed=\(alreadyProcessed)")
+
+        // 이미 처리한 요청이면 건너뜀
+        if alreadyProcessed {
+            print("[WebContainer] → skip (already processed)")
+            return
+        }
+
+        // URL이 다르면 새 요청 로드
+        if uiView.url == nil || uiView.url?.absoluteString != req.url?.absoluteString {
+            print("[WebContainer] → load(req)")
             uiView.load(req)
-        } else if uiView.url?.absoluteString == req.url?.absoluteString {
+            context.coordinator.lastProcessedRequestID = requestID
+        } else if req.cachePolicy == .reloadIgnoringLocalCacheData {
+            // 동일 URL이지만 명시적으로 캐시 무시 요청이면 reload
+            print("[WebContainer] → reload()")
             uiView.reload()
+            context.coordinator.lastProcessedRequestID = requestID
         } else {
-            uiView.load(req)
+            print("[WebContainer] → skip (same URL + normal cache)")
+            context.coordinator.lastProcessedRequestID = requestID
         }
     }
 
@@ -45,7 +65,8 @@ struct WebContainerView: UIViewRepresentable {
         private var markedSegmentIDs: Set<String> = []
         private weak var interactionTap: UITapGestureRecognizer?
         private var hasAttachedPanHandler: Bool = false
-        
+        var lastProcessedRequestID: UUID? = nil
+
         init(parent: WebContainerView) { self.parent = parent }
         
         

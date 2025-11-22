@@ -25,6 +25,7 @@ final class BrowserViewModel: ObservableObject {
     }
 
     @Published var request: URLRequest? = nil
+    @Published var requestID: UUID = UUID()
     var currentPageURLString: String {
         currentPageTranslation?.url.absoluteString ?? attachedWebView?.url?.absoluteString ?? urlString
     }
@@ -183,9 +184,12 @@ final class BrowserViewModel: ObservableObject {
             return
         }
 
+        let newRequestID = UUID()
+        print("[VM] load(urlString:) creating request for: \(url.absoluteString) id=\(newRequestID)")
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
+        self.requestID = newRequestID
         pendingURLAfterEditing = nil
         settings.lastVisitedURL = url.absoluteString
     }
