@@ -611,7 +611,8 @@ private extension BrowserViewModel {
             translatedText: translated,
             preNormalizedText: payload.preNormalizedText,
             engineID: payload.engineID,
-            sequence: payload.sequence
+            sequence: payload.sequence,
+            highlightMetadata: payload.highlightMetadata
         )
         replacer.upsert(
             payload: enrichedPayload,

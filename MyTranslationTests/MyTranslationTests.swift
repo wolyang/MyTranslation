@@ -409,6 +409,41 @@ struct MyTranslationTests {
     }
 
     @Test
+    func streamBufferRetainsHighlightMetadata() {
+        var buffer = BrowserViewModel.StreamBuffer()
+        let text = "abc"
+        let entry = GlossaryEntry(
+            source: "a",
+            target: "A",
+            variants: [],
+            preMask: true,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "k1")
+        )
+        let range = text.startIndex..<text.index(text.startIndex, offsetBy: 1)
+        let metadata = TermHighlightMetadata(
+            originalTermRanges: [],
+            finalTermRanges: [TermRange(entry: entry, range: range, type: .masked)],
+            preNormalizedTermRanges: nil
+        )
+        let payload = TranslationStreamPayload(
+            segmentID: "s1",
+            originalText: text,
+            translatedText: text,
+            preNormalizedText: nil,
+            engineID: "e1",
+            sequence: 0,
+            highlightMetadata: metadata
+        )
+
+        buffer.upsert(payload)
+
+        #expect(buffer.ordered.count == 1)
+        #expect(buffer.ordered.first?.highlightMetadata?.finalTermRanges.count == 1)
+    }
+
+    @Test
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [
