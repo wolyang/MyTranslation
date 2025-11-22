@@ -35,33 +35,4 @@ struct HighlightedText: Equatable {
     }
 }
 
-/// NSAttributedString을 표시하는 SwiftUI 뷰.
-struct AttributedTextView: UIViewRepresentable {
-    let attributedText: NSAttributedString
-    let isSelectable: Bool
-
-    init(_ highlightedText: HighlightedText, isSelectable: Bool = true) {
-        self.attributedText = highlightedText.attributedString
-        self.isSelectable = isSelectable
-    }
-
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
-        textView.isEditable = false
-        textView.isSelectable = isSelectable
-        textView.isScrollEnabled = false
-        textView.backgroundColor = .clear
-        textView.textContainerInset = .zero
-        textView.textContainer.lineFragmentPadding = 0
-        textView.font = .preferredFont(forTextStyle: .callout)
-        textView.adjustsFontForContentSizeCategory = true
-        textView.setContentCompressionResistancePriority(.required, for: .vertical)
-        textView.textContainer.lineBreakMode = .byCharWrapping
-        return textView
-    }
-
-    func updateUIView(_ textView: UITextView, context: Context) {
-        textView.attributedText = attributedText
-        textView.isSelectable = isSelectable
-    }
-}
+// AttributedTextView는 SelectableTextView에서 통합 지원하므로 별도 UIViewRepresentable은 제공하지 않는다.

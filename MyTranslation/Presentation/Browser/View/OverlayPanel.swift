@@ -357,7 +357,10 @@ private struct TranslationSectionView: View {
                     }
                 case .highlighted(let highlighted):
                     if let highlighted {
-                        AttributedTextView(highlighted, isSelectable: isSelectable)
+                        SelectableTextView(
+                            text: highlighted.plainText,
+                            attributedText: highlighted.attributedString
+                        )
                             .frame(width: availableWidth, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -377,7 +380,8 @@ private struct TranslationSectionView: View {
 }
 
 private struct SelectableTextView: UIViewRepresentable {
-    var text: String
+    var text: String?
+    var attributedText: NSAttributedString? = nil
     var textStyle: UIFont.TextStyle = .callout
     var textColor: UIColor = .label
     var adjustsFontForContentSizeCategory: Bool = true
@@ -422,9 +426,23 @@ private struct SelectableTextView: UIViewRepresentable {
     }
 
     private func applyContent(to textView: SelectableUITextView) {
-        if textView.text != text {
-            textView.text = text
+        let needsAttributed = attributedText != nil
+
+        if needsAttributed {
+            if textView.attributedText != attributedText {
+                textView.attributedText = attributedText
+            }
+        } else {
+            let value = text ?? ""
+            if textView.text != value {
+                textView.text = value
+            }
+            // attributedText가 설정된 상태를 초기화
+            if textView.attributedText?.string != value {
+                textView.attributedText = nil
+            }
         }
+
         textView.font = UIFont.preferredFont(forTextStyle: textStyle)
         textView.textColor = textColor
         textView.adjustsFontForContentSizeCategory = adjustsFontForContentSizeCategory
