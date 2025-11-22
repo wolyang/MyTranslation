@@ -20,7 +20,7 @@ extension BrowserViewModel {
         }()
 
         let matched = matchedTerm(for: kind, selectedRange: selectedRange)
-        let candidates = extractUnmatchedCandidates(
+        let candidateResult = extractUnmatchedCandidates(
             selectedText: trimmed,
             kind: kind,
             selectionAnchor: selectedRange.location
@@ -30,8 +30,11 @@ extension BrowserViewModel {
             if overlayState?.primaryHighlightMetadata == nil {
                 return "하이라이트 정보가 없어 추천을 계산할 수 없습니다."
             }
-            if candidates.isEmpty {
+            if candidateResult.candidates.isEmpty {
                 return "추천할 용어가 없습니다. 새 용어 추가나 직접 선택을 진행해 주세요."
+            }
+            if candidateResult.truncated {
+                return "추천이 많아 상위 \(candidateResult.maxCount)개만 표시합니다."
             }
             return nil
         }()
@@ -43,7 +46,7 @@ extension BrowserViewModel {
             section: section,
             selectionKind: kind,
             matchedTerm: matched,
-            unmatchedCandidates: candidates,
+            unmatchedCandidates: candidateResult.candidates,
             recommendationMessage: recommendationMessage
         )
     }
@@ -65,18 +68,21 @@ extension BrowserViewModel {
         selectedText: String,
         kind: GlossaryAddSheetState.SelectionKind,
         selectionAnchor: Int
-    ) -> [GlossaryAddSheetState.UnmatchedTermCandidate] {
+    ) -> (candidates: [GlossaryAddSheetState.UnmatchedTermCandidate], truncated: Bool, maxCount: Int) {
         guard kind == .translated,
               let metadata = overlayState?.primaryHighlightMetadata else {
-            return [] }
+            return ([], false, 0) }
 
-        return GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+        let maxCount = 8
+        let result = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
             metadata: metadata,
             selectedText: selectedText,
             finalText: overlayState?.primaryFinalText,
             preNormalizedText: overlayState?.primaryPreNormalizedText,
-            selectionAnchor: selectionAnchor
+            selectionAnchor: selectionAnchor,
+            maxCount: maxCount
         )
+        return (result.candidates, result.truncated, maxCount)
     }
 }
 
@@ -88,8 +94,9 @@ enum GlossaryAddCandidateUtil {
         selectedText: String,
         finalText: String?,
         preNormalizedText: String?,
-        selectionAnchor: Int
-    ) -> [GlossaryAddSheetState.UnmatchedTermCandidate] {
+        selectionAnchor: Int,
+        maxCount: Int = 8
+    ) -> (candidates: [GlossaryAddSheetState.UnmatchedTermCandidate], truncated: Bool) {
         let rangesForAnchor: [TermRange] = {
             if finalText != nil {
                 return metadata.finalTermRanges
@@ -154,12 +161,16 @@ enum GlossaryAddCandidateUtil {
             }
         }
 
-        return candidates.sorted { lhs, rhs in
+        let sorted = candidates.sorted { lhs, rhs in
             if abs(lhs.similarity - rhs.similarity) > 0.001 {
                 return lhs.similarity > rhs.similarity
             }
             return lhs.appearanceOrder < rhs.appearanceOrder
         }
+
+        let limited = maxCount > 0 ? Array(sorted.prefix(maxCount)) : sorted
+        let truncated = sorted.count > limited.count
+        return (limited, truncated)
     }
 
     private static func bestSimilarityScore(for entry: GlossaryEntry, against text: String) -> Double {

@@ -117,10 +117,14 @@ struct GlossaryAddSheet: View {
                         candidateRow(candidate)
                     }
                 }
-            } else if let message = state.recommendationMessage {
+            }
+
+            if let message = state.recommendationMessage {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("추천 없음")
-                        .font(.subheadline.weight(.semibold))
+                    if state.unmatchedCandidates.isEmpty {
+                        Text("추천 없음")
+                            .font(.subheadline.weight(.semibold))
+                    }
                     Text(message)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
