@@ -10,7 +10,11 @@
 ## 진행 중/우선 작업
 
 - [ ] (P1) Glossary auto-variant 기능 구현(감지된 Term에 variants를 자동 추가해 관리 편의 개선).
-- [ ] (P2) 번역 결과 일부를 Term variants로 바로 추가하는 오버레이 액션 구현.
+- [ ] (P1) 오버레이 패널에서 용어집 추가 기능 구현(`History/SPEC_OVERLAY_GLOSSARY_ADD.md` 참조):
+  - [ ] Phase 1: 기본 플로우 (번역문 선택 → variants 추가)
+  - [ ] Phase 2: 원문 선택 지원 (기존 용어 편집/새 용어 추가)
+  - [ ] Phase 3: 고급 기능 (매칭되지 않은 용어 후보 추출, 우선순위 정렬)
+  - [ ] Phase 4: 최적화 및 테스트
 - [ ] (P2) 번역 엔진들이 전체 문서에 나타나는 GlossaryEntry 배열, 세그먼트 별 SegmentPiece 배열을 엔진마다 새로 요청하고 생성하지 않고 공통으로 사용하도록 수정. 
 
 ## 완료된 작업
