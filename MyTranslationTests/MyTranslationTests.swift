@@ -309,8 +309,12 @@ struct MyTranslationTests {
 
         #expect(result.text.contains("gray"))
         #expect(result.ranges.count == 2)
+        #expect(result.preNormalizedRanges.count == 2)
         for range in result.ranges {
             #expect(String(result.text[range.range]) == "gray")
+            #expect(range.type == .normalized)
+        }
+        for range in result.preNormalizedRanges {
             #expect(range.type == .normalized)
         }
     }
@@ -379,6 +383,7 @@ struct MyTranslationTests {
         for range in result.ranges {
             #expect(range.type == .masked)
         }
+        #expect(result.deltas.count == 2)
     }
 
     @Test

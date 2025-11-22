@@ -456,6 +456,38 @@ final class DefaultTranslationRouter: TranslationRouter {
         let highlightMetadata: TermHighlightMetadata?
     }
 
+    /// 정규화 range를 언마스킹 후 문자열 기준으로 변환한다.
+    private func translateNormalizationRanges(
+        _ ranges: [TermRange],
+        deltas: [TermMasker.ReplacementDelta],
+        originalText: String,
+        finalText: String
+    ) -> [TermRange] {
+        guard ranges.isEmpty == false else { return [] }
+        guard deltas.isEmpty == false else { return ranges }
+
+        func shift(for offset: Int) -> Int {
+            deltas
+                .filter { $0.offset < offset }
+                .reduce(0) { $0 + $1.delta }
+        }
+
+        let finalCount = finalText.count
+
+        return ranges.compactMap { range in
+            let lowerOffset = originalText.distance(from: originalText.startIndex, to: range.range.lowerBound)
+            let upperOffset = originalText.distance(from: originalText.startIndex, to: range.range.upperBound)
+            let newLowerOffset = lowerOffset + shift(for: lowerOffset)
+            let newUpperOffset = upperOffset + shift(for: upperOffset)
+            guard newLowerOffset >= 0, newUpperOffset >= newLowerOffset, newUpperOffset <= finalCount else {
+                return nil
+            }
+            let newLower = finalText.index(finalText.startIndex, offsetBy: newLowerOffset)
+            let newUpper = finalText.index(finalText.startIndex, offsetBy: newUpperOffset)
+            return TermRange(entry: range.entry, range: newLower..<newUpper, type: range.type)
+        }
+    }
+
     /// 마스킹 해제 및 정규화를 수행해 최종 출력 문자열과 메타데이터를 만든다.
     private func restoreOutput(
         from text: String,
@@ -483,9 +515,13 @@ final class DefaultTranslationRouter: TranslationRouter {
             locksByToken: pack.locks,
             tokenEntries: pack.tokenEntries
         )
+        let fallbackMaskedRanges = preNormalized.ranges.isEmpty
+        ? mapMaskedTerms(from: pieces, in: preNormalized.text)
+        : []
 
         var normalizationRanges: [TermRange] = []
-        var normalizedText = cleaned
+        var preNormalizationRanges: [TermRange] = []
+        var normalizedText = preNormalized.text
         if shouldNormalizeNames, nameGlossaries.isEmpty == false {
             let normalized = termMasker.normalizeWithOrder(
                 in: normalizedText,
@@ -494,6 +530,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
             normalizedText = normalized.text
             normalizationRanges.append(contentsOf: normalized.ranges)
+            preNormalizationRanges.append(contentsOf: normalized.preNormalizedRanges)
         }
 
         let unmasked = termMasker.unmaskWithOrder(
@@ -502,6 +539,15 @@ final class DefaultTranslationRouter: TranslationRouter {
             locksByToken: pack.locks,
             tokenEntries: pack.tokenEntries
         )
+        let translatedNormalizationRanges = translateNormalizationRanges(
+            normalizationRanges,
+            deltas: unmasked.deltas,
+            originalText: normalizedText,
+            finalText: unmasked.text
+        )
+        let finalMaskedRanges = unmasked.ranges.isEmpty
+        ? mapMaskedTerms(from: pieces, in: unmasked.text)
+        : unmasked.ranges
         
 //        // 마스킹된 토큰을 언마스킹하고 조사를 보정한다.
 //        output = termMasker.normalizeEntitiesAndParticles(
@@ -539,8 +585,8 @@ final class DefaultTranslationRouter: TranslationRouter {
 
         let metadata = TermHighlightMetadata(
             originalTermRanges: originalRanges,
-            finalTermRanges: normalizationRanges + unmasked.ranges,
-            preNormalizedTermRanges: preNormalized.ranges
+            finalTermRanges: translatedNormalizationRanges + finalMaskedRanges,
+            preNormalizedTermRanges: preNormalized.ranges + fallbackMaskedRanges + preNormalizationRanges
         )
 
         return RestoredOutput(
@@ -548,6 +594,27 @@ final class DefaultTranslationRouter: TranslationRouter {
             preNormalizedText: preNormalized.text,
             highlightMetadata: metadata
         )
+    }
+
+    /// unmaskWithOrder로 range를 얻지 못했을 때를 대비해 preMask 용어를 텍스트에서 직접 매핑한다.
+    private func mapMaskedTerms(from pieces: SegmentPieces, in text: String) -> [TermRange] {
+        let maskedEntries = pieces.pieces.compactMap { piece -> GlossaryEntry? in
+            if case let .term(entry, _) = piece, entry.preMask { return entry }
+            return nil
+        }
+        guard maskedEntries.isEmpty == false else { return [] }
+
+        var ranges: [TermRange] = []
+        var searchStart = text.startIndex
+
+        for entry in maskedEntries {
+            guard let found = text.range(of: entry.target, range: searchStart..<text.endIndex) ??
+                    text.range(of: entry.target) else { continue }
+            ranges.append(.init(entry: entry, range: found, type: .masked))
+            searchStart = found.upperBound
+        }
+
+        return ranges
     }
 
     /// 마스킹 연산에 필요한 컨텍스트를 표현한다.
