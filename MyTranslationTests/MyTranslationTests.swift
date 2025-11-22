@@ -449,6 +449,39 @@ struct MyTranslationTests {
     }
 
     @Test
+    func normalizeVariantsAndParticlesTracksPreNormalizedRanges() {
+        let text = "나는 grey와 grey를 좋아함"
+        let name = TermMasker.NameGlossary(target: "gray", variants: ["grey"], expectedCount: 2, fallbackTerms: nil)
+        let entry = GlossaryEntry(
+            source: "grey",
+            target: "gray",
+            variants: ["grey"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "tGrey")
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeVariantsAndParticles(
+            in: text,
+            entries: [(name, entry)],
+            baseText: text,
+            cumulativeDelta: 0
+        )
+
+        #expect(result.preNormalizedRanges.count == 2)
+        #expect(result.ranges.count == 2)
+        for r in result.preNormalizedRanges {
+            #expect(String(text[r.range]) == "grey")
+            #expect(r.type == .normalized)
+        }
+        for r in result.ranges {
+            #expect(String(result.text[r.range]) == "gray")
+        }
+    }
+
+    @Test
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [
