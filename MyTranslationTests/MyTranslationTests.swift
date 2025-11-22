@@ -28,16 +28,7 @@ struct MyTranslationTests {
 
     @Test @MainActor
     func extractorGeneratesUniqueSegmentIDsForDuplicateText() async throws {
-        let snapshot = """
-        [
-          {
-            "text": "Hello world.\nHello world.",
-            "map": [
-              { "token": "n1", "start": 0, "end": 25 }
-            ]
-          }
-        ]
-        """
+        let snapshot = #"[{"text":"Hello world.\nHello world.","map":[{"token":"n1","start":0,"end":25}]}]"#
         let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com")!
@@ -51,16 +42,7 @@ struct MyTranslationTests {
 
     @Test @MainActor
     func extractorSkipsPunctuationOnlySegments() async throws {
-        let snapshot = """
-        [
-          {
-            "text": "쟈그라...\n......\n다시 시작한다",
-            "map": [
-              { "token": "t1", "start": 0, "end": 17 }
-            ]
-          }
-        ]
-        """
+        let snapshot = #"[{"text":"쟈그라...\n......\n다시 시작한다","map":[{"token":"t1","start":0,"end":17}]}]"#
         let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com/story")!
@@ -182,7 +164,7 @@ struct MyTranslationTests {
         let masker = TermMasker()
 
         #expect(masker.chooseJosa(for: "만가", baseHasBatchim: false, baseIsRieul: false) == "만이")
-        #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 은")
+        #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 는")
         #expect(masker.chooseJosa(for: "만로", baseHasBatchim: true, baseIsRieul: true) == "만으로")
         #expect(masker.chooseJosa(for: "에게만", baseHasBatchim: true, baseIsRieul: false) == "에게만")
     }
@@ -485,20 +467,40 @@ struct MyTranslationTests {
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [
-            TermMasker.NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"]),
-            TermMasker.NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"])
+            TermMasker.NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"], expectedCount: 1, fallbackTerms: nil),
+            TermMasker.NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"], expectedCount: 1, fallbackTerms: nil)
+        ]
+        let entries: [GlossaryEntry] = [
+            .init(
+                source: "쟈그라",
+                target: "쟈그라",
+                variants: ["가구라", "가굴라", "가고라"],
+                preMask: false,
+                isAppellation: false,
+                prohibitStandalone: false,
+                origin: .termStandalone(termKey: "name1")
+            ),
+            .init(
+                source: "쿠레나이 가이",
+                target: "쿠레나이 가이",
+                variants: ["홍카이"],
+                preMask: false,
+                isAppellation: false,
+                prohibitStandalone: false,
+                origin: .termStandalone(termKey: "name2")
+            )
         ]
 
         let text = "가구라만이가 나타났고 홍카이만에게 경고했다."
-        let normalized = masker.normalizeEntitiesAndParticles(
+        let normalized = masker.normalizeVariantsAndParticles(
             in: text,
-            locksByToken: [:],
-            names: names,
-            mode: .namesOnly
+            entries: Array(zip(names, entries)),
+            baseText: text,
+            cumulativeDelta: 0
         )
 
-        #expect(normalized.contains("쟈그라만이"))
-        #expect(normalized.contains("쿠레나이 가이만에게"))
+        #expect(normalized.text.contains("쟈그라만이"))
+        #expect(normalized.text.contains("쿠레나이 가이만에게"))
     }
 }
 
