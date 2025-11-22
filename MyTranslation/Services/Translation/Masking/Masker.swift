@@ -204,25 +204,6 @@ public final class TermMasker {
 
     // MARK: - SegmentPieces 생성
 
-    private func splitTextBySource(_ text: String, source: String) -> [String] {
-        var parts: [String] = []
-        var remaining = text
-
-        while let range = remaining.range(of: source) {
-            if range.lowerBound > remaining.startIndex {
-                parts.append(String(remaining[remaining.startIndex..<range.lowerBound]))
-            }
-            parts.append(source)
-            remaining = String(remaining[range.upperBound...])
-        }
-
-        if !remaining.isEmpty {
-            parts.append(remaining)
-        }
-
-        return parts
-    }
-
     func buildSegmentPieces(
         segment: Segment,
         glossary allEntries: [GlossaryEntry]
@@ -230,7 +211,11 @@ public final class TermMasker {
         let text = segment.originalText
         guard !text.isEmpty, !allEntries.isEmpty else {
             return (
-                pieces: SegmentPieces(segmentID: segment.id, pieces: [.text(text)]),
+                pieces: SegmentPieces(
+                    segmentID: segment.id,
+                    originalText: text,
+                    pieces: [.text(text, range: text.startIndex..<text.endIndex)]
+                ),
                 activatedEntries: []
             )
         }
@@ -266,7 +251,7 @@ public final class TermMasker {
 
         // 6) Longest-first 분할
         let sorted = allowedEntries.sorted { $0.source.count > $1.source.count }
-        var pieces: [SegmentPieces.Piece] = [.text(text)]
+        var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
 
         for entry in sorted {
             guard !entry.source.isEmpty else { continue }
@@ -274,18 +259,47 @@ public final class TermMasker {
 
             for piece in pieces {
                 switch piece {
-                case .text(let str):
-                    if str.contains(entry.source) {
-                        let parts = splitTextBySource(str, source: entry.source)
-                        for part in parts {
-                            if part == entry.source {
-                                newPieces.append(.term(entry))
-                            } else {
-                                newPieces.append(.text(part))
-                            }
+                case .text(let str, let pieceRange):
+                    guard str.contains(entry.source) else {
+                        newPieces.append(.text(str, range: pieceRange))
+                        continue
+                    }
+
+                    var searchStart = str.startIndex
+                    while let foundRange = str.range(of: entry.source, range: searchStart..<str.endIndex) {
+                        // 앞쪽 텍스트 조각 보존
+                        if foundRange.lowerBound > searchStart {
+                            let prefixLower = text.index(
+                                pieceRange.lowerBound,
+                                offsetBy: str.distance(from: str.startIndex, to: searchStart)
+                            )
+                            let prefixUpper = text.index(
+                                pieceRange.lowerBound,
+                                offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
+                            )
+                            let prefix = String(str[searchStart..<foundRange.lowerBound])
+                            newPieces.append(.text(prefix, range: prefixLower..<prefixUpper))
                         }
-                    } else {
-                        newPieces.append(.text(str))
+
+                        // 용어 range 기록
+                        let originalLower = text.index(
+                            pieceRange.lowerBound,
+                            offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
+                        )
+                        let originalUpper = text.index(originalLower, offsetBy: entry.source.count)
+                        newPieces.append(.term(entry, range: originalLower..<originalUpper))
+
+                        searchStart = foundRange.upperBound
+                    }
+
+                    // 남은 텍스트 조각 추가
+                    if searchStart < str.endIndex {
+                        let suffixLower = text.index(
+                            pieceRange.lowerBound,
+                            offsetBy: str.distance(from: str.startIndex, to: searchStart)
+                        )
+                        let suffix = String(str[searchStart..<str.endIndex])
+                        newPieces.append(.text(suffix, range: suffixLower..<pieceRange.upperBound))
                     }
                 case .term:
                     newPieces.append(piece)
@@ -296,7 +310,7 @@ public final class TermMasker {
         }
 
         return (
-            pieces: SegmentPieces(segmentID: segment.id, pieces: pieces),
+            pieces: SegmentPieces(segmentID: segment.id, originalText: text, pieces: pieces),
             activatedEntries: allowedEntries
         )
     }
@@ -388,9 +402,9 @@ public final class TermMasker {
 
         for piece in pieces.pieces {
             switch piece {
-            case .text(let str):
+            case .text(let str, _):
                 out += str
-            case .term(let entry):
+            case .term(let entry, _):
                 if entry.preMask {
                     let token = Self.makeToken(prefix: "E", index: localNextIndex)
                     localNextIndex += 1
@@ -829,7 +843,7 @@ public final class TermMasker {
             }
 
             let count = pieces.pieces.filter {
-                if case .term(let e) = $0, e.target == target {
+                if case .term(let e, _) = $0, e.target == target {
                     return true
                 }
                 return false
@@ -1251,7 +1265,7 @@ public final class TermMasker {
         var phase2LastMatch: String.Index? = nil
 
         let unmaskedTerms: [(index: Int, entry: GlossaryEntry)] = pieces.pieces.enumerated().compactMap { idx, piece in
-            if case .term(let entry) = piece, entry.preMask == false {
+            if case .term(let entry, _) = piece, entry.preMask == false {
                 return (index: idx, entry: entry)
             }
             return nil
@@ -1330,7 +1344,7 @@ public final class TermMasker {
         var lastMatchUpperBound: String.Index? = nil
 
         let maskedTerms: [GlossaryEntry] = pieces.pieces.compactMap { piece in
-            if case .term(let entry) = piece, entry.preMask {
+            if case .term(let entry, _) = piece, entry.preMask {
                 return entry
             }
             return nil

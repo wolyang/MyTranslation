@@ -187,6 +187,55 @@ struct MyTranslationTests {
     }
 
     @Test
+    func segmentPiecesTracksRanges() {
+        let text = "Hello 최강자님, welcome!"
+        let segment = Segment(
+            id: "seg1",
+            url: URL(string: "https://example.com")!,
+            indexInPage: 0,
+            originalText: text,
+            normalizedText: text,
+            domRange: nil
+        )
+        let entry = GlossaryEntry(
+            source: "최강자",
+            target: "Choigangja",
+            variants: [],
+            preMask: true,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "t1")
+        )
+
+        let masker = TermMasker()
+        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [entry])
+
+        #expect(pieces.originalText == text)
+        #expect(pieces.pieces.count == 3)
+
+        if case let .text(prefix, range1) = pieces.pieces[0] {
+            #expect(prefix == "Hello ")
+            #expect(String(text[range1]) == "Hello ")
+        } else {
+            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
+        }
+
+        if case let .term(termEntry, range2) = pieces.pieces[1] {
+            #expect(termEntry.source == "최강자")
+            #expect(String(text[range2]) == "최강자")
+        } else {
+            #expect(false, "두 번째 조각이 term 이어야 합니다.")
+        }
+
+        if case let .text(suffix, range3) = pieces.pieces[2] {
+            #expect(suffix == "님, welcome!")
+            #expect(String(text[range3]) == "님, welcome!")
+        } else {
+            #expect(false, "세 번째 조각이 text 이어야 합니다.")
+        }
+    }
+
+    @Test
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [
