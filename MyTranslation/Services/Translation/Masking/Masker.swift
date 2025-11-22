@@ -204,25 +204,6 @@ public final class TermMasker {
 
     // MARK: - SegmentPieces 생성
 
-    private func splitTextBySource(_ text: String, source: String) -> [String] {
-        var parts: [String] = []
-        var remaining = text
-
-        while let range = remaining.range(of: source) {
-            if range.lowerBound > remaining.startIndex {
-                parts.append(String(remaining[remaining.startIndex..<range.lowerBound]))
-            }
-            parts.append(source)
-            remaining = String(remaining[range.upperBound...])
-        }
-
-        if !remaining.isEmpty {
-            parts.append(remaining)
-        }
-
-        return parts
-    }
-
     func buildSegmentPieces(
         segment: Segment,
         glossary allEntries: [GlossaryEntry]
@@ -230,7 +211,11 @@ public final class TermMasker {
         let text = segment.originalText
         guard !text.isEmpty, !allEntries.isEmpty else {
             return (
-                pieces: SegmentPieces(segmentID: segment.id, pieces: [.text(text)]),
+                pieces: SegmentPieces(
+                    segmentID: segment.id,
+                    originalText: text,
+                    pieces: [.text(text, range: text.startIndex..<text.endIndex)]
+                ),
                 activatedEntries: []
             )
         }
@@ -266,7 +251,7 @@ public final class TermMasker {
 
         // 6) Longest-first 분할
         let sorted = allowedEntries.sorted { $0.source.count > $1.source.count }
-        var pieces: [SegmentPieces.Piece] = [.text(text)]
+        var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
 
         for entry in sorted {
             guard !entry.source.isEmpty else { continue }
@@ -274,18 +259,47 @@ public final class TermMasker {
 
             for piece in pieces {
                 switch piece {
-                case .text(let str):
-                    if str.contains(entry.source) {
-                        let parts = splitTextBySource(str, source: entry.source)
-                        for part in parts {
-                            if part == entry.source {
-                                newPieces.append(.term(entry))
-                            } else {
-                                newPieces.append(.text(part))
-                            }
+                case .text(let str, let pieceRange):
+                    guard str.contains(entry.source) else {
+                        newPieces.append(.text(str, range: pieceRange))
+                        continue
+                    }
+
+                    var searchStart = str.startIndex
+                    while let foundRange = str.range(of: entry.source, range: searchStart..<str.endIndex) {
+                        // 앞쪽 텍스트 조각 보존
+                        if foundRange.lowerBound > searchStart {
+                            let prefixLower = text.index(
+                                pieceRange.lowerBound,
+                                offsetBy: str.distance(from: str.startIndex, to: searchStart)
+                            )
+                            let prefixUpper = text.index(
+                                pieceRange.lowerBound,
+                                offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
+                            )
+                            let prefix = String(str[searchStart..<foundRange.lowerBound])
+                            newPieces.append(.text(prefix, range: prefixLower..<prefixUpper))
                         }
-                    } else {
-                        newPieces.append(.text(str))
+
+                        // 용어 range 기록
+                        let originalLower = text.index(
+                            pieceRange.lowerBound,
+                            offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
+                        )
+                        let originalUpper = text.index(originalLower, offsetBy: entry.source.count)
+                        newPieces.append(.term(entry, range: originalLower..<originalUpper))
+
+                        searchStart = foundRange.upperBound
+                    }
+
+                    // 남은 텍스트 조각 추가
+                    if searchStart < str.endIndex {
+                        let suffixLower = text.index(
+                            pieceRange.lowerBound,
+                            offsetBy: str.distance(from: str.startIndex, to: searchStart)
+                        )
+                        let suffix = String(str[searchStart..<str.endIndex])
+                        newPieces.append(.text(suffix, range: suffixLower..<pieceRange.upperBound))
                     }
                 case .term:
                     newPieces.append(piece)
@@ -296,85 +310,9 @@ public final class TermMasker {
         }
 
         return (
-            pieces: SegmentPieces(segmentID: segment.id, pieces: pieces),
+            pieces: SegmentPieces(segmentID: segment.id, originalText: text, pieces: pieces),
             activatedEntries: allowedEntries
         )
-    }
-
-    /// 용어 사전(glossary: 원문→한국어)을 이용해 텍스트 내 용어를 토큰으로 잠그고 LockInfo를 생성한다.
-    /// - 반환: masked(토큰 포함), tags(기존 라우터용), locks(조사 교정/언락용)
-    public func maskWithLocks(
-        segment: Segment,
-        glossary entries: [GlossaryEntry]
-    ) -> MaskedPack {
-        let text = segment.originalText
-        guard !text.isEmpty, !entries.isEmpty else {
-            return .init(seg: segment, masked: text, tags: [], locks: [:])
-        }
-
-        let sorted = entries.sorted { $0.source.count > $1.source.count }
-        var out = text
-        var tags: [String] = []
-        var locks: [String: LockInfo] = [:]
-        var localNextIndex = self.nextIndex
-
-        for e in sorted {
-            guard !e.source.isEmpty, out.contains(e.source) else { continue }
-            // 호칭, 인물명 등은 마스킹하지 않음
-            if !e.preMask { continue }
-
-            // === (1) 유니크 토큰 생성 ===
-            let tokenPrefix = "E"
-            let token = Self.makeToken(prefix: tokenPrefix, index: localNextIndex)
-            localNextIndex += 1
-
-            let pattern = NSRegularExpression.escapedPattern(for: e.source)
-            guard let rx = try? NSRegularExpression(pattern: pattern) else { continue }
-            let ns = out as NSString
-            let matches = rx.matches(in: out, range: NSRange(location: 0, length: ns.length))
-            if matches.isEmpty { continue }
-
-            var newOut = String()
-            newOut.reserveCapacity(out.utf16.count)
-            var last = 0
-
-            for m in matches {
-                if last < m.range.location {
-                    newOut += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-                }
-                newOut += token
-                last = m.range.location + m.range.length
-            }
-
-            if last < ns.length {
-                newOut += ns.substring(with: NSRange(location: last, length: ns.length - last))
-            }
-            out = newOut
-
-            // (2) 사람일 때만 NBSP 힌트 주입
-            if e.isAppellation {
-                out = surroundTokenWithNBSP(out, token: token)
-            }
-
-            // (3) 라우터 태그 유지
-            tags.append(e.target)
-
-            // (4) LockInfo 등록
-            let (b, r) = hangulFinalJongInfo(e.target)
-            locks[token] = LockInfo(
-                placeholder: token,
-                target: e.target,
-                endsWithBatchim: b,
-                endsWithRieul: r,
-                isAppellation: e.isAppellation
-            )
-        }
-
-        // (5) 토큰 좌우 문장부호 인접 시 공백 삽입
-        out = insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(out)
-
-        self.nextIndex = localNextIndex
-        return .init(seg: segment, masked: out, tags: tags, locks: locks)
     }
 
     // SegmentPieces 기반 마스킹
@@ -385,15 +323,18 @@ public final class TermMasker {
         var out = ""
         var locks: [String: LockInfo] = [:]
         var localNextIndex = self.nextIndex
+        var tokenEntries: [String: GlossaryEntry] = [:]
+        var maskedRanges: [TermRange] = []
 
         for piece in pieces.pieces {
             switch piece {
-            case .text(let str):
+            case .text(let str, _):
                 out += str
-            case .term(let entry):
+            case .term(let entry, _):
                 if entry.preMask {
                     let token = Self.makeToken(prefix: "E", index: localNextIndex)
                     localNextIndex += 1
+                    let tokenStart = out.endIndex
                     out += token
 
                     if entry.isAppellation {
@@ -408,15 +349,34 @@ public final class TermMasker {
                         endsWithRieul: r,
                         isAppellation: entry.isAppellation
                     )
+                    tokenEntries[token] = entry
+
+                    // NBSP 삽입 등으로 위치가 변할 수 있어 마지막 토큰 위치를 다시 계산한다.
+                    if let range = out.range(of: token, options: .backwards) {
+                        maskedRanges.append(.init(entry: entry, range: range, type: .masked))
+                    } else {
+                        let end = out.index(tokenStart, offsetBy: token.count)
+                        maskedRanges.append(.init(entry: entry, range: tokenStart..<end, type: .masked))
+                    }
                 } else {
+                    let start = out.endIndex
                     out += entry.source
+                    let end = out.endIndex
+                    maskedRanges.append(.init(entry: entry, range: start..<end, type: .normalized))
                 }
             }
         }
 
         out = insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(out)
         self.nextIndex = localNextIndex
-        return .init(seg: segment, masked: out, tags: [], locks: locks)
+        return .init(
+            seg: segment,
+            masked: out,
+            tags: [],
+            locks: locks,
+            tokenEntries: tokenEntries,
+            maskedRanges: maskedRanges
+        )
     }
 
     // (C) 언마스킹: 유니크 토큰으로 직접 복원
@@ -829,7 +789,7 @@ public final class TermMasker {
             }
 
             let count = pieces.pieces.filter {
-                if case .term(let e) = $0, e.target == target {
+                if case .term(let e, _) = $0, e.target == target {
                     return true
                 }
                 return false
@@ -1195,7 +1155,7 @@ public final class TermMasker {
         replacement: String,
         baseHasBatchim: Bool? = nil,
         baseIsRieul: Bool? = nil
-    ) -> (text: String, nextIndex: String.Index) {
+    ) -> (text: String, replacedRange: Range<String.Index>?, nextIndex: String.Index) {
         let nsRange = NSRange(range, in: text)
         let replaced = (text as NSString).replacingCharacters(in: nsRange, with: replacement)
 
@@ -1209,9 +1169,9 @@ public final class TermMasker {
         )
 
         if let swiftRange = Range(fixedRange, in: fixed) {
-            return (fixed, swiftRange.upperBound)
+            return (fixed, swiftRange, swiftRange.upperBound)
         }
-        return (fixed, fixed.endIndex)
+        return (fixed, nil, fixed.endIndex)
     }
 
     private static let tokenNumberRegex = try? NSRegularExpression(pattern: "(?i)E#(\\d+)")
@@ -1240,18 +1200,26 @@ public final class TermMasker {
         in text: String,
         pieces: SegmentPieces,
         nameGlossaries: [NameGlossary]
-    ) -> String {
-        guard text.isEmpty == false else { return text }
-        guard nameGlossaries.isEmpty == false else { return text }
+    ) -> (text: String, ranges: [TermRange], preNormalizedRanges: [TermRange]) {
+        guard text.isEmpty == false else { return (text, [], []) }
+        guard nameGlossaries.isEmpty == false else { return (text, [], []) }
 
-        var out = text.precomposedStringWithCompatibilityMapping
+        let original = text.precomposedStringWithCompatibilityMapping
+        var out = original
+        var ranges: [TermRange] = []
+        var preNormalizedRanges: [TermRange] = []
         let nameByTarget = Dictionary(nameGlossaries.map { ($0.target, $0) }, uniquingKeysWith: { first, _ in first })
+        let entryByTarget = Dictionary(
+            pieces.unmaskedTerms().map { ($0.target, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var processed: Set<Int> = []
         var lastMatchUpperBound: String.Index? = nil
         var phase2LastMatch: String.Index? = nil
+        var cumulativeDelta: Int = 0  // 정규화로 길이가 달라진 누적 분량을 추적
 
         let unmaskedTerms: [(index: Int, entry: GlossaryEntry)] = pieces.pieces.enumerated().compactMap { idx, piece in
-            if case .term(let entry) = piece, entry.preMask == false {
+            if case .term(let entry, _) = piece, entry.preMask == false {
                 return (index: idx, entry: entry)
             }
             return nil
@@ -1267,6 +1235,15 @@ public final class TermMasker {
                 startIndex: lastMatchUpperBound ?? out.startIndex
             ) else { continue }
 
+            let lowerOffset = out.distance(from: out.startIndex, to: matched.range.lowerBound)
+            let oldLen = out.distance(from: matched.range.lowerBound, to: matched.range.upperBound)
+            let originalLower = lowerOffset - cumulativeDelta
+            if originalLower >= 0, originalLower + oldLen <= original.count {
+                let lower = original.index(original.startIndex, offsetBy: originalLower)
+                let upper = original.index(lower, offsetBy: oldLen)
+                preNormalizedRanges.append(.init(entry: entry, range: lower..<upper, type: .normalized))
+            }
+
             let result = replaceWithParticleFix(
                 in: out,
                 range: matched.range,
@@ -1274,6 +1251,11 @@ public final class TermMasker {
             )
             out = result.text
             lastMatchUpperBound = result.nextIndex
+            if let range = result.replacedRange {
+                ranges.append(.init(entry: entry, range: range, type: .normalized))
+            }
+            let newLen = out.distance(from: out.startIndex, to: result.nextIndex) - lowerOffset
+            cumulativeDelta += (newLen - oldLen)
             processed.insert(index)
         }
 
@@ -1285,10 +1267,19 @@ public final class TermMasker {
             for fallback in fallbacks {
                 let candidates = makeCandidates(target: fallback.target, variants: fallback.variants)
                 guard let matched = findNextCandidate(
-                    in: out,
-                    candidates: candidates,
-                    startIndex: phase2LastMatch ?? out.startIndex
-                ) else { continue }
+                in: out,
+                candidates: candidates,
+                startIndex: phase2LastMatch ?? out.startIndex
+            ) else { continue }
+
+                let lowerOffset = out.distance(from: out.startIndex, to: matched.range.lowerBound)
+                let oldLen = out.distance(from: matched.range.lowerBound, to: matched.range.upperBound)
+                let originalLower = lowerOffset - cumulativeDelta
+                if originalLower >= 0, originalLower + oldLen <= original.count {
+                    let lower = original.index(original.startIndex, offsetBy: originalLower)
+                    let upper = original.index(lower, offsetBy: oldLen)
+                    preNormalizedRanges.append(.init(entry: entry, range: lower..<upper, type: .normalized))
+                }
 
                 let result = replaceWithParticleFix(
                     in: out,
@@ -1297,6 +1288,11 @@ public final class TermMasker {
                 )
                 out = result.text
                 phase2LastMatch = result.nextIndex
+                if let range = result.replacedRange {
+                    ranges.append(.init(entry: entry, range: range, type: .normalized))
+                }
+                let newLen = out.distance(from: out.startIndex, to: result.nextIndex) - lowerOffset
+                cumulativeDelta += (newLen - oldLen)
                 processed.insert(index)
                 break
             }
@@ -1310,27 +1306,50 @@ public final class TermMasker {
         )
         let remainingGlossaries = nameGlossaries.filter { remainingTargets.contains($0.target) }
         if remainingGlossaries.isEmpty == false {
-            out = normalizeVariantsAndParticles(in: out, entries: remainingGlossaries)
+            let mappedEntries = remainingGlossaries.compactMap { g -> (NameGlossary, GlossaryEntry)? in
+                guard let entry = entryByTarget[g.target] else { return nil }
+                return (g, entry)
+            }
+            if mappedEntries.isEmpty == false {
+                let result = normalizeVariantsAndParticles(
+                    in: out,
+                    entries: mappedEntries,
+                    baseText: original,
+                    cumulativeDelta: cumulativeDelta
+                )
+                out = result.text
+                ranges.append(contentsOf: result.ranges)
+                preNormalizedRanges.append(contentsOf: result.preNormalizedRanges)
+            }
         }
 
-        return out
+        return (out, ranges, preNormalizedRanges)
+    }
+
+    /// 토큰 → 실제 용어 교체 시 길이 변화 추적용.
+    struct ReplacementDelta {
+        let offset: Int   // 교체 전 lowerBound 오프셋
+        let delta: Int    // 길이 변화 (new - old)
     }
 
     func unmaskWithOrder(
         in text: String,
         pieces: SegmentPieces,
-        locksByToken: [String: LockInfo]
-    ) -> String {
-        guard text.isEmpty == false else { return text }
-        guard locksByToken.isEmpty == false else { return text }
+        locksByToken: [String: LockInfo],
+        tokenEntries: [String: GlossaryEntry]
+    ) -> (text: String, ranges: [TermRange], deltas: [ReplacementDelta]) {
+        guard text.isEmpty == false else { return (text, [], []) }
+        guard locksByToken.isEmpty == false else { return (text, [], []) }
 
         var out = text.precomposedStringWithCompatibilityMapping
+        var ranges: [TermRange] = []
+        var deltas: [ReplacementDelta] = []
         let tokensInOrder = sortedTokensByIndex(locksByToken)
         var tokenCursor: Int = 0
         var lastMatchUpperBound: String.Index? = nil
 
         let maskedTerms: [GlossaryEntry] = pieces.pieces.compactMap { piece in
-            if case .term(let entry) = piece, entry.preMask {
+            if case .term(let entry, _) = piece, entry.preMask {
                 return entry
             }
             return nil
@@ -1346,6 +1365,10 @@ public final class TermMasker {
                 ?? out.range(of: token, options: [])
             guard let tokenRange = range else { continue }
 
+            // 원본 위치/길이 기반으로 델타를 계산해 이후 range 보정에 활용한다.
+            let lowerOffset = out.distance(from: out.startIndex, to: tokenRange.lowerBound)
+            let oldLen = out.distance(from: tokenRange.lowerBound, to: tokenRange.upperBound)
+
             let result = replaceWithParticleFix(
                 in: out,
                 range: tokenRange,
@@ -1355,6 +1378,13 @@ public final class TermMasker {
             )
             out = result.text
             lastMatchUpperBound = result.nextIndex
+            let newLen = out.distance(from: out.index(out.startIndex, offsetBy: lowerOffset), to: result.nextIndex)
+            deltas.append(.init(offset: lowerOffset, delta: newLen - oldLen))
+            if let replacedRange = result.replacedRange {
+                if let entry = tokenEntries[token] ?? maskedTerms.first {
+                    ranges.append(.init(entry: entry, range: replacedRange, type: .masked))
+                }
+            }
         }
 
         // 토큰 순서가 어긋난 경우 전역 검색으로 재시도 (아직 처리되지 않은 토큰만)
@@ -1363,7 +1393,7 @@ public final class TermMasker {
         if remainingLocks.isEmpty == false {
             out = normalizeTokensAndParticles(in: out, locksByToken: remainingLocks)
         }
-        return out
+        return (out, ranges, deltas)
     }
     
     func normalizeDamagedETokens(_ text: String, locks: [String: LockInfo]) -> String {
@@ -1589,48 +1619,47 @@ public final class TermMasker {
         return out
     }
     
-    // 마스킹하지 않은 용어집의 변형 정규화
+    // 마스킹하지 않은 용어집 정규화 + range 추적 버전
+    /// 정규화 텍스트와 원본 사이 길이 차를 고려하며 변형 정규화 range를 추적한다.
     func normalizeVariantsAndParticles(
         in text: String,
-        entries: [NameGlossary]
-    ) -> String {
+        entries: [(NameGlossary, GlossaryEntry)],
+        baseText: String,
+        cumulativeDelta: Int
+    ) -> (text: String, ranges: [TermRange], preNormalizedRanges: [TermRange]) {
         let textNFC = text.precomposedStringWithCompatibilityMapping
+        let original = baseText.precomposedStringWithCompatibilityMapping
         func esc(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
 
-        // 1) variant → canonical target 매핑 준비
-        //    target 자신도 포함 (canonical이 이미 쓰인 경우에도 usage 카운트 등 맞추려면)
-        var variantMap: [String: String] = [:]
-        for e in entries {
-            let sortedVariants = e.variants.sorted { $0.count > $1.count }
-            if variantMap[e.target] == nil { variantMap[e.target] = e.target }
+        var variantMap: [String: (canonical: String, entry: GlossaryEntry)] = [:]
+        for (glossary, entry) in entries {
+            let sortedVariants = glossary.variants.sorted { $0.count > $1.count }
+            if variantMap[glossary.target] == nil { variantMap[glossary.target] = (glossary.target, entry) }
             for v in sortedVariants where !v.isEmpty {
-                if variantMap[v] == nil { variantMap[v] = e.target }
+                if variantMap[v] == nil { variantMap[v] = (glossary.target, entry) }
             }
-        }
 
-        // Pattern Fallback variants는 2순위로 추가 (기존 매핑을 덮지 않음)
-        for e in entries {
-            guard let fallbackTerms = e.fallbackTerms else { continue }
-            for fallback in fallbackTerms {
-                if variantMap[fallback.target] == nil { variantMap[fallback.target] = fallback.target }
-                let sortedVariants = fallback.variants.sorted { $0.count > $1.count }
-                for v in sortedVariants where !v.isEmpty {
-                    if variantMap[v] == nil { variantMap[v] = fallback.target }
+            if let fallbacks = glossary.fallbackTerms {
+                for fallback in fallbacks {
+                    if variantMap[fallback.target] == nil {
+                        variantMap[fallback.target] = (fallback.target, entry)
+                    }
+                    let sorted = fallback.variants.sorted { $0.count > $1.count }
+                    for v in sorted where !v.isEmpty {
+                        if variantMap[v] == nil {
+                            variantMap[v] = (fallback.target, entry)
+                        }
+                    }
                 }
             }
         }
 
         let allVariants = Array(variantMap.keys)
-        if allVariants.isEmpty { return text }
+        if allVariants.isEmpty { return (text, [], []) }
 
-        // 2) alternation 생성 (긴 것 우선)
         let alts = allVariants.map(esc).sorted { $0.count > $1.count }.joined(separator: "|")
-
-        //    이름은 “조사 유무 무관, 조사 검사 안 함”이니까,
-        //    최소한 왼쪽 단어 경계만 체크하는 정도로 완화
         let cjkBody = "\\p{L}\\p{N}_"
         let pre = "(?<![" + cjkBody + "])"
-
         let pattern = pre + "(" + alts + ")"
         let rx = try! NSRegularExpression(pattern: pattern)
 
@@ -1642,30 +1671,44 @@ public final class TermMasker {
             matches.append(r)
         }
 
-        // 3) 뒤에서부터 정규화 + 조사 보정
+        var ranges: [TermRange] = []
+        var preNormalizedRanges: [TermRange] = []
+        var localDelta = cumulativeDelta
+
         for r in matches.reversed() {
             let nsOut = out as NSString
             let found = nsOut.substring(with: r)
-            guard let canon = variantMap[found] else { continue }
+            guard let mapping = variantMap[found] else { continue }
+            let canon = mapping.canonical
+            let entry = mapping.entry
             let (has, rieul) = hangulFinalJongInfo(canon)
 
-            // (a) variant/target → target으로 통일
+            // preNormalized 범위는 교체 전 원본 텍스트 기준으로 계산
+            let originalLower = r.location - localDelta
+            if originalLower >= 0, originalLower + r.length <= (original as NSString).length {
+                let lower = original.index(original.startIndex, offsetBy: originalLower)
+                let upper = original.index(lower, offsetBy: r.length)
+                preNormalizedRanges.append(.init(entry: entry, range: lower..<upper, type: .normalized))
+            }
+
             out = nsOut.replacingCharacters(in: r, with: canon)
 
-            // (b) canonical range 재계산
             let canonRange = NSRange(location: r.location, length: (canon as NSString).length)
-
-            // (c) canonical 뒤 조사 보정
-            let (fixed, _) = fixParticles(
+            let (fixed, fixedRange) = fixParticles(
                 in: out,
                 afterCanonical: canonRange,
                 baseHasBatchim: has,
                 baseIsRieul: rieul
             )
             out = fixed
+
+            if let swiftRange = Range(fixedRange, in: out) {
+                ranges.append(.init(entry: entry, range: swiftRange, type: .normalized))
+            }
+            localDelta += (fixedRange.length - r.length) // 이후 매칭 offset 보정을 위한 누적치
         }
 
-        return out
+        return (out, ranges, preNormalizedRanges)
     }
 
     // 언마스킹된 토큰 / 정규화된 용어의 조사 보정

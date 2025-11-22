@@ -381,25 +381,26 @@ final class DefaultTranslationRouter: TranslationRouter {
                     shouldNormalizeNames: true
                 )
                     
-                let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
-                let residual = Double(hanCount) / Double(max(output.count, 1))
+                let hanCount = output.finalText.unicodeScalars.filter { $0.properties.isIdeographic }.count
+                let residual = Double(hanCount) / Double(max(output.finalText.count, 1))
                 let finalResult = TranslationResult(
                     id: result.id,
                     segmentID: result.segmentID,
                     engine: result.engine,
-                    text: output,
+                    text: output.finalText,
                     residualSourceRatio: residual,
                     createdAt: result.createdAt
                 )
-                print("[T] router.processStream [\(result.segmentID)] FINAL RESULT: \(output)")
+                print("[T] router.processStream [\(result.segmentID)] FINAL RESULT: \(output.finalText)")
                     
                 let payload = TranslationStreamPayload(
                     segmentID: originalSegment.id,
                     originalText: originalSegment.originalText,
                     translatedText: finalResult.text,
-                    preNormalizedText: result.text,
+                    preNormalizedText: output.preNormalizedText,
                     engineID: finalResult.engine.rawValue,
-                    sequence: seq
+                    sequence: seq,
+                    highlightMetadata: output.highlightMetadata
                 )
                 if didLogFirstEmit == false {
                     print("[T] router.processStream FIRST-EMIT seq=\(seq) seg=\(originalSegment.id) engine=\(engine.tag.rawValue)")
@@ -449,7 +450,45 @@ final class DefaultTranslationRouter: TranslationRouter {
         return updated
     }
 
-    /// 마스킹 해제 및 정규화를 수행해 최종 출력 문자열을 만든다.
+    private struct RestoredOutput {
+        let finalText: String
+        let preNormalizedText: String?
+        let highlightMetadata: TermHighlightMetadata?
+    }
+
+    /// 정규화 range를 언마스킹 후 문자열 기준으로 변환한다.
+    private func translateNormalizationRanges(
+        _ ranges: [TermRange],
+        deltas: [TermMasker.ReplacementDelta],
+        originalText: String,
+        finalText: String
+    ) -> [TermRange] {
+        guard ranges.isEmpty == false else { return [] }
+        guard deltas.isEmpty == false else { return ranges }
+
+        func shift(for offset: Int) -> Int {
+            deltas
+                .filter { $0.offset < offset }
+                .reduce(0) { $0 + $1.delta } // 교체된 토큰까지의 길이 변화 누계
+        }
+
+        let finalCount = finalText.count
+
+        return ranges.compactMap { range in
+            let lowerOffset = originalText.distance(from: originalText.startIndex, to: range.range.lowerBound)
+            let upperOffset = originalText.distance(from: originalText.startIndex, to: range.range.upperBound)
+            let newLowerOffset = lowerOffset + shift(for: lowerOffset)
+            let newUpperOffset = upperOffset + shift(for: upperOffset)
+            guard newLowerOffset >= 0, newUpperOffset >= newLowerOffset, newUpperOffset <= finalCount else {
+                return nil
+            }
+            let newLower = finalText.index(finalText.startIndex, offsetBy: newLowerOffset)
+            let newUpper = finalText.index(finalText.startIndex, offsetBy: newUpperOffset)
+            return TermRange(entry: range.entry, range: newLower..<newUpper, type: range.type)
+        }
+    }
+
+    /// 마스킹 해제 및 정규화를 수행해 최종 출력 문자열과 메타데이터를 만든다.
     private func restoreOutput(
         from text: String,
         pack: MaskedPack,
@@ -457,59 +496,99 @@ final class DefaultTranslationRouter: TranslationRouter {
         nameGlossaries: [TermMasker.NameGlossary],
         pieces: SegmentPieces,
         shouldNormalizeNames: Bool
-    ) -> String {
+    ) -> RestoredOutput {
         print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
-        var output = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
-//        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
-        
-        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
-            output = termMasker.normalizeWithOrder(
-                in: output,
-                pieces: pieces,
-                nameGlossaries: nameGlossaries
+        let cleaned = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
+//        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(cleaned)")
+
+        let originalRanges: [TermRange] = pieces.termRanges().map { item in
+            TermRange(
+                entry: item.entry,
+                range: item.range,
+                type: item.entry.preMask ? .masked : .normalized
             )
         }
 
-        output = termMasker.unmaskWithOrder(
-            in: output,
+        let preNormalized = termMasker.unmaskWithOrder(
+            in: cleaned,
             pieces: pieces,
-            locksByToken: pack.locks
+            locksByToken: pack.locks,
+            tokenEntries: pack.tokenEntries
         )
-        
-//        // 마스킹된 토큰을 언마스킹하고 조사를 보정한다.
-//        output = termMasker.normalizeEntitiesAndParticles(
-//            in: output,
-//            locksByToken: pack.locks,
-//            names: [],
-//            mode: .tokensOnly
-//        )
-////        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
-//        
-//        output = termMasker.unlockTermsSafely(
-//            output,
-//            locks: pack.locks
-//        )
-////        print("[T] router.processStream [\(pack.seg.id)] UNLOCKED TERMS RESULT: \(output)")
-//
-//        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
-//            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
-//            output = termMasker.normalizeEntitiesAndParticles(
-//                in: output,
-//                locksByToken: [:],
-//                names: nameGlossaries,
-//                mode: .namesOnly
-//            )
-////            print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES 2 RESULT: \(output)")
-//        }
+        let fallbackMaskedRanges = preNormalized.ranges.isEmpty
+        ? mapMaskedTerms(from: pieces, in: preNormalized.text)
+        : []
 
+        var normalizationRanges: [TermRange] = []
+        var preNormalizationRanges: [TermRange] = []
+        var normalizedText = preNormalized.text
+        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
+            let normalized = termMasker.normalizeWithOrder(
+                in: normalizedText,
+                pieces: pieces,
+                nameGlossaries: nameGlossaries
+            )
+            normalizedText = normalized.text
+            normalizationRanges.append(contentsOf: normalized.ranges)
+            preNormalizationRanges.append(contentsOf: normalized.preNormalizedRanges)
+        }
+
+        let unmasked = termMasker.unmaskWithOrder(
+            in: normalizedText,
+            pieces: pieces,
+            locksByToken: pack.locks,
+            tokenEntries: pack.tokenEntries
+        )
+        let translatedNormalizationRanges = translateNormalizationRanges(
+            normalizationRanges,
+            deltas: unmasked.deltas,
+            originalText: normalizedText,
+            finalText: unmasked.text
+        )
+        let finalMaskedRanges = unmasked.ranges.isEmpty
+        ? mapMaskedTerms(from: pieces, in: unmasked.text)
+        : unmasked.ranges
+
+        var finalText = unmasked.text
         if pack.locks.values.count == 1,
            let target = pack.locks.values.first?.target
         {
-            output = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(output, target: target)
+            finalText = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(finalText, target: target)
 //            print("[T] router.processStream [\(pack.seg.id)] COLLAPSE SPACES RESULT: \(output)")
         }
 
-        return output
+        let metadata = TermHighlightMetadata(
+            originalTermRanges: originalRanges,
+            finalTermRanges: translatedNormalizationRanges + finalMaskedRanges,
+            preNormalizedTermRanges: preNormalized.ranges + fallbackMaskedRanges + preNormalizationRanges
+        )
+
+        return RestoredOutput(
+            finalText: finalText,
+            preNormalizedText: preNormalized.text,
+            highlightMetadata: metadata
+        )
+    }
+
+    /// unmaskWithOrder로 range를 얻지 못했을 때를 대비해 preMask 용어를 텍스트에서 직접 매핑한다.
+    private func mapMaskedTerms(from pieces: SegmentPieces, in text: String) -> [TermRange] {
+        let maskedEntries = pieces.pieces.compactMap { piece -> GlossaryEntry? in
+            if case let .term(entry, _) = piece, entry.preMask { return entry }
+            return nil
+        }
+        guard maskedEntries.isEmpty == false else { return [] }
+
+        var ranges: [TermRange] = []
+        var searchStart = text.startIndex
+
+        for entry in maskedEntries {
+            guard let found = text.range(of: entry.target, range: searchStart..<text.endIndex) ??
+                    text.range(of: entry.target) else { continue }
+            ranges.append(.init(entry: entry, range: found, type: .masked))
+            searchStart = found.upperBound
+        }
+
+        return ranges
     }
 
     /// 마스킹 연산에 필요한 컨텍스트를 표현한다.

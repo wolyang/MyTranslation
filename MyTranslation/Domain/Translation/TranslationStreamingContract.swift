@@ -9,6 +9,7 @@ public struct TranslationStreamPayload: Codable, Sendable, Equatable {
     public let preNormalizedText: String?
     public let engineID: TranslationEngineID
     public let sequence: Int
+    public let highlightMetadata: TermHighlightMetadata?
 
     public init(
         segmentID: String,
@@ -16,7 +17,8 @@ public struct TranslationStreamPayload: Codable, Sendable, Equatable {
         translatedText: String?,
         preNormalizedText: String? = nil,
         engineID: TranslationEngineID,
-        sequence: Int
+        sequence: Int,
+        highlightMetadata: TermHighlightMetadata? = nil
     ) {
         self.segmentID = segmentID
         self.originalText = originalText
@@ -24,6 +26,38 @@ public struct TranslationStreamPayload: Codable, Sendable, Equatable {
         self.preNormalizedText = preNormalizedText
         self.engineID = engineID
         self.sequence = sequence
+        self.highlightMetadata = highlightMetadata
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case segmentID
+        case originalText
+        case translatedText
+        case preNormalizedText
+        case engineID
+        case sequence
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        segmentID = try container.decode(String.self, forKey: .segmentID)
+        originalText = try container.decode(String.self, forKey: .originalText)
+        translatedText = try container.decodeIfPresent(String.self, forKey: .translatedText)
+        preNormalizedText = try container.decodeIfPresent(String.self, forKey: .preNormalizedText)
+        engineID = try container.decode(TranslationEngineID.self, forKey: .engineID)
+        sequence = try container.decode(Int.self, forKey: .sequence)
+        highlightMetadata = nil
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(segmentID, forKey: .segmentID)
+        try container.encode(originalText, forKey: .originalText)
+        try container.encodeIfPresent(translatedText, forKey: .translatedText)
+        try container.encodeIfPresent(preNormalizedText, forKey: .preNormalizedText)
+        try container.encode(engineID, forKey: .engineID)
+        try container.encode(sequence, forKey: .sequence)
+        // highlightMetadata는 내부 UI용 정보이므로 직렬화에서 제외한다.
     }
 }
 

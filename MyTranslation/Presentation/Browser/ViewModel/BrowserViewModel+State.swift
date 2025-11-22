@@ -72,6 +72,7 @@ extension BrowserViewModel {
             var text: String?
             var isLoading: Bool
             var errorMessage: String?
+            var highlightMetadata: TermHighlightMetadata?
 
             var id: String { engineID }
         }
@@ -80,10 +81,12 @@ extension BrowserViewModel {
         var selectedText: String
         var improvedText: String?
         var anchor: CGRect
+        var primaryEngineID: TranslationEngineID
         var primaryEngineTitle: String
         var primaryFinalText: String?
         var primaryPreNormalizedText: String?
         var translations: [Translation] = []
+        var primaryHighlightMetadata: TermHighlightMetadata?
         var showsOriginalSection: Bool = true
     }
 }

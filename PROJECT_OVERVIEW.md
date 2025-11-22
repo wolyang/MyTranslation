@@ -31,18 +31,21 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 1. **Content Extraction**
 
    * WKWebView에 JS를 주입해 `data-seg-id`를 붙인 세그먼트 단위 텍스트를 추출
-2. **Translation Routing**
+2. **Masking & Normalization 준비**
+
+   * `TermMasker`가 `SegmentPieces`를 생성해 용어 위치를 식별하고, preMask 용어를 토큰으로 치환할 준비를 함
+   * 정규화(variants→target) 및 언마스킹에 필요한 메타데이터(`TermHighlightMetadata`)를 함께 추적
+3. **Translation Routing & Streaming**
 
    * `TranslationRouter`가 AFM / Google / DeepL 중 하나 또는 여러 개를 선택해 호출
-3. **Translation Streaming**
+   * `AsyncThrowingStream` 기반으로 partial/final 결과를 스트리밍하며, 스트림 페이로드에 하이라이트 메타데이터를 포함
+4. **Normalization & Unmasking**
 
-   * `AsyncThrowingStream` 기반으로 partial/final 결과를 스트리밍
-4. **Post-Processing (FM 파이프라인)**
-
-   * 온디바이스 LLM으로 스타일 보정(포스트에딧), 엔진 간 비교, 리랭킹 옵션 처리
+   * 번역 결과에서 variant를 target으로 정규화하고, 토큰을 원래 용어로 복원하면서 range를 보정
 5. **Rendering**
 
-   * 인라인 교체(InlineReplacer) 또는 오버레이(OverlayRenderer) 방식으로 결과 반영
+   * 인라인 교체(InlineReplacer) 또는 오버레이(OverlayRenderer) 방식으로 결과 반영하며, 하이라이트 메타데이터로 용어 배경색을 표시
+   * (향후) 온디바이스 LLM 기반 포스트에딧/비교/리랭킹을 추가할 예정
 
 ---
 
@@ -105,24 +108,18 @@ WKWebView 번역 결과 반영.
 
 * `ContentExtractor`: 세그먼트 추출 및 `data-seg-id` 주입
 * `InlineReplacer`: JS 브리지(`window.__afmInline.upsertPayload`)로 인라인 교체
-* `OverlayRenderer`: 세그먼트 선택 및 오버레이 기반 렌더링
+* `OverlayRenderer`: 세그먼트 선택 및 오버레이 기반 렌더링, 용어 하이라이트 반영
 * `SelectionBridge`: 텍스트 선택 이벤트 Swift 쪽으로 전달
 
-### 6. Masking (`Services/Translation/Masking/`)
+### 6. Masking & Normalization (`Services/Translation/Masking/`)
 
 민감한 용어/인명을 보호하기 위한 마스킹 로직.
 
-* `TermMasker`: 마스킹/언마스킹 처리 및 정규화 로직
-* `MaskedPack`: 원문/마스킹된 텍스트/락 정보 묶음
+* `TermMasker`: 마스킹/언마스킹 처리, variants 정규화, 하이라이트 range 추적
+* `MaskedPack`: 원문/마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
+* `TermHighlightMetadata`: 원문/정규화 전/최종 번역문 하이라이트 정보
 * **Hangul handling**: 한글 조사 선택을 위해 받침(종성) 여부를 판별하는 `hangulFinalJongInfo()` 로직을 포함해,
   `이/가`, `을/를`, `은/는`, `과/와`, `으로/로` 등 조사 자동 판정 기능을 제공
-
-(`Services/Translation/Masking/`)
-
-민감한 용어/인명을 보호하기 위한 마스킹 로직.
-
-* `TermMasker`: 마스킹/언마스킹 및 한글 조사 처리
-* `MaskedPack`: 원문/마스킹된 텍스트/락 정보 묶음
 
 ### 7. Dependency Injection
 
@@ -192,6 +189,7 @@ MyTranslation/
 * `TranslationRouter` / `DefaultTranslationRouter`
 * `TranslationEngine` (AFM/Google/DeepL)
 * `TermMasker`
+* `TermHighlightMetadata`
 * `SegmentPieces`
 * `ContentExtractor` / `InlineReplacer` / `OverlayRenderer`
 * `FMOrchestrator`, `FMPostEditor`, `CrossEngineComparer`, `Reranker`

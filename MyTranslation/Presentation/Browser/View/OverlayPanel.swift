@@ -111,17 +111,30 @@ private struct OverlayPanelView: View {
     private var measurementText: String {
         var blocks: [String] = []
         if state.showsOriginalSection {
-            blocks.append(sectionMeasurementText(title: "원문", body: state.selectedText))
+            blocks.append(sectionMeasurementText(
+                title: "원문",
+                body: bodyString(for: originalSectionContent, isLoading: false, errorMessage: nil)
+            ))
         }
         if let improved = state.improvedText, improved.isEmpty == false {
             blocks.append(sectionMeasurementText(title: "AI 개선 번역", body: improved))
         }
-        blocks.append(sectionMeasurementText(title: primaryFinalTitle, body: displayText(for: state.primaryFinalText)))
+        blocks.append(sectionMeasurementText(
+            title: primaryFinalTitle,
+            body: bodyString(for: primaryFinalContent, isLoading: false, errorMessage: nil)
+        ))
         if isDebugModeEnabled {
-            blocks.append(sectionMeasurementText(title: primaryPreNormalizedTitle, body: displayText(for: state.primaryPreNormalizedText)))
+            blocks.append(sectionMeasurementText(
+                title: primaryPreNormalizedTitle,
+                body: bodyString(for: primaryPreNormalizedContent, isLoading: false, errorMessage: nil)
+            ))
         }
         for translation in state.translations {
-            let body = displayText(for: translation)
+            let body = bodyString(
+                for: translationContent(for: translation),
+                isLoading: translation.isLoading,
+                errorMessage: translation.errorMessage
+            )
             blocks.append(sectionMeasurementText(title: translation.title, body: body))
         }
         return blocks.joined(separator: "\n\n")
@@ -203,44 +216,49 @@ private struct OverlayPanelView: View {
             if state.showsOriginalSection {
                 TranslationSectionView(
                     title: "원문",
-                    text: state.selectedText,
+                    content: originalSectionContent,
                     isLoading: false,
                     errorMessage: nil,
-                    availableWidth: contentWidth
+                    availableWidth: contentWidth,
+                    isSelectable: true
                 )
             }
             if let improved = state.improvedText, improved.isEmpty == false {
                 TranslationSectionView(
                     title: "AI 개선 번역",
-                    text: improved,
+                    content: .plain(improved),
                     isLoading: false,
                     errorMessage: nil,
-                    availableWidth: contentWidth
+                    availableWidth: contentWidth,
+                    isSelectable: true
                 )
             }
             TranslationSectionView(
                 title: primaryFinalTitle,
-                text: state.primaryFinalText,
+                content: primaryFinalContent,
                 isLoading: false,
                 errorMessage: nil,
-                availableWidth: contentWidth
+                availableWidth: contentWidth,
+                isSelectable: true
             )
             if isDebugModeEnabled {
                 TranslationSectionView(
                     title: primaryPreNormalizedTitle,
-                    text: state.primaryPreNormalizedText,
+                    content: primaryPreNormalizedContent,
                     isLoading: false,
                     errorMessage: nil,
-                    availableWidth: contentWidth
+                    availableWidth: contentWidth,
+                    isSelectable: true
                 )
             }
             ForEach(state.translations) { translation in
                 TranslationSectionView(
                     title: translation.title,
-                    text: translation.text,
+                    content: translationContent(for: translation),
                     isLoading: translation.isLoading,
                     errorMessage: translation.errorMessage,
-                    availableWidth: contentWidth
+                    availableWidth: contentWidth,
+                    isSelectable: true
                 )
             }
         }
@@ -251,33 +269,61 @@ private struct OverlayPanelView: View {
         "\(title)\n\(body)"
     }
 
-    private func displayText(for text: String?) -> String {
-        if let text, text.isEmpty == false {
-            return text
+    private func bodyString(
+        for content: TranslationSectionView.SectionContent,
+        isLoading: Bool,
+        errorMessage: String?
+    ) -> String {
+        if isLoading { return "불러오는 중..." }
+        if let errorMessage, errorMessage.isEmpty == false { return errorMessage }
+        switch content {
+        case .plain(let text):
+            return text?.isEmpty == false ? text! : "표시할 내용이 없습니다."
+        case .highlighted(let highlighted):
+            return highlighted?.plainText ?? "표시할 내용이 없습니다."
         }
-        return "표시할 내용이 없습니다."
     }
 
-    private func displayText(for translation: BrowserViewModel.OverlayState.Translation) -> String {
-        if translation.isLoading {
-            return "불러오는 중..."
+    private var originalSectionContent: TranslationSectionView.SectionContent {
+        let highlights = state.primaryHighlightMetadata?.originalTermRanges ?? []
+        return .highlighted(HighlightedText(text: state.selectedText, highlights: highlights))
+    }
+
+    private var primaryFinalContent: TranslationSectionView.SectionContent {
+        guard let text = state.primaryFinalText else { return .plain(nil) }
+        let highlights = state.primaryHighlightMetadata?.finalTermRanges ?? []
+        return .highlighted(HighlightedText(text: text, highlights: highlights))
+    }
+
+    private var primaryPreNormalizedContent: TranslationSectionView.SectionContent {
+        guard let text = state.primaryPreNormalizedText else { return .plain(nil) }
+        let highlights = state.primaryHighlightMetadata?.preNormalizedTermRanges ?? []
+        return .highlighted(HighlightedText(text: text, highlights: highlights))
+    }
+
+    private func translationContent(for translation: BrowserViewModel.OverlayState.Translation) -> TranslationSectionView.SectionContent {
+        guard let text = translation.text else {
+            return .plain(nil)
         }
-        if let error = translation.errorMessage, error.isEmpty == false {
-            return error
+        if let metadata = translation.highlightMetadata {
+            return .highlighted(HighlightedText(text: text, highlights: metadata.finalTermRanges))
         }
-        if let text = translation.text, text.isEmpty == false {
-            return text
-        }
-        return "표시할 내용이 없습니다."
+        return .plain(text)
     }
 }
 
 private struct TranslationSectionView: View {
     let title: String
-    let text: String?
+    let content: SectionContent
     let isLoading: Bool
     let errorMessage: String?
     let availableWidth: CGFloat
+    let isSelectable: Bool
+
+    enum SectionContent {
+        case plain(String?)
+        case highlighted(HighlightedText?)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -299,22 +345,43 @@ private struct TranslationSectionView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            } else if let text, text.isEmpty == false {
-                SelectableTextView(text: text)
-                    .frame(width: availableWidth, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("표시할 내용이 없습니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                switch content {
+                case .plain(let text):
+                    if let text, text.isEmpty == false {
+                        SelectableTextView(text: text)
+                            .frame(width: availableWidth, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        emptyPlaceholder
+                    }
+                case .highlighted(let highlighted):
+                    if let highlighted {
+                        SelectableTextView(
+                            text: highlighted.plainText,
+                            attributedText: highlighted.attributedString
+                        )
+                            .frame(width: availableWidth, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        emptyPlaceholder
+                    }
+                }
             }
         }
+    }
+
+    private var emptyPlaceholder: some View {
+        Text("표시할 내용이 없습니다.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct SelectableTextView: UIViewRepresentable {
-    var text: String
+    var text: String?
+    var attributedText: NSAttributedString? = nil
     var textStyle: UIFont.TextStyle = .callout
     var textColor: UIColor = .label
     var adjustsFontForContentSizeCategory: Bool = true
@@ -337,13 +404,9 @@ private struct SelectableTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SelectableUITextView, context: Context) -> CGSize {
         applyContent(to: uiView)
 
-        // SwiftUI 사용처에서 .frame(width: availableWidth)를 꼭 주고,
-        // 여기서는 그 폭을 캐시에 전달
         if let w = proposal.width, w.isFinite, w > 0 {
             uiView.constrainedWidth = w
         }
-
-        // intrinsicContentSize 경로도 쓰이므로 여기선 적당히 패스
         return uiView.intrinsicContentSize
     }
 
@@ -363,43 +426,49 @@ private struct SelectableTextView: UIViewRepresentable {
     }
 
     private func applyContent(to textView: SelectableUITextView) {
-        if textView.text != text {
-            textView.text = text
+        let needsAttributed = attributedText != nil
+
+        if needsAttributed {
+            if textView.attributedText != attributedText {
+                textView.attributedText = attributedText
+            }
+        } else {
+            let value = text ?? ""
+            if textView.text != value {
+                textView.text = value
+            }
+            // attributedText가 설정된 상태를 초기화
+            if textView.attributedText?.string != value {
+                textView.attributedText = nil
+            }
         }
+
         textView.font = UIFont.preferredFont(forTextStyle: textStyle)
         textView.textColor = textColor
         textView.adjustsFontForContentSizeCategory = adjustsFontForContentSizeCategory
     }
 
     final class SelectableUITextView: UITextView {
-        // SwiftUI가 제안한 폭을 브리징하기 위한 캐시
-            var constrainedWidth: CGFloat?
+        var constrainedWidth: CGFloat?
+        private var lastWidth: CGFloat = 0
 
-            private var lastWidth: CGFloat = 0
-
-            override func layoutSubviews() {
-                super.layoutSubviews()
-                // 폭이 바뀌면 intrinsic 재계산
-                let w = bounds.width
-                if w > 0, abs(w - lastWidth) > .ulpOfOne {
-                    lastWidth = w
-                    invalidateIntrinsicContentSize()
-                }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let w = bounds.width
+            if w > 0, abs(w - lastWidth) > .ulpOfOne {
+                lastWidth = w
+                invalidateIntrinsicContentSize()
             }
+        }
 
-            override var intrinsicContentSize: CGSize {
-                // 1) 우선 SwiftUI가 내려준 폭(있다면) 사용
-                let w = (constrainedWidth ?? bounds.width)
-                let width = w > 0 ? w : UIScreen.main.bounds.width
+        override var intrinsicContentSize: CGSize {
+            let w = (constrainedWidth ?? bounds.width)
+            let width = w > 0 ? w : UIScreen.main.bounds.width
+            textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+            let fitted = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+            return CGSize(width: UIView.noIntrinsicMetric, height: ceil(fitted.height))
+        }
 
-                // 2) 이 폭으로 줄바꿈/측정
-                textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
-                // 스크롤 끄고 패딩 제거되어 있음
-                let fitted = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-                // 가로는 자동, 세로만 정확히 리턴
-                return CGSize(width: UIView.noIntrinsicMetric, height: ceil(fitted.height))
-            }
-        
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
             if action == #selector(paste(_:)) || action == #selector(cut(_:)) || action == #selector(delete(_:)) {
                 return false
