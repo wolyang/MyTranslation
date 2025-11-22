@@ -24,8 +24,12 @@ struct WebContainerView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         guard let req = request else { return }
-        // 동일 URL 반복 로드 방지 (리다이렉트가 잦다면 커스텀 비교 로직 고려)
-        if uiView.url == nil || uiView.url?.absoluteString != req.url?.absoluteString {
+        // 동일 URL이면 강제 reload, 아니면 새 요청 로드
+        if uiView.url == nil {
+            uiView.load(req)
+        } else if uiView.url?.absoluteString == req.url?.absoluteString {
+            uiView.reload()
+        } else {
             uiView.load(req)
         }
     }

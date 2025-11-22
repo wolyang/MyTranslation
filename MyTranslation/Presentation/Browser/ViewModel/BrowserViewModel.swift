@@ -183,15 +183,6 @@ final class BrowserViewModel: ObservableObject {
             return
         }
 
-        if let current = attachedWebView?.url, current == url {
-            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            let timestamp = String(Int(Date().timeIntervalSince1970))
-            let existing = comps?.fragment ?? ""
-            let token = existing.isEmpty ? "reload=\(timestamp)" : existing + "&reload=\(timestamp)"
-            comps?.fragment = token
-            url = comps?.url ?? url
-        }
-
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         self.request = request
