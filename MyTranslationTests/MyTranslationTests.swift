@@ -28,16 +28,7 @@ struct MyTranslationTests {
 
     @Test @MainActor
     func extractorGeneratesUniqueSegmentIDsForDuplicateText() async throws {
-        let snapshot = """
-        [
-          {
-            "text": "Hello world.\nHello world.",
-            "map": [
-              { "token": "n1", "start": 0, "end": 25 }
-            ]
-          }
-        ]
-        """
+        let snapshot = #"[{"text":"Hello world.\nHello world.","map":[{"token":"n1","start":0,"end":25}]}]"#
         let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com")!
@@ -51,16 +42,7 @@ struct MyTranslationTests {
 
     @Test @MainActor
     func extractorSkipsPunctuationOnlySegments() async throws {
-        let snapshot = """
-        [
-          {
-            "text": "쟈그라...\n......\n다시 시작한다",
-            "map": [
-              { "token": "t1", "start": 0, "end": 17 }
-            ]
-          }
-        ]
-        """
+        let snapshot = #"[{"text":"쟈그라...\n......\n다시 시작한다","map":[{"token":"t1","start":0,"end":17}]}]"#
         let executor = StubWebViewExecutor(result: snapshot)
         let extractor = WKContentExtractor()
         let url = URL(string: "https://example.com/story")!
@@ -181,10 +163,278 @@ struct MyTranslationTests {
     func chooseJosaResolvesCompositeParticles() {
         let masker = TermMasker()
 
+        // 공백이 포함된 입력은 이미 결정된 형태를 유지해야 하므로 교체하지 않는다.
         #expect(masker.chooseJosa(for: "만가", baseHasBatchim: false, baseIsRieul: false) == "만이")
-        #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 은")
+        #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 는")
         #expect(masker.chooseJosa(for: "만로", baseHasBatchim: true, baseIsRieul: true) == "만으로")
         #expect(masker.chooseJosa(for: "에게만", baseHasBatchim: true, baseIsRieul: false) == "에게만")
+    }
+
+    @Test
+    func promoteProhibitedEntriesActivatesPairWithinContext() {
+        let masker = TermMasker()
+        let left = GlossaryEntry(
+            source: "알파",
+            target: "Alpha",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "left")
+        )
+        let right = GlossaryEntry(
+            source: "베타",
+            target: "Beta",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "right")
+        )
+        let composer = GlossaryEntry(
+            source: "알파-베타",
+            target: "Alpha-Beta",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .composer(composerId: "pair", leftKey: "left", rightKey: "right", needPairCheck: true)
+        )
+
+        let text = "이 문장에는 알파와 베타가 같이 등장한다."
+        let promoted = masker.promoteProhibitedEntries(in: text, entries: [left, right, composer])
+
+        #expect(promoted.count == 2)
+        #expect(promoted.contains(left))
+        #expect(promoted.contains(right))
+    }
+
+    @Test
+    func promoteProhibitedEntriesIgnoresDistantPairs() {
+        let masker = TermMasker()
+        masker.contextWindow = 5
+        let left = GlossaryEntry(
+            source: "왼쪽",
+            target: "Left",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "L")
+        )
+        let right = GlossaryEntry(
+            source: "오른쪽",
+            target: "Right",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "R")
+        )
+        let composer = GlossaryEntry(
+            source: "양쪽",
+            target: "Both",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .composer(composerId: "pair2", leftKey: "L", rightKey: "R", needPairCheck: true)
+        )
+
+        let gap = String(repeating: "가", count: 120)
+        let text = "왼쪽이라는 단어가 나오고 \(gap) 문장 끝부분에 오른쪽이라는 단어가 있다."
+        let promoted = masker.promoteProhibitedEntries(in: text, entries: [left, right, composer])
+
+        #expect(promoted.isEmpty)
+    }
+
+    @Test
+    func promoteActivatedEntriesReturnsOnlyTriggeredTerms() {
+        let masker = TermMasker()
+        let hero = GlossaryEntry(
+            source: "주인공",
+            target: "Hero",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "hero"),
+            activatorKeys: [],
+            activatesKeys: ["sidekick"]
+        )
+        let sidekick = GlossaryEntry(
+            source: "조력자",
+            target: "Sidekick",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "sidekick"),
+            activatorKeys: ["hero"],
+            activatesKeys: []
+        )
+
+        let text = "이야기 속 주인공이 등장했다."
+        let activated = masker.promoteActivatedEntries(
+            from: [hero, sidekick],
+            standaloneEntries: [hero, sidekick],
+            original: text
+        )
+
+        #expect(activated.count == 1)
+        #expect(activated.first == sidekick)
+    }
+
+    @Test
+    func normalizeDamagedETokensRestoresCorruptedPlaceholders() {
+        let masker = TermMasker()
+        let locks: [String: LockInfo] = [
+            "__E#31__": .init(placeholder: "__E#31__", target: "Alpha", endsWithBatchim: false, endsWithRieul: false, isAppellation: false)
+        ]
+
+        let corrupted = "텍스트 E#３１__ 와 __ E #31 __ 그리고 #31__ 을 포함"
+        let restored = masker.normalizeDamagedETokens(corrupted, locks: locks)
+
+        #expect(restored.contains("__E#31__"))
+        #expect(restored.components(separatedBy: "__E#31__").count == 4)
+    }
+
+    @Test
+    func normalizeDamagedETokensIgnoresUnknownIds() {
+        let masker = TermMasker()
+        let locks: [String: LockInfo] = [
+            "__E#7__": .init(placeholder: "__E#7__", target: "Seven", endsWithBatchim: false, endsWithRieul: false, isAppellation: false)
+        ]
+
+        let corrupted = "E#99__ 는 모르는 토큰이다."
+        let restored = masker.normalizeDamagedETokens(corrupted, locks: locks)
+
+        #expect(restored == corrupted)
+    }
+
+    @Test
+    func surroundTokenWithNBSPAddsSpacingAroundLatin() {
+        let masker = TermMasker()
+        let token = "__E#1__"
+        let text = "Hello__E#1__World"
+
+        let spaced = masker.surroundTokenWithNBSP(text, token: token)
+
+        #expect(spaced.contains("Hello\u{00A0}\(token)\u{00A0}World"))
+    }
+
+    @Test
+    func insertSpacesAroundTokensOnlyForPunctOnlyParagraphs() {
+        let masker = TermMasker()
+        masker.tokenSpacingBehavior = .isolatedSegments
+
+        let text = "__E#1__,__E#2__!"
+        let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
+
+        #expect(spaced.contains("__E#1__ , __E#2__ !"))
+    }
+
+    @Test
+    func insertSpacesAroundTokensKeepsNormalParagraphsUntouched() {
+        let masker = TermMasker()
+        masker.tokenSpacingBehavior = .isolatedSegments
+
+        let text = "본문과__E#1__이 섞여 있다."
+        let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
+
+        #expect(spaced == text)
+    }
+
+    @Test
+    func collapseSpacesWhenIsolatedSegmentRemovesExtraSpaces() {
+        let masker = TermMasker()
+        let text = ",   Alpha   !"
+
+        let collapsed = masker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(text, target: "Alpha")
+
+        #expect(collapsed == ",Alpha!")
+    }
+
+    @Test
+    func collapseSpacesWhenIsolatedSegmentKeepsParticles() {
+        let masker = TermMasker()
+        let text = ", Alpha의 "
+
+        let collapsed = masker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(text, target: "Alpha")
+
+        #expect(collapsed == text)
+    }
+
+    @Test
+    func normalizeTokensAndParticlesReplacesMultipleTokens() {
+        let masker = TermMasker()
+        let locks: [String: LockInfo] = [
+            "__E#1__": .init(placeholder: "__E#1__", target: "Alpha", endsWithBatchim: false, endsWithRieul: false, isAppellation: false),
+            "__E#2__": .init(placeholder: "__E#2__", target: "Beta", endsWithBatchim: false, endsWithRieul: false, isAppellation: false)
+        ]
+
+        let text = "__E#1____E#2__를 본다"
+        let normalized = masker.normalizeTokensAndParticles(in: text, locksByToken: locks)
+
+        #expect(normalized.contains("AlphaBeta"))
+        #expect(normalized.hasSuffix("본다"))
+    }
+
+    @Test
+    func buildSegmentPiecesHandlesEmptyInput() {
+        let masker = TermMasker()
+        let segment = Segment(
+            id: "empty",
+            url: URL(string: "https://example.com")!,
+            indexInPage: 0,
+            originalText: "",
+            normalizedText: "",
+            domRange: nil
+        )
+
+        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [])
+        #expect(pieces.originalText.isEmpty)
+        #expect(pieces.pieces.count == 1)
+        if case let .text(content, range) = pieces.pieces.first {
+            #expect(content.isEmpty)
+            #expect(range.isEmpty)
+        } else {
+            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
+        }
+    }
+
+    @Test
+    func buildSegmentPiecesWithoutGlossaryReturnsSingleTextPiece() {
+        let masker = TermMasker()
+        let text = "Plain text without glossary."
+        let segment = Segment(
+            id: "plain",
+            url: URL(string: "https://example.com")!,
+            indexInPage: 0,
+            originalText: text,
+            normalizedText: text,
+            domRange: nil
+        )
+
+        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [])
+        #expect(pieces.pieces.count == 1)
+        if case let .text(content, range) = pieces.pieces.first {
+            #expect(content == text)
+            #expect(String(text[range]) == text)
+        } else {
+            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
+        }
+    }
+
+    @Test
+    func insertSpacesAroundTokensAddsSpaceNearPunctuation() {
+        let masker = TermMasker()
+        masker.tokenSpacingBehavior = .isolatedSegments
+        let text = "__E#1__!__E#2__?"
+
+        let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
+
+        #expect(spaced.contains("__E#1__ ! __E#2__ ?"))
     }
 
     @Test
@@ -485,20 +735,40 @@ struct MyTranslationTests {
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [
-            TermMasker.NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"]),
-            TermMasker.NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"])
+            TermMasker.NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"], expectedCount: 1, fallbackTerms: nil),
+            TermMasker.NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"], expectedCount: 1, fallbackTerms: nil)
+        ]
+        let entries: [GlossaryEntry] = [
+            .init(
+                source: "쟈그라",
+                target: "쟈그라",
+                variants: ["가구라", "가굴라", "가고라"],
+                preMask: false,
+                isAppellation: false,
+                prohibitStandalone: false,
+                origin: .termStandalone(termKey: "name1")
+            ),
+            .init(
+                source: "쿠레나이 가이",
+                target: "쿠레나이 가이",
+                variants: ["홍카이"],
+                preMask: false,
+                isAppellation: false,
+                prohibitStandalone: false,
+                origin: .termStandalone(termKey: "name2")
+            )
         ]
 
         let text = "가구라만이가 나타났고 홍카이만에게 경고했다."
-        let normalized = masker.normalizeEntitiesAndParticles(
+        let normalized = masker.normalizeVariantsAndParticles(
             in: text,
-            locksByToken: [:],
-            names: names,
-            mode: .namesOnly
+            entries: Array(zip(names, entries)),
+            baseText: text,
+            cumulativeDelta: 0
         )
 
-        #expect(normalized.contains("쟈그라만이"))
-        #expect(normalized.contains("쿠레나이 가이만에게"))
+        #expect(normalized.text.contains("쟈그라만이"))
+        #expect(normalized.text.contains("쿠레나이 가이만에게"))
     }
 }
 
