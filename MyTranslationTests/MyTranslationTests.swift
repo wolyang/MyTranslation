@@ -170,6 +170,121 @@ struct MyTranslationTests {
     }
 
     @Test
+    func promoteProhibitedEntriesActivatesPairWithinContext() {
+        let masker = TermMasker()
+        let left = GlossaryEntry(
+            source: "알파",
+            target: "Alpha",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "left")
+        )
+        let right = GlossaryEntry(
+            source: "베타",
+            target: "Beta",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "right")
+        )
+        let composer = GlossaryEntry(
+            source: "알파-베타",
+            target: "Alpha-Beta",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .composer(composerId: "pair", leftKey: "left", rightKey: "right", needPairCheck: true)
+        )
+
+        let text = "이 문장에는 알파와 베타가 같이 등장한다."
+        let promoted = masker.promoteProhibitedEntries(in: text, entries: [left, right, composer])
+
+        #expect(promoted.count == 2)
+        #expect(promoted.contains(left))
+        #expect(promoted.contains(right))
+    }
+
+    @Test
+    func promoteProhibitedEntriesIgnoresDistantPairs() {
+        let masker = TermMasker()
+        masker.contextWindow = 5
+        let left = GlossaryEntry(
+            source: "왼쪽",
+            target: "Left",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "L")
+        )
+        let right = GlossaryEntry(
+            source: "오른쪽",
+            target: "Right",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: true,
+            origin: .termStandalone(termKey: "R")
+        )
+        let composer = GlossaryEntry(
+            source: "양쪽",
+            target: "Both",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .composer(composerId: "pair2", leftKey: "L", rightKey: "R", needPairCheck: true)
+        )
+
+        let gap = String(repeating: "가", count: 120)
+        let text = "왼쪽이라는 단어가 나오고 \(gap) 문장 끝부분에 오른쪽이라는 단어가 있다."
+        let promoted = masker.promoteProhibitedEntries(in: text, entries: [left, right, composer])
+
+        #expect(promoted.isEmpty)
+    }
+
+    @Test
+    func promoteActivatedEntriesReturnsOnlyTriggeredTerms() {
+        let masker = TermMasker()
+        let hero = GlossaryEntry(
+            source: "주인공",
+            target: "Hero",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "hero"),
+            activatorKeys: [],
+            activatesKeys: ["sidekick"]
+        )
+        let sidekick = GlossaryEntry(
+            source: "조력자",
+            target: "Sidekick",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "sidekick"),
+            activatorKeys: ["hero"],
+            activatesKeys: []
+        )
+
+        let text = "이야기 속 주인공이 등장했다."
+        let activated = masker.promoteActivatedEntries(
+            from: [hero, sidekick],
+            standaloneEntries: [hero, sidekick],
+            original: text
+        )
+
+        #expect(activated.count == 1)
+        #expect(activated.first == sidekick)
+    }
+
+    @Test
     func segmentPiecesTracksRanges() {
         let text = "Hello 최강자님, welcome!"
         let segment = Segment(
