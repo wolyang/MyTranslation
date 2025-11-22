@@ -1,8 +1,8 @@
 # SPEC: 순서 기반 용어 정규화/언마스킹 개선
 
 **작성일**: 2025-11-21
-**최종 수정**: 2025-11-21
-**상태**: Planning (구현 전)
+**최종 수정**: 2025-11-22
+**상태**: Implemented (코드 반영 완료)
 **우선순위**: P2
 **의존성**: SPEC_SEGMENT_PIECES_REFACTORING.md 구현 완료 필요
 
@@ -27,25 +27,21 @@
 **예시 문제 상황**:
 
 ```
-원문: "小明和小明的弟弟去了学校"
+원문: "凯和k,凯的情人的伽古拉去了学校"
 용어집:
-  - "小明" → "샤오밍" (variants: ["Xiao Ming", "사오밍"])
-  - "小明" → "샤오밍" (두 번 감지, 순서: 1번째, 2번째)
+  - "凯" → "가이" (variants: ["케이", "카이"])
+  - "k" → "케이" (variants: ["k", "K"], "伽古拉"와 세그먼트에 동시에 등장 시 정규화)
+  - "伽古拉" → "쟈그라" (variants: ["가고라", "지아쿨라"])
 
-번역 결과: "사오밍과 小明의 동생은 학교에 갔다"
-(번역엔진이 두 번째 "小明"만 번역 누락)
+번역 결과: "카이와 케이, 카이의 연인 가고라가 학교에 갔다"
+('케이'는 정규화 전에 번역 엔진이 우연히 표준 번역으로 맞춰줌)
 
 정규화 시도:
-  1. variants ["Xiao Ming", "사오밍"]로 매칭
-  2. "사오밍" 발견 → "샤오밍"으로 치환
-  3. "小明" 발견 → "샤오밍"으로 치환 (원문 등장 순서 무시)
+  1. variants ["가이": "케이", "카이"]로 매칭
+  2. "카이" 발견 → "가이"으로 치환
+  3. "케이" 발견 → "가이"으로 치환
 
-결과: "샤오밍과 샤오밍의 동생은 학교에 갔다" ✅ (우연히 맞음)
-
-하지만 동명이인이 여러 명일 경우:
-  - "小明" → "샤오밍"
-  - "小红" → "샤오홍"
-  - variants에 서로 포함된 경우 잘못 매칭 가능
+결과: "가이와 가이, 가이의 연인 쟈그라가 학교에 갔다" (표준 번역이 "케이"인 "k"가 "가이"로 잘못 정규화됨)
 ```
 
 ### 1.2 목표
@@ -110,7 +106,7 @@ func normalizeVariantsAndParticles(
 
 **문제점**:
 1. 동음이의어/동명이인이 여러 개일 때 잘못 매칭
-2. 원문 1번째 "小明"이 번역 결과 2번째 위치에 있어도 구분 못함
+2. 원문 1번째 "凯"이 번역 결과 2번째 위치에 있어도 구분 못함
 3. expectedCount는 `canonicalFor` 함수에서만 사용 (비율 기반 판별)
 
 ### 2.2 canonicalFor (동음이의어 판별)
@@ -226,7 +222,7 @@ func normalizeTokensAndParticles(
 3. **순서 기반 매칭 알고리즘**:
    ```
    for (index, entry) in tracker.nextUnprocessedTerms():
-       1. entry의 variants(또는 fallbackTerms)로 번역 결과에서 검색
+       1. entry의 target + variants(또는 fallbackTerms)로 번역 결과에서 검색
        2. 발견되면 entry.target으로 치환
        3. tracker.markProcessed(index)
        4. 다음 용어로 이동
@@ -272,9 +268,12 @@ func normalizeWithOrder(
         let nameGlossary = nameGlossaries.first { $0.target == entry.target }
         guard let nameGlossary = nameGlossary else { continue }
 
+        // target + variants 모두를 후보로 검색
+        let candidates = [nameGlossary.target] + nameGlossary.variants
+
         if let matched = findNextVariant(
             in: out,
-            variants: nameGlossary.variants,
+            candidates: candidates,
             startingFrom: 0  // 순서대로 처리
         ) {
             out = replaceAndCorrectJosa(out, at: matched.range, with: nameGlossary.target)
@@ -286,11 +285,17 @@ func normalizeWithOrder(
     for (index, entry) in tracker.nextUnprocessedTerms() {
         guard !entry.preMask else { continue }
 
-        if let fallbackTerms = nameGlossary?.fallbackTerms {
+        guard let nameGlossary = nameGlossaries.first(where: { $0.target == entry.target }) else {
+            continue
+        }
+
+        if let fallbackTerms = nameGlossary.fallbackTerms {
             for fallbackTerm in fallbackTerms {
+                let fallbackCandidates = [fallbackTerm.target] + fallbackTerm.variants
+
                 if let matched = findNextVariant(
                     in: out,
-                    variants: fallbackTerm.variants,
+                    candidates: fallbackCandidates,
                     startingFrom: 0
                 ) {
                     out = replaceAndCorrectJosa(out, at: matched.range, with: fallbackTerm.target)
@@ -456,6 +461,7 @@ func normalizeWithOrder(
 ) -> String {
     var out = text
     var tracker = OccurrenceTracker(pieces: pieces)
+    var lastMatchUpperBound: String.Index?  // 순서 기반 검색 시작 위치 힌트
 
     // Phase 1: 순서 기반 + Pattern variants
     for (index, entry) in tracker.nextUnprocessedTerms() {
@@ -465,11 +471,13 @@ func normalizeWithOrder(
             continue
         }
 
-        // 순서대로 variants 매칭 시도
+        // target + variants를 모두 후보로 순서대로 매칭 시도
+        let candidates = [nameGlossary.target] + nameGlossary.variants
+
         if let matched = findNextVariantInOrder(
             in: out,
-            variants: nameGlossary.variants,
-            alreadyProcessed: tracker.processedMask
+            candidates: candidates,
+            startIndex: lastMatchUpperBound ?? out.startIndex
         ) {
             out = replaceAndCorrectJosa(
                 out,
@@ -478,6 +486,7 @@ func normalizeWithOrder(
                 originalEndsWithBatchim: hangulFinalJongInfo(entry.target).batchim
             )
             tracker.markProcessed(index)
+            lastMatchUpperBound = matched.range.upperBound
         }
     }
 
@@ -491,10 +500,12 @@ func normalizeWithOrder(
 
         if let fallbackTerms = nameGlossary.fallbackTerms {
             for fallbackTerm in fallbackTerms {
+                let fallbackCandidates = [fallbackTerm.target] + fallbackTerm.variants
+
                 if let matched = findNextVariantInOrder(
                     in: out,
-                    variants: fallbackTerm.variants,
-                    alreadyProcessed: tracker.processedMask
+                    candidates: fallbackCandidates,
+                    startIndex: lastMatchUpperBound ?? out.startIndex
                 ) {
                     out = replaceAndCorrectJosa(
                         out,
@@ -503,6 +514,7 @@ func normalizeWithOrder(
                         originalEndsWithBatchim: hangulFinalJongInfo(fallbackTerm.target).batchim
                     )
                     tracker.markProcessed(index)
+                    lastMatchUpperBound = matched.range.upperBound
                     break
                 }
             }
@@ -537,24 +549,31 @@ func normalizeWithOrder(
 /// 순서 기반 variant 매칭
 private func findNextVariantInOrder(
     in text: String,
-    variants: [String],
-    alreadyProcessed: [Bool]
+    candidates: [String],
+    startIndex: String.Index
 ) -> (variant: String, range: Range<String.Index>)? {
-    guard !variants.isEmpty else { return nil }
+    guard !candidates.isEmpty else { return nil }
 
-    // variants를 긴 것부터 정렬 (긴 variant 우선)
-    let sortedVariants = variants.sorted { $0.count > $1.count }
+    // target과 variants를 모두 긴 것부터 정렬해 긴 후보 우선
+    let sortedCandidates = candidates.sorted { $0.count > $1.count }
 
-    for variant in sortedVariants {
-        guard !variant.isEmpty else { continue }
+    for candidate in sortedCandidates {
+        guard !candidate.isEmpty else { continue }
 
-        if let range = text.range(of: variant, options: [.caseInsensitive]) {
-            return (variant: variant, range: range)
+        // 순서 기반 탐색: startIndex 이후 구간을 우선 검사
+        if let range = text.range(of: candidate, options: [.caseInsensitive], range: startIndex..<text.endIndex) {
+            return (variant: candidate, range: range)
         }
     }
 
     return nil
 }
+
+/// 사용 가이드:
+/// - 순서 기반 탐색 시 lastMatchUpperBound(직전 매칭 upperBound)를 startIndex로 전달해
+///   앞쪽에서의 오매칭을 피한다.
+/// - 번역 엔진이 어순을 크게 바꿔 startIndex 이후 구간에 매칭이 없으면
+///   Phase 3에서 전역 검색으로 재시도해 하위 호환성을 유지한다.
 
 /// 치환 및 조사 보정
 private func replaceAndCorrectJosa(
@@ -805,7 +824,13 @@ let restored = outputPostprocessor.restoreOutput(
 2. Phase 3에서 기존 로직으로 Fallback
 3. 기존 동작 100% 보존
 
-### 6.4 성능 고려사항
+### 6.4 구현 시 참고 사항
+
+- 구현에서는 OccurrenceTracker 대신 간단한 Set/커서(`lastMatchUpperBound`, `phase2LastMatch`)로 순서 상태를 관리해 복잡도를 줄였다.
+- Phase 2(Pattern fallback)는 Phase 1과 별도 커서로 순서를 추적해 앞쪽 용어가 누락되지 않도록 했다.
+- Phase 1/2에서 처리되지 않은 용어/토큰은 Phase 3 전역 검색으로 보완해 하위 호환성을 유지한다.
+
+### 6.5 성능 고려사항
 
 **추가 오버헤드**:
 - OccurrenceTracker 생성: 세그먼트당 약 50-100 bytes
@@ -830,10 +855,10 @@ public enum Piece: Sendable {
 // 순서 기반 매칭을 위치 기반 매칭으로 업그레이드
 func findNextVariantWithRange(
     in text: String,
-    variants: [String],
+    candidates: [String],
     expectedRange: Range<String.Index>  // 원문 위치 힌트
 ) -> (variant: String, range: Range<String.Index>)? {
-    // expectedRange 근처부터 우선 검색
+    // expectedRange 근처부터 target + variants 후보 우선 검색
     // 정확도 90-95%로 추가 개선
 }
 ```
@@ -852,8 +877,8 @@ func findNextVariantWithRange(
 **Phase 1-2 (순서 기반)**:
 - OccurrenceTracker 생성: O(pieces)
 - nextUnprocessedTerms() 호출: O(pieces × terms)
-- findNextVariantInOrder(): O(text_length × variants)
-- 총 복잡도: O(pieces × terms × text_length × variants)
+- findNextVariantInOrder(): O(text_length × candidates)  // candidates = target + variants
+- 총 복잡도: O(pieces × terms × text_length × candidates)
 
 **Phase 3 (전역 검색)**:
 - normalizeVariantsAndParticles(): O(remaining_terms × text_length × variants)
@@ -892,18 +917,13 @@ func findNextVariantWithRange(
 
 ### 8.1 단위 테스트
 
-1. **OccurrenceTracker 테스트**:
-   - nextUnprocessedTerms() 순서 정확성
-   - markProcessed() 동작 확인
-   - remainingCount 정확성
-
-2. **normalizeWithOrder 테스트**:
+1. **normalizeWithOrder 테스트**:
    - Phase 1: 순서 기반 + Pattern variants
    - Phase 2: 순서 기반 + Pattern Fallback
    - Phase 3: 전역 검색 Fallback
    - 조사 보정 정확성
 
-3. **unmaskWithOrder 테스트**:
+2. **unmaskWithOrder 테스트**:
    - 순서 기반 언마스킹
    - 토큰 순서 바뀐 경우 Fallback
    - 조사 보정 정확성
@@ -1004,10 +1024,10 @@ public enum Piece: Sendable {
 // 위치 기반 매칭
 func findNextVariantWithRange(
     in text: String,
-    variants: [String],
+    candidates: [String],
     expectedRange: Range<String.Index>
 ) -> (variant: String, range: Range<String.Index>)? {
-    // expectedRange 근처부터 우선 검색
+    // expectedRange 근처부터 target + variants 후보 우선 검색
     // 거리 기반 스코어링으로 정확도 개선
 }
 ```
