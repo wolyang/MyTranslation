@@ -21,11 +21,11 @@ struct GlossaryAddSheetState: Identifiable, Equatable {
     }
 
     struct UnmatchedTermCandidate: Identifiable, Equatable {
-        let id: UUID = UUID()
-        let termKey: String?
-        let entry: GlossaryEntry
-        let appearanceOrder: Int
-        let similarity: Double
+        public let id: UUID = UUID()
+        public let termKey: String?
+        public let entry: GlossaryEntry
+        public let appearanceOrder: Int
+        public let similarity: Double
     }
 
     let id: UUID = UUID()

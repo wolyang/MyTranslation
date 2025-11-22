@@ -22,7 +22,8 @@ extension BrowserViewModel {
         let matched = matchedTerm(for: kind, selectedRange: selectedRange)
         let candidates = extractUnmatchedCandidates(
             selectedText: trimmed,
-            kind: kind
+            kind: kind,
+            selectionAnchor: selectedRange.location
         )
 
         glossaryAddSheet = GlossaryAddSheetState(
@@ -51,23 +52,66 @@ extension BrowserViewModel {
 
     private func extractUnmatchedCandidates(
         selectedText: String,
-        kind: GlossaryAddSheetState.SelectionKind
+        kind: GlossaryAddSheetState.SelectionKind,
+        selectionAnchor: Int
     ) -> [GlossaryAddSheetState.UnmatchedTermCandidate] {
-        Log.info("")
         guard kind == .translated,
               let metadata = overlayState?.primaryHighlightMetadata else {
-            Log.info("no metadata")
             return [] }
 
-        let matchedSources = Set(
-            metadata.finalTermRanges.map { $0.entry.source } +
-            (metadata.preNormalizedTermRanges ?? []).map { $0.entry.source }
+        return GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: metadata,
+            selectedText: selectedText,
+            finalText: overlayState?.primaryFinalText,
+            preNormalizedText: overlayState?.primaryPreNormalizedText,
+            selectionAnchor: selectionAnchor
         )
-        Log.info("matchedSources = \(matchedSources)")
+    }
+}
+
+// MARK: - Candidate computation (shared for testing)
+
+enum GlossaryAddCandidateUtil {
+    static func computeUnmatchedCandidates(
+        metadata: TermHighlightMetadata,
+        selectedText: String,
+        finalText: String?,
+        preNormalizedText: String?,
+        selectionAnchor: Int
+    ) -> [GlossaryAddSheetState.UnmatchedTermCandidate] {
+        let rangesForAnchor: [TermRange] = {
+            if finalText != nil {
+                return metadata.finalTermRanges
+            }
+            return metadata.preNormalizedTermRanges ?? []
+        }()
+
+        var remainingMatchedCount: [String: Int] = [:]
+        var remainingMatchedBeforeAnchor: [String: Int] = [:]
+        let anchorText = finalText ?? preNormalizedText ?? ""
+
+        for range in rangesForAnchor.sorted(by: { $0.range.lowerBound < $1.range.lowerBound }) {
+            remainingMatchedCount[range.entry.source, default: 0] += 1
+            let start = range.range.lowerBound.utf16Offset(in: anchorText)
+            if start < selectionAnchor {
+                remainingMatchedBeforeAnchor[range.entry.source, default: 0] += 1
+            }
+        }
 
         let loweredSelection = selectedText.lowercased()
+
         let candidates: [GlossaryAddSheetState.UnmatchedTermCandidate] = metadata.originalTermRanges.enumerated().compactMap { index, termRange in
-            if matchedSources.contains(termRange.entry.source) { return nil }
+            let source = termRange.entry.source
+            if let before = remainingMatchedBeforeAnchor[source], before > 0 {
+                remainingMatchedBeforeAnchor[source] = before - 1
+                remainingMatchedCount[source] = max((remainingMatchedCount[source] ?? 0) - 1, 0)
+                return nil
+            }
+            if let count = remainingMatchedCount[source], count > 0 {
+                remainingMatchedCount[source] = count - 1
+                return nil
+            }
+
             let entry = termRange.entry
             let score = bestSimilarityScore(for: entry, against: loweredSelection)
             let termKey: String?
@@ -84,7 +128,6 @@ extension BrowserViewModel {
                 similarity: score
             )
         }
-        Log.info("candidates: \(candidates)")
 
         return candidates.sorted { lhs, rhs in
             if abs(lhs.similarity - rhs.similarity) > 0.001 {
@@ -94,19 +137,19 @@ extension BrowserViewModel {
         }
     }
 
-    private func bestSimilarityScore(for entry: GlossaryEntry, against text: String) -> Double {
+    private static func bestSimilarityScore(for entry: GlossaryEntry, against text: String) -> Double {
         let candidates = [entry.target] + Array(entry.variants)
         return candidates.map { similarityScore($0.lowercased(), text) }.max() ?? 0
     }
 
-    private func similarityScore(_ a: String, _ b: String) -> Double {
+    private static func similarityScore(_ a: String, _ b: String) -> Double {
         if a.isEmpty || b.isEmpty { return 0 }
         let dist = levenshteinDistance(a, b)
         let maxLen = max(a.count, b.count)
         return maxLen == 0 ? 0 : 1 - (Double(dist) / Double(maxLen))
     }
 
-    private func levenshteinDistance(_ a: String, _ b: String) -> Int {
+    private static func levenshteinDistance(_ a: String, _ b: String) -> Int {
         let aChars = Array(a)
         let bChars = Array(b)
         let aCount = aChars.count
