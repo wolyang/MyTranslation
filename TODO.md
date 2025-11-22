@@ -17,4 +17,5 @@
 
 ## 완료된 작업
 
+- [x] (P1) 새로고침 시 캐시 삭제 및 번역 상태 초기화 기능 구현(CacheStore에 clearAll/clearBySegmentIDs 메서드 추가, refreshAndReload에서 페이지별 캐시 삭제로 항상 최신 번역 보장).
 - [x] (예시) 이 섹션에 완료된 작업을 이동시켜 기록으로 남깁니다.

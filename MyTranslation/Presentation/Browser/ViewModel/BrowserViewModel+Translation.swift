@@ -84,11 +84,16 @@ extension BrowserViewModel {
     func refreshAndReload(urlString: String) {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else { return }
-        bypassCacheNextTranslation = true
+        let segmentIDs = lastSegments.map { $0.id }
 
         if let webView = attachedWebView {
             cancelActiveTranslation()
             clearTranslationArtifacts(on: webView)
+            if segmentIDs.isEmpty == false {
+                cache.clearBySegmentIDs(segmentIDs)
+            }
+        } else if segmentIDs.isEmpty == false {
+            cache.clearBySegmentIDs(segmentIDs)
         }
 
         load(urlString: trimmed)
@@ -694,28 +699,20 @@ private extension BrowserViewModel {
 
 extension BrowserViewModel {
     /// 페이지별 언어 선호를 기반으로 엔진 호출 옵션을 조립한다.
-    func makeTranslationOptions(using preference: PageLanguagePreference, consumeBypassCache: Bool = true) -> TranslationOptions {
-        let bypassCache = consumeBypassCache ? consumeBypassCacheFlag() : bypassCacheNextTranslation
+    func makeTranslationOptions(using preference: PageLanguagePreference) -> TranslationOptions {
         return TranslationOptions(
             preserveFormatting: true,
             style: .neutralDictionaryTone,
             applyGlossary: true,
             sourceLanguage: preference.source,
             targetLanguage: preference.target,
-            tokenSpacingBehavior: spacingBehavior(for: preference),
-            bypassCache: bypassCache
+            tokenSpacingBehavior: spacingBehavior(for: preference)
         )
     }
 
     /// 대상 언어가 CJK인지에 따라 토큰 간 공백 삽입 여부를 결정한다.
     private func spacingBehavior(for preference: PageLanguagePreference) -> TokenSpacingBehavior {
         preference.target.isCJK ? .disabled : .isolatedSegments
-    }
-
-    private func consumeBypassCacheFlag() -> Bool {
-        let shouldBypass = bypassCacheNextTranslation
-        bypassCacheNextTranslation = false
-        return shouldBypass
     }
 
     func clearTranslationArtifacts(on webView: WKWebView) {

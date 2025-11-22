@@ -54,12 +54,12 @@ final class BrowserViewModel: ObservableObject {
     var noBodyTextRetryCount = 0
     var selectedSegment: Segment?
     var overlayTranslationTasks: [String: Task<Void, Never>] = [:]
-    private var bypassCacheNextTranslation = false
     /// 페이지 URL별로 사용자가 선택한 언어를 기억해 동일 페이지 재방문 시 재사용한다.
     private var languagePreferenceByURL: [URL: PageLanguagePreference] = [:]
 
     let extractor: ContentExtractor
     let router: TranslationRouter
+    let cache: CacheStore
     let replacer: InlineReplacer
     let settings: UserSettings
 //    let overlay: OverlayRenderer
@@ -68,6 +68,7 @@ final class BrowserViewModel: ObservableObject {
     init(
         extractor: ContentExtractor = WKContentExtractor(),
         router: TranslationRouter,
+        cache: CacheStore,
         replacer: InlineReplacer,
 //        fmQuery: FMQueryService,
         settings: UserSettings,
@@ -76,6 +77,7 @@ final class BrowserViewModel: ObservableObject {
     ) {
         self.extractor = extractor
         self.router = router
+        self.cache = cache
         self.replacer = replacer
 //        self.fmQuery = fmQuery
         self.settings = settings

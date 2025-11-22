@@ -170,7 +170,7 @@ private extension BrowserViewModel {
         RouterCancellationCenter.shared.cancel(runID: key)
 
         let preference = currentPageTranslation?.languagePreference ?? languagePreference
-        let options = makeTranslationOptions(using: preference, consumeBypassCache: false)
+        let options = makeTranslationOptions(using: preference)
         let bag = RouterCancellationCenter.shared.bag(for: key)
 
         let worker = Task(priority: .userInitiated) { [weak self] in

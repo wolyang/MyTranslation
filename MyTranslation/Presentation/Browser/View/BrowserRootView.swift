@@ -30,6 +30,7 @@ struct BrowserRootView: View {
             wrappedValue: BrowserViewModel(
                 extractor: WKContentExtractor(),
                 router: container.router,
+                cache: container.cache,
                 replacer: WebViewInlineReplacer(),
 //                fmQuery: container.fmQuery,
                 settings: container.settings

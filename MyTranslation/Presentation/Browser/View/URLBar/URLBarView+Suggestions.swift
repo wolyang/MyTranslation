@@ -79,16 +79,16 @@ extension URLBarView {
         let trimmedCurrent = currentPageURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedOriginal = originalURLBeforeEditing.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedInput = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedInput.isEmpty == false else { return false }
+        guard !trimmedInput.isEmpty else { return false }
         let isUnchanged = trimmedInput == trimmedOriginal
-        let matchesCurrent = trimmedInput == trimmedCurrent && trimmedCurrent.isEmpty == false
+        let matchesCurrent = trimmedInput == trimmedCurrent && !trimmedCurrent.isEmpty
         return isUnchanged && matchesCurrent
     }
 
     /// 입력값과 현재 페이지를 비교해 이동/새로고침 아이콘을 결정합니다.
     var goButtonSymbolName: String {
         let trimmedInput = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedInput.isEmpty == false else { return "arrow.right.circle.fill" }
+        guard !trimmedInput.isEmpty else { return "arrow.right.circle.fill" }
         return isRefreshAction ? "arrow.clockwise.circle.fill" : "arrow.right.circle.fill"
     }
 }

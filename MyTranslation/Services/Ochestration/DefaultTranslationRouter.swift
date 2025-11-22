@@ -57,7 +57,6 @@ final class DefaultTranslationRouter: TranslationRouter {
     ) async throws -> TranslationStreamSummary {
         print("[Router] Start translateStream")
         let cancelBag = RouterCancellationCenter.shared.bag(for: runID)
-        let bypassCache = options.bypassCache
 
         let glossaryEntries = await fetchGlossaryEntries(fullText: segments.map({ $0.originalText
         }).joined(), shouldApply: options.applyGlossary)
@@ -72,7 +71,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         var sequence = 0
 
         for segment in segments {
-            if bypassCache == false, let cacheHit = cacheHitPayload(
+            if let cacheHit = cacheHitPayload(
                 for: segment,
                 options: options,
                 engine: engine.tag,

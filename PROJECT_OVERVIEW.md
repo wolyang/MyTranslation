@@ -142,6 +142,12 @@ WKWebView 번역 결과 반영.
 
 ### 9. Persistence & Configuration
 
+* **CacheStore**: 번역 결과 메모리 캐시
+  * `DefaultCacheStore`: Dictionary 기반 인메모리 캐시
+  * 세그먼트·엔진·옵션 조합으로 캐시 키 생성
+  * `clearAll()`: 전체 캐시 삭제
+  * `clearBySegmentIDs(_:)`: 특정 세그먼트 캐시만 선택적 삭제
+  * 새로고침 시 캐시 삭제로 항상 최신 번역 보장
 * SwiftData: 용어/패턴 저장
 * UserSettings: 번역/엔진/스타일 설정
 * API Keys: `Info.plist` 기반 (Google/DeepL)
