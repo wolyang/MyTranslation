@@ -469,7 +469,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         func shift(for offset: Int) -> Int {
             deltas
                 .filter { $0.offset < offset }
-                .reduce(0) { $0 + $1.delta }
+                .reduce(0) { $0 + $1.delta } // 교체된 토큰까지의 길이 변화 누계
         }
 
         let finalCount = finalText.count

@@ -1306,7 +1306,7 @@ public final class TermMasker {
         var processed: Set<Int> = []
         var lastMatchUpperBound: String.Index? = nil
         var phase2LastMatch: String.Index? = nil
-        var cumulativeDelta: Int = 0
+        var cumulativeDelta: Int = 0  // 정규화로 길이가 달라진 누적 분량을 추적
 
         let unmaskedTerms: [(index: Int, entry: GlossaryEntry)] = pieces.pieces.enumerated().compactMap { idx, piece in
             if case .term(let entry, _) = piece, entry.preMask == false {
@@ -1416,9 +1416,10 @@ public final class TermMasker {
         return (out, ranges, preNormalizedRanges)
     }
 
+    /// 토큰 → 실제 용어 교체 시 길이 변화 추적용.
     struct ReplacementDelta {
-        let offset: Int   // original lowerBound offset
-        let delta: Int    // length difference (new - old)
+        let offset: Int   // 교체 전 lowerBound 오프셋
+        let delta: Int    // 길이 변화 (new - old)
     }
 
     func unmaskWithOrder(
@@ -1454,6 +1455,7 @@ public final class TermMasker {
                 ?? out.range(of: token, options: [])
             guard let tokenRange = range else { continue }
 
+            // 원본 위치/길이 기반으로 델타를 계산해 이후 range 보정에 활용한다.
             let lowerOffset = out.distance(from: out.startIndex, to: tokenRange.lowerBound)
             let oldLen = out.distance(from: tokenRange.lowerBound, to: tokenRange.upperBound)
 
@@ -1708,6 +1710,7 @@ public final class TermMasker {
     }
     
     // 마스킹하지 않은 용어집 정규화 + range 추적 버전
+    /// 정규화 텍스트와 원본 사이 길이 차를 고려하며 변형 정규화 range를 추적한다.
     func normalizeVariantsAndParticles(
         in text: String,
         entries: [(NameGlossary, GlossaryEntry)],
@@ -1770,6 +1773,7 @@ public final class TermMasker {
             let entry = mapping.entry
             let (has, rieul) = hangulFinalJongInfo(canon)
 
+            // preNormalized 범위는 교체 전 원본 텍스트 기준으로 계산
             let originalLower = r.location - localDelta
             if originalLower >= 0, originalLower + r.length <= (original as NSString).length {
                 let lower = original.index(original.startIndex, offsetBy: originalLower)
@@ -1791,7 +1795,7 @@ public final class TermMasker {
             if let swiftRange = Range(fixedRange, in: out) {
                 ranges.append(.init(entry: entry, range: swiftRange, type: .normalized))
             }
-            localDelta += (fixedRange.length - r.length)
+            localDelta += (fixedRange.length - r.length) // 이후 매칭 offset 보정을 위한 누적치
         }
 
         return (out, ranges, preNormalizedRanges)
