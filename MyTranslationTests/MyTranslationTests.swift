@@ -285,6 +285,158 @@ struct MyTranslationTests {
     }
 
     @Test
+    func normalizeDamagedETokensRestoresCorruptedPlaceholders() {
+        let masker = TermMasker()
+        let locks: [String: LockInfo] = [
+            "__E#31__": .init(placeholder: "__E#31__", target: "Alpha", endsWithBatchim: false, endsWithRieul: false, isAppellation: false)
+        ]
+
+        let corrupted = "텍스트 E#３１__ 와 __ E #31 __ 그리고 #31__ 을 포함"
+        let restored = masker.normalizeDamagedETokens(corrupted, locks: locks)
+
+        #expect(restored.contains("__E#31__"))
+        #expect(restored.components(separatedBy: "__E#31__").count == 4)
+    }
+
+    @Test
+    func normalizeDamagedETokensIgnoresUnknownIds() {
+        let masker = TermMasker()
+        let locks: [String: LockInfo] = [
+            "__E#7__": .init(placeholder: "__E#7__", target: "Seven", endsWithBatchim: false, endsWithRieul: false, isAppellation: false)
+        ]
+
+        let corrupted = "E#99__ 는 모르는 토큰이다."
+        let restored = masker.normalizeDamagedETokens(corrupted, locks: locks)
+
+        #expect(restored == corrupted)
+    }
+
+    @Test
+    func surroundTokenWithNBSPAddsSpacingAroundLatin() {
+        let masker = TermMasker()
+        let token = "__E#1__"
+        let text = "Hello__E#1__World"
+
+        let spaced = masker.surroundTokenWithNBSP(text, token: token)
+
+        #expect(spaced.contains("Hello\u{00A0}\(token)\u{00A0}World"))
+    }
+
+    @Test
+    func insertSpacesAroundTokensOnlyForPunctOnlyParagraphs() {
+        let masker = TermMasker()
+        masker.tokenSpacingBehavior = .isolatedSegments
+
+        let text = "__E#1__,__E#2__!"
+        let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
+
+        #expect(spaced.contains("__E#1__ , __E#2__ !"))
+    }
+
+    @Test
+    func insertSpacesAroundTokensKeepsNormalParagraphsUntouched() {
+        let masker = TermMasker()
+        masker.tokenSpacingBehavior = .isolatedSegments
+
+        let text = "본문과__E#1__이 섞여 있다."
+        let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
+
+        #expect(spaced == text)
+    }
+
+    @Test
+    func collapseSpacesWhenIsolatedSegmentRemovesExtraSpaces() {
+        let masker = TermMasker()
+        let text = ",   Alpha   !"
+
+        let collapsed = masker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(text, target: "Alpha")
+
+        #expect(collapsed == ",Alpha!")
+    }
+
+    @Test
+    func collapseSpacesWhenIsolatedSegmentKeepsParticles() {
+        let masker = TermMasker()
+        let text = ", Alpha의 "
+
+        let collapsed = masker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(text, target: "Alpha")
+
+        #expect(collapsed == text)
+    }
+
+    @Test
+    func normalizeTokensAndParticlesReplacesMultipleTokens() {
+        let masker = TermMasker()
+        let locks: [String: LockInfo] = [
+            "__E#1__": .init(placeholder: "__E#1__", target: "Alpha", endsWithBatchim: false, endsWithRieul: false, isAppellation: false),
+            "__E#2__": .init(placeholder: "__E#2__", target: "Beta", endsWithBatchim: false, endsWithRieul: false, isAppellation: false)
+        ]
+
+        let text = "__E#1____E#2__를 본다"
+        let normalized = masker.normalizeTokensAndParticles(in: text, locksByToken: locks)
+
+        #expect(normalized.contains("AlphaBeta"))
+        #expect(normalized.hasSuffix("본다"))
+    }
+
+    @Test
+    func buildSegmentPiecesHandlesEmptyInput() {
+        let masker = TermMasker()
+        let segment = Segment(
+            id: "empty",
+            url: URL(string: "https://example.com")!,
+            indexInPage: 0,
+            originalText: "",
+            normalizedText: "",
+            domRange: nil
+        )
+
+        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [])
+        #expect(pieces.originalText.isEmpty)
+        #expect(pieces.pieces.count == 1)
+        if case let .text(content, range) = pieces.pieces.first {
+            #expect(content.isEmpty)
+            #expect(range.isEmpty)
+        } else {
+            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
+        }
+    }
+
+    @Test
+    func buildSegmentPiecesWithoutGlossaryReturnsSingleTextPiece() {
+        let masker = TermMasker()
+        let text = "Plain text without glossary."
+        let segment = Segment(
+            id: "plain",
+            url: URL(string: "https://example.com")!,
+            indexInPage: 0,
+            originalText: text,
+            normalizedText: text,
+            domRange: nil
+        )
+
+        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [])
+        #expect(pieces.pieces.count == 1)
+        if case let .text(content, range) = pieces.pieces.first {
+            #expect(content == text)
+            #expect(String(text[range]) == text)
+        } else {
+            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
+        }
+    }
+
+    @Test
+    func insertSpacesAroundTokensAddsSpaceNearPunctuation() {
+        let masker = TermMasker()
+        masker.tokenSpacingBehavior = .isolatedSegments
+        let text = "__E#1__!__E#2__?"
+
+        let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
+
+        #expect(spaced.contains("__E#1__ ! __E#2__ ?"))
+    }
+
+    @Test
     func segmentPiecesTracksRanges() {
         let text = "Hello 최강자님, welcome!"
         let segment = Segment(
