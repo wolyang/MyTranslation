@@ -14,7 +14,7 @@ final class AppContainer: ObservableObject {
 
     // Router & infra
     let cache: CacheStore
-    let glossaryStore: GlossaryStore
+    let glossaryService: Glossary.Service
     let router: TranslationRouter
     
     let postEditor: PostEditor
@@ -40,7 +40,7 @@ final class AppContainer: ObservableObject {
             )
         )
         self.deeplEngine = DeepLEngine(client: deeplClient)
-        self.googleClient = GoogleTranslateV2Client(config: .init(apiKey: APIKeys.googleTranslate))
+        self.googleClient = GoogleTranslateV2Client(config: .init(apiKey: APIKeys.google))
         self.googleEngine = GoogleEngine(client: googleClient)
         
         if useOnDeviceFM {
@@ -59,14 +59,14 @@ final class AppContainer: ObservableObject {
         }
 
         self.cache = DefaultCacheStore()
-        self.glossaryStore = DefaultGlossaryStore(context: context)
+        self.glossaryService = Glossary.Service(context: context)
 
         self.router = DefaultTranslationRouter(
             afm: afmEngine,
             deepl: deeplEngine,
             google: googleEngine,
             cache: cache,
-            glossaryStore: glossaryStore,
+            glossaryService: glossaryService,
             postEditor: postEditor,
             comparer: comparer,
             reranker: reranker

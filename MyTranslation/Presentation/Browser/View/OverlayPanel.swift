@@ -104,6 +104,9 @@ private struct OverlayPanelView: View {
     @State private var contentWidth: CGFloat = .zero
     @State private var textSize: CGSize = .zero
 
+    private var primaryFinalTitle: String { "\(state.primaryEngineTitle) 최종 번역" }
+    private var primaryPreNormalizedTitle: String { "\(state.primaryEngineTitle) 정규화 전" }
+
     private var measurementText: String {
         var blocks: [String] = []
         if state.showsOriginalSection {
@@ -112,6 +115,8 @@ private struct OverlayPanelView: View {
         if let improved = state.improvedText, improved.isEmpty == false {
             blocks.append(sectionMeasurementText(title: "AI 개선 번역", body: improved))
         }
+        blocks.append(sectionMeasurementText(title: primaryFinalTitle, body: displayText(for: state.primaryFinalText)))
+        blocks.append(sectionMeasurementText(title: primaryPreNormalizedTitle, body: displayText(for: state.primaryPreNormalizedText)))
         for translation in state.translations {
             let body = displayText(for: translation)
             blocks.append(sectionMeasurementText(title: translation.title, body: body))
@@ -210,6 +215,20 @@ private struct OverlayPanelView: View {
                     availableWidth: contentWidth
                 )
             }
+            TranslationSectionView(
+                title: primaryFinalTitle,
+                text: state.primaryFinalText,
+                isLoading: false,
+                errorMessage: nil,
+                availableWidth: contentWidth
+            )
+            TranslationSectionView(
+                title: primaryPreNormalizedTitle,
+                text: state.primaryPreNormalizedText,
+                isLoading: false,
+                errorMessage: nil,
+                availableWidth: contentWidth
+            )
             ForEach(state.translations) { translation in
                 TranslationSectionView(
                     title: translation.title,
@@ -225,6 +244,13 @@ private struct OverlayPanelView: View {
 
     private func sectionMeasurementText(title: String, body: String) -> String {
         "\(title)\n\(body)"
+    }
+
+    private func displayText(for text: String?) -> String {
+        if let text, text.isEmpty == false {
+            return text
+        }
+        return "표시할 내용이 없습니다."
     }
 
     private func displayText(for translation: BrowserViewModel.OverlayState.Translation) -> String {

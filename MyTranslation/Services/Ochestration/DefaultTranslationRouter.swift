@@ -19,7 +19,7 @@ final class DefaultTranslationRouter: TranslationRouter {
     private let deepl: TranslationEngine
     private let google: TranslationEngine
     private let cache: CacheStore
-    private let glossaryStore: GlossaryStore
+    private let glossaryService: Glossary.Service
     private let postEditor: PostEditor // 유지(호출 제거)
     private let comparer: ResultComparer? // 유지(호출 제거)
     private let reranker: Reranker? // 유지(호출 제거)
@@ -32,7 +32,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         deepl: TranslationEngine,
         google: TranslationEngine,
         cache: CacheStore,
-        glossaryStore: GlossaryStore,
+        glossaryService: Glossary.Service,
         postEditor: PostEditor,
         comparer: ResultComparer?,
         reranker: Reranker?
@@ -41,7 +41,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.deepl = deepl
         self.google = google
         self.cache = cache
-        self.glossaryStore = glossaryStore
+        self.glossaryService = glossaryService
         self.postEditor = postEditor
         self.comparer = comparer
         self.reranker = reranker
@@ -58,7 +58,8 @@ final class DefaultTranslationRouter: TranslationRouter {
         print("[Router] Start translateStream")
         let cancelBag = RouterCancellationCenter.shared.bag(for: runID)
 
-        let glossaryEntries = await fetchGlossaryEntries(shouldApply: options.applyGlossary)
+        let glossaryEntries = await fetchGlossaryEntries(fullText: segments.map({ $0.originalText
+        }).joined(), shouldApply: options.applyGlossary)
 
         let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
         let engine = engine(for: engineTag)
@@ -229,9 +230,9 @@ final class DefaultTranslationRouter: TranslationRouter {
     }
 
     /// 용어집 사용 여부에 따라 최신 용어집 스냅샷을 가져온다.
-    private func fetchGlossaryEntries(shouldApply: Bool) async -> [GlossaryEntry] {
+    private func fetchGlossaryEntries(fullText: String, shouldApply: Bool) async -> [GlossaryEntry] {
         guard shouldApply else { return [] }
-        return await MainActor.run { (try? glossaryStore.snapshot()) ?? [] }
+        return await MainActor.run { (try? glossaryService.buildEntries(for: fullText)) ?? [] }
     }
 
     /// 캐시 적중 시 최종 페이로드를 만들고, 적중하지 않으면 nil을 반환한다.
@@ -262,9 +263,30 @@ final class DefaultTranslationRouter: TranslationRouter {
         engine: TranslationEngine,
         termMasker: TermMasker
     ) -> MaskingContext {
-        let maskedPacks: [MaskedPack] = segments.map { segment in
-            termMasker.maskWithLocks(segment: segment, glossary: glossaryEntries, maskPerson: engine.maskPerson)
+        var allSegmentPieces: [SegmentPieces] = []
+        var maskedPacks: [MaskedPack] = []
+        var nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = []
+
+        for segment in segments {
+            let (pieces, _) = termMasker.buildSegmentPieces(
+                segment: segment,
+                glossary: glossaryEntries
+            )
+            allSegmentPieces.append(pieces)
+
+            let pack = termMasker.maskFromPieces(
+                pieces: pieces,
+                segment: segment
+            )
+            maskedPacks.append(pack)
+
+            let nameGlossaries = termMasker.makeNameGlossariesFromPieces(
+                pieces: pieces,
+                allEntries: glossaryEntries
+            )
+            nameGlossariesPerSegment.append(nameGlossaries)
         }
+
         let maskedSegments: [Segment] = maskedPacks.map { pack in
             Segment(
                 id: pack.seg.id,
@@ -276,19 +298,11 @@ final class DefaultTranslationRouter: TranslationRouter {
             )
         }
 
-        let nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = {
-            guard engine.maskPerson == false else {
-                return Array(repeating: [], count: maskedPacks.count)
-            }
-            return maskedPacks.map { pack in
-                termMasker.makeNameGlossaries(forOriginalText: pack.seg.originalText, entries: glossaryEntries)
-            }
-        }()
-
         return MaskingContext(
             maskedSegments: maskedSegments,
             maskedPacks: maskedPacks,
             nameGlossariesPerSegment: nameGlossariesPerSegment,
+            segmentPieces: allSegmentPieces,
             engineTag: engine.tag
         )
     }
@@ -363,7 +377,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     pack: pack,
                     termMasker: termMasker,
                     nameGlossaries: maskingContext.nameGlossariesPerSegment[index],
-                    shouldNormalizeNames: !engine.maskPerson
+                    shouldNormalizeNames: true
                 )
                     
                 let hanCount = output.unicodeScalars.filter { $0.properties.isIdeographic }.count
@@ -382,6 +396,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     segmentID: originalSegment.id,
                     originalText: originalSegment.originalText,
                     translatedText: finalResult.text,
+                    preNormalizedText: result.text,
                     engineID: finalResult.engine.rawValue,
                     sequence: seq
                 )
@@ -441,34 +456,38 @@ final class DefaultTranslationRouter: TranslationRouter {
         nameGlossaries: [TermMasker.NameGlossary],
         shouldNormalizeNames: Bool
     ) -> String {
-//        print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
+        print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
         var output = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
 //        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
         
-        output = termMasker.normalizeEntitiesAndParticles(
-            in: output,
-            locksByToken: pack.locks,
-            names: [],
-            mode: .tokensOnly
-        )
-//        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
+        output = termMasker.normalizeVariantsAndParticles(in: output, entries: nameGlossaries)
+        output = termMasker.normalizeTokensAndParticles(in: output, locksByToken: pack.locks)
         
-        output = termMasker.unlockTermsSafely(
-            output,
-            locks: pack.locks
-        )
-//        print("[T] router.processStream [\(pack.seg.id)] UNLOCKED TERMS RESULT: \(output)")
-
-        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
-            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
-            output = termMasker.normalizeEntitiesAndParticles(
-                in: output,
-                locksByToken: [:],
-                names: nameGlossaries,
-                mode: .namesOnly
-            )
-//            print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES 2 RESULT: \(output)")
-        }
+//        // 마스킹된 토큰을 언마스킹하고 조사를 보정한다.
+//        output = termMasker.normalizeEntitiesAndParticles(
+//            in: output,
+//            locksByToken: pack.locks,
+//            names: [],
+//            mode: .tokensOnly
+//        )
+////        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES RESULT: \(output)")
+//        
+//        output = termMasker.unlockTermsSafely(
+//            output,
+//            locks: pack.locks
+//        )
+////        print("[T] router.processStream [\(pack.seg.id)] UNLOCKED TERMS RESULT: \(output)")
+//
+//        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
+//            // 인물명에 마스킹을 하지 않았으므로 표기 정규화 필요
+//            output = termMasker.normalizeEntitiesAndParticles(
+//                in: output,
+//                locksByToken: [:],
+//                names: nameGlossaries,
+//                mode: .namesOnly
+//            )
+////            print("[T] router.processStream [\(pack.seg.id)] NORMALIZED ENTITIES AND PARTICLES 2 RESULT: \(output)")
+//        }
 
         if pack.locks.values.count == 1,
            let target = pack.locks.values.first?.target
@@ -485,6 +504,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         let maskedSegments: [Segment]
         let maskedPacks: [MaskedPack]
         let nameGlossariesPerSegment: [[TermMasker.NameGlossary]]
+        let segmentPieces: [SegmentPieces]
         let engineTag: EngineTag
     }
 

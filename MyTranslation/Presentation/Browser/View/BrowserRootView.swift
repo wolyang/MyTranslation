@@ -40,9 +40,8 @@ struct BrowserRootView: View {
     /// 브라우저를 루트 화면으로 구성하고 용어집/설정을 시트로 연결합니다.
     var body: some View {
         content
-            .sheet(isPresented: $isGlossaryPresented) {
+            .fullScreenCover(isPresented: $isGlossaryPresented) {
                 GlossaryHost(modelContext: modelContext)
-                    .presentationDetents([.large])
             }
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView()
@@ -73,10 +72,10 @@ struct BrowserRootView: View {
                 }
                 .presentationDetents([.medium, .large])
             }
-            .task {
-                // 앱 시작 후 한 번 시드 시도
-                GlossarySeeder.seedIfNeeded(modelContext)
-            }
+//            .task {
+//                // 앱 시작 후 한 번 시드 시도
+//                GlossarySeeder.seedIfNeeded(modelContext)
+//            }
     }
 
     /// 화면 크기에 따라 iPad는 사이드바, iPhone은 시트를 구성하는 컨테이너 뷰입니다.
