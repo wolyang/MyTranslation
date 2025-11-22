@@ -29,8 +29,8 @@ extension Glossary.SDModel {
     }
     
     struct ImportSyncPolicy: Sendable {
-        var removeMissingTerms = true
-        var removeMissingPatterns = true
+        var removeMissingTerms = false
+        var removeMissingPatterns = false
         var termDeletionFilter: (@Sendable (String) -> Bool)? = nil
         var patternDeletionFilter: (@Sendable (String) -> Bool)? = nil
     }
