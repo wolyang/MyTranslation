@@ -8,11 +8,11 @@ struct SheetsImportPreviewView: View {
     var body: some View {
         VStack(spacing: 24) {
             if let report = viewModel.dryRunReport {
-                VStack(alignment: .leading, spacing: 12) {
-                    summaryRow(title: "용어", bucket: report.terms)
-                    summaryRow(title: "패턴", bucket: report.patterns)
+                VStack(alignment: .leading, spacing: 16) {
+                    statCard(title: "용어", bucket: report.terms)
+                    statCard(title: "패턴", bucket: report.patterns)
                 }
-                .padding()
+                .padding(.horizontal)
             } else {
                 Text("선택된 탭이 없습니다.")
             }
@@ -48,13 +48,33 @@ struct SheetsImportPreviewView: View {
         }
     }
 
-    private func summaryRow(title: String, bucket: Glossary.SDModel.ImportDryRunReport.Bucket) -> some View {
-        HStack {
+    private func statCard(title: String, bucket: Glossary.SDModel.ImportDryRunReport.Bucket) -> some View {
+        let total = bucket.newCount + bucket.updateCount + bucket.unchangedCount + bucket.deleteCount
+        return VStack(alignment: .leading, spacing: 12) {
             Text(title)
+                .font(.headline)
+            VStack(alignment: .leading, spacing: 8) {
+                statRow(title: "전체", value: total, systemImage: "number", color: .primary)
+                statRow(title: "신규", value: bucket.newCount, systemImage: "plus.circle", color: .green)
+                statRow(title: "갱신", value: bucket.updateCount, systemImage: "arrow.triangle.2.circlepath", color: .blue)
+                statRow(title: "변경없음", value: bucket.unchangedCount, systemImage: "equal", color: .secondary)
+                statRow(title: "삭제", value: bucket.deleteCount, systemImage: "trash", color: .red)
+            }
+            .font(.footnote)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func statRow(title: String, value: Int, systemImage: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Label(title, systemImage: systemImage)
+                .foregroundStyle(color)
             Spacer()
-            Text("신규 \(bucket.newCount) / 갱신 \(bucket.updateCount) / 삭제 \(bucket.deleteCount)")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            Text("\(value)")
+                .foregroundStyle(color == .primary ? .primary : color)
         }
     }
 }
