@@ -116,11 +116,11 @@ enum GlossaryAddCandidateUtil {
             if let before = remainingMatchedBeforeAnchor[source], before > 0 {
                 remainingMatchedBeforeAnchor[source] = before - 1
                 remainingMatchedCount[source] = max((remainingMatchedCount[source] ?? 0) - 1, 0)
-                return []
+                return [GlossaryAddSheetState.UnmatchedTermCandidate]()
             }
             if let count = remainingMatchedCount[source], count > 0 {
                 remainingMatchedCount[source] = count - 1
-                return []
+                return [GlossaryAddSheetState.UnmatchedTermCandidate]()
             }
 
             let entry = termRange.entry
