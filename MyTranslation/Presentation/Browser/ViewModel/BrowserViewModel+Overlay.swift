@@ -30,7 +30,8 @@ extension BrowserViewModel {
                     title: overlaySectionTitle(for: engine),
                     text: cached,
                     isLoading: cached == nil,
-                    errorMessage: nil
+                    errorMessage: nil,
+                    highlightMetadata: cachedTranslationPayload(for: segment.id, engineID: engineID)?.highlightMetadata
                 )
             )
             if cached == nil {
@@ -43,10 +44,12 @@ extension BrowserViewModel {
             selectedText: segment.originalText,
             improvedText: nil,
             anchor: anchor,
+            primaryEngineID: primaryEngine.rawValue,
             primaryEngineTitle: overlaySectionTitle(for: primaryEngine),
             primaryFinalText: primaryPayload?.translatedText,
             primaryPreNormalizedText: primaryPayload?.preNormalizedText,
             translations: translations,
+            primaryHighlightMetadata: primaryPayload?.highlightMetadata,
             showsOriginalSection: showOriginal == false
         )
 
@@ -201,7 +204,8 @@ private extension BrowserViewModel {
                         segmentID: segment.id,
                         engineID: engine.rawValue,
                         text: nil,
-                        errorMessage: "번역을 가져오는 중 오류가 발생했습니다."
+                        errorMessage: "번역을 가져오는 중 오류가 발생했습니다.",
+                        highlightMetadata: nil
                     )
                 }
             }
@@ -231,16 +235,26 @@ private extension BrowserViewModel {
                     segmentID: segmentID,
                     engineID: engineID,
                     text: nil,
-                    errorMessage: "번역 결과가 비어 있습니다."
+                    errorMessage: "번역 결과가 비어 있습니다.",
+                    highlightMetadata: segment.highlightMetadata
                 )
                 return
             }
             storeOverlayTranslationPayload(segment)
+            if var state = overlayState, state.segmentID == segmentID {
+                if state.primaryEngineID == engineID {
+                    state.primaryFinalText = segment.translatedText
+                    state.primaryPreNormalizedText = segment.preNormalizedText
+                    state.primaryHighlightMetadata = segment.highlightMetadata
+                }
+                overlayState = state
+            }
             updateOverlayTranslation(
                 segmentID: segmentID,
                 engineID: engineID,
                 text: text,
-                errorMessage: nil
+                errorMessage: nil,
+                highlightMetadata: segment.highlightMetadata
             )
         case let .failed(failedSegmentID, _):
             guard failedSegmentID == segmentID else { return }
@@ -248,7 +262,8 @@ private extension BrowserViewModel {
                 segmentID: segmentID,
                 engineID: engineID,
                 text: nil,
-                errorMessage: "번역에 실패했습니다."
+                errorMessage: "번역에 실패했습니다.",
+                highlightMetadata: nil
             )
         default:
             break
@@ -260,13 +275,15 @@ private extension BrowserViewModel {
         segmentID: String,
         engineID: TranslationEngineID,
         text: String?,
-        errorMessage: String?
+        errorMessage: String?,
+        highlightMetadata: TermHighlightMetadata?
     ) {
         guard var state = overlayState, state.segmentID == segmentID else { return }
         guard let index = state.translations.firstIndex(where: { $0.engineID == engineID }) else { return }
         state.translations[index].text = text
         state.translations[index].isLoading = false
         state.translations[index].errorMessage = errorMessage
+        state.translations[index].highlightMetadata = highlightMetadata
         overlayState = state
     }
 

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UIKit
 import SwiftData
 import Testing
 @testable import MyTranslation
@@ -378,6 +379,33 @@ struct MyTranslationTests {
         for range in result.ranges {
             #expect(range.type == .masked)
         }
+    }
+
+    @Test
+    func highlightedTextBuildsAttributedString() {
+        let text = "Hello Choigangja"
+        let entry = GlossaryEntry(
+            source: "최강자",
+            target: "Choigangja",
+            variants: [],
+            preMask: true,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "e3")
+        )
+        let start = text.index(text.startIndex, offsetBy: 6)
+        let end = text.endIndex
+        let range = start..<end
+
+        let highlighted = HighlightedText(
+            text: text,
+            highlights: [TermRange(entry: entry, range: range, type: .masked)]
+        )
+
+        #expect(highlighted.plainText == text)
+        let nsRange = NSRange(location: 6, length: text.distance(from: start, to: end))
+        let color = highlighted.attributedString.attribute(.backgroundColor, at: nsRange.location, effectiveRange: nil) as? UIColor
+        #expect(color != nil)
     }
 
     @Test
