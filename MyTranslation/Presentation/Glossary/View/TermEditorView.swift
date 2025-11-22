@@ -5,7 +5,7 @@ struct TermEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var viewModel: TermEditorViewModel
     @State private var showingTermPicker = false
-    @State private var availableTerms: [(key: String, target: String)] = []
+    @State private var availableTerms: [TermPickerItem] = []
 
     var body: some View {
         NavigationStack {

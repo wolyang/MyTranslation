@@ -24,6 +24,18 @@ struct BrowserRootView: View {
     @State private var isFavoritesManagerPresented: Bool = false
     /// 오버레이 패널의 화면 내 위치입니다.
     @State private var overlayPanelFrame: CGRect = .null
+    /// 오버레이 → Glossary 추가 시트를 제어합니다.
+    @State private var isTermPickerPresented: Bool = false
+    /// TermPicker에서 표시할 전체 용어 목록입니다.
+    @State private var termPickerItems: [TermPickerItem] = []
+    /// 시트에서 선택한 텍스트(variants) 보관용입니다.
+    @State private var pendingVariantText: String? = nil
+    /// TermEditorView를 풀스크린으로 노출하기 위한 뷰모델입니다.
+    @State private var activeTermEditorViewModel: TermEditorViewModel? = nil
+    /// TermPicker가 닫힌 뒤 열릴 TermEditorViewModel 임시 저장소입니다.
+    @State private var pendingTermEditorViewModel: TermEditorViewModel? = nil
+    /// Glossary 추가 관련 오류 메시지입니다.
+    @State private var glossaryErrorMessage: String? = nil
 
     init(container: AppContainer) {
         _vm = StateObject(
@@ -72,6 +84,48 @@ struct BrowserRootView: View {
                     }
                 }
                 .presentationDetents([.medium, .large])
+            }
+            .sheet(item: $vm.glossaryAddSheet) { sheetState in
+                GlossaryAddSheet(
+                    state: sheetState,
+                    onAddNew: { openTermEditor(from: sheetState) },
+                    onAppendToExisting: { prepareTermPicker(for: sheetState) },
+                    onCancel: {
+                        pendingVariantText = nil
+                        vm.glossaryAddSheet = nil
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(
+                isPresented: $isTermPickerPresented,
+                onDismiss: {
+                    Log.info("on TermPickerDismiss")
+                    if let pending = pendingTermEditorViewModel {
+                        Log.info("pendingTermEditorViewModel exist")
+                        pendingTermEditorViewModel = nil
+                        activeTermEditorViewModel = pending
+                    } else {
+                        Log.info("pendingTermEditorViewModel not exist")
+                    }
+                },
+                content: {
+                    TermPickerSheet(terms: termPickerItems) { termKey in
+                        appendVariant(to: termKey)
+                    }
+                    .presentationDetents([.medium, .large])
+                }
+            )
+            .fullScreenCover(isPresented: Binding(get: { activeTermEditorViewModel != nil }, set: { if !$0 { activeTermEditorViewModel = nil } })) {
+                if let editorVM = activeTermEditorViewModel {
+                    TermEditorView(viewModel: editorVM)
+                }
+            }
+            .alert("오류", isPresented: Binding(get: { glossaryErrorMessage != nil }, set: { if !$0 { glossaryErrorMessage = nil } })) {
+                Button("확인", role: .cancel) { glossaryErrorMessage = nil }
+            } message: {
+                Text(glossaryErrorMessage ?? "")
             }
 //            .task {
 //                // 앱 시작 후 한 번 시드 시도
@@ -200,6 +254,9 @@ struct BrowserRootView: View {
                         state: overlayState,
                         onAsk: { Task { await vm.askAIForSelected() } },
                         onClose: { vm.closeOverlay() },
+                        onAddToGlossary: { text, range, section in
+                            vm.onGlossaryAddRequested(selectedText: text, selectedRange: range, section: section)
+                        },
                         onFrameChange: { frame in overlayPanelFrame = frame }
                     )
                 }
@@ -275,5 +332,65 @@ struct BrowserRootView: View {
         /// 즐겨찾기에서 선택한 URL을 로드하고 번역 스트림을 이어갑니다.
         vm.load(urlString: link.url)
         triggerTranslationSession()
+    }
+
+    private func openTermEditor(from state: GlossaryAddSheetState) {
+        do {
+            let editor = try TermEditorViewModel(context: modelContext, termID: nil, patternID: nil)
+            let trimmed = state.selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch state.selectionKind {
+            case .original:
+                editor.generalDraft.sourcesOK = trimmed
+            case .translated:
+                editor.generalDraft.variants = trimmed
+            }
+            activeTermEditorViewModel = editor
+            vm.glossaryAddSheet = nil
+        } catch {
+            glossaryErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func prepareTermPicker(for state: GlossaryAddSheetState) {
+        pendingVariantText = state.selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let tempVM = try TermEditorViewModel(context: modelContext, termID: nil, patternID: nil)
+            termPickerItems = try tempVM.fetchAllTermsForPicker()
+            vm.glossaryAddSheet = nil
+            isTermPickerPresented = true
+        } catch {
+            glossaryErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func appendVariant(to termKey: String) {
+        Log.info("pendingVariantText: \(String(describing: pendingVariantText)), appendVariant to \(termKey)")
+        guard let variant = pendingVariantText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              variant.isEmpty == false else {
+            Log.info("cancelled to appendVariant")
+            return
+        }
+        do {
+            let predicate = #Predicate<Glossary.SDModel.SDTerm> { $0.key == termKey }
+            var descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(predicate: predicate)
+            descriptor.includePendingChanges = true
+            if let term = try modelContext.fetch(descriptor).first {
+                Log.info("term: \(term)")
+                let editor = try TermEditorViewModel(context: modelContext, termID: term.persistentModelID, patternID: nil)
+                var variants = term.variants
+                if variants.contains(variant) == false {
+                    variants.append(variant)
+                }
+                editor.generalDraft.variants = variants.joined(separator: ";")
+                vm.glossaryAddSheet = nil
+                pendingVariantText = nil
+                pendingTermEditorViewModel = editor
+                Log.info("pendingTermEditorViewModel set")
+                isTermPickerPresented = false
+            }
+        } catch {
+            Log.error(error.localizedDescription)
+            glossaryErrorMessage = error.localizedDescription
+        }
     }
 }

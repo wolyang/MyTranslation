@@ -12,6 +12,7 @@ struct OverlayPanelContainer: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onClose: () -> Void
+    let onAddToGlossary: (String, NSRange, OverlayTextSection) -> Void
     var onFrameChange: (CGRect) -> Void = { _ in }
 
     var body: some View {
@@ -19,6 +20,7 @@ struct OverlayPanelContainer: View {
             state: state,
             onAsk: onAsk,
             onClose: onClose,
+            onAddToGlossary: onAddToGlossary,
             onFrameChange: onFrameChange
         )
         .onDisappear {
@@ -31,6 +33,7 @@ private struct OverlayPanelPositioner: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onClose: () -> Void
+    let onAddToGlossary: (String, NSRange, OverlayTextSection) -> Void
     let onFrameChange: (CGRect) -> Void
 
     @State private var panelSize: CGSize = .zero
@@ -47,7 +50,8 @@ private struct OverlayPanelPositioner: View {
             OverlayPanelView(
                 state: state,
                 onAsk: onAsk,
-                onClose: onClose
+                onClose: onClose,
+                onAddToGlossary: onAddToGlossary
             )
             .frame(maxWidth: widthLimit, alignment: .leading)
             .background(
@@ -100,6 +104,7 @@ private struct OverlayPanelView: View {
     let state: BrowserViewModel.OverlayState
     let onAsk: () -> Void
     let onClose: () -> Void
+    let onAddToGlossary: (String, NSRange, OverlayTextSection) -> Void
 
     @State private var contentWidth: CGFloat = .zero
     @State private var textSize: CGSize = .zero
@@ -220,7 +225,9 @@ private struct OverlayPanelView: View {
                     isLoading: false,
                     errorMessage: nil,
                     availableWidth: contentWidth,
-                    isSelectable: true
+                    isSelectable: true,
+                    sectionType: .original,
+                    onAddToGlossary: onAddToGlossary
                 )
             }
             if let improved = state.improvedText, improved.isEmpty == false {
@@ -230,7 +237,9 @@ private struct OverlayPanelView: View {
                     isLoading: false,
                     errorMessage: nil,
                     availableWidth: contentWidth,
-                    isSelectable: true
+                    isSelectable: true,
+                    sectionType: .improved,
+                    onAddToGlossary: onAddToGlossary
                 )
             }
             TranslationSectionView(
@@ -239,7 +248,9 @@ private struct OverlayPanelView: View {
                 isLoading: false,
                 errorMessage: nil,
                 availableWidth: contentWidth,
-                isSelectable: true
+                isSelectable: true,
+                sectionType: .primaryFinal,
+                onAddToGlossary: onAddToGlossary
             )
             if isDebugModeEnabled {
                 TranslationSectionView(
@@ -248,7 +259,9 @@ private struct OverlayPanelView: View {
                     isLoading: false,
                     errorMessage: nil,
                     availableWidth: contentWidth,
-                    isSelectable: true
+                    isSelectable: true,
+                    sectionType: .primaryPreNormalized,
+                    onAddToGlossary: onAddToGlossary
                 )
             }
             ForEach(state.translations) { translation in
@@ -258,7 +271,9 @@ private struct OverlayPanelView: View {
                     isLoading: translation.isLoading,
                     errorMessage: translation.errorMessage,
                     availableWidth: contentWidth,
-                    isSelectable: true
+                    isSelectable: true,
+                    sectionType: .alternative(engineID: translation.engineID),
+                    onAddToGlossary: onAddToGlossary
                 )
             }
         }
@@ -319,6 +334,8 @@ private struct TranslationSectionView: View {
     let errorMessage: String?
     let availableWidth: CGFloat
     let isSelectable: Bool
+    var sectionType: OverlayTextSection?
+    var onAddToGlossary: ((String, NSRange, OverlayTextSection) -> Void)?
 
     enum SectionContent {
         case plain(String?)
@@ -349,7 +366,12 @@ private struct TranslationSectionView: View {
                 switch content {
                 case .plain(let text):
                     if let text, text.isEmpty == false {
-                        SelectableTextView(text: text)
+                        let handler = isSelectable ? onAddToGlossary : nil
+                        SelectableTextView(
+                            text: text,
+                            section: sectionType ?? .primaryFinal,
+                            onAddToGlossary: handler
+                        )
                             .frame(width: availableWidth, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -357,9 +379,12 @@ private struct TranslationSectionView: View {
                     }
                 case .highlighted(let highlighted):
                     if let highlighted {
+                        let handler = isSelectable ? onAddToGlossary : nil
                         SelectableTextView(
                             text: highlighted.plainText,
-                            attributedText: highlighted.attributedString
+                            attributedText: highlighted.attributedString,
+                            section: sectionType ?? .primaryFinal,
+                            onAddToGlossary: handler
                         )
                             .frame(width: availableWidth, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
@@ -385,11 +410,15 @@ private struct SelectableTextView: UIViewRepresentable {
     var textStyle: UIFont.TextStyle = .callout
     var textColor: UIColor = .label
     var adjustsFontForContentSizeCategory: Bool = true
+    var section: OverlayTextSection = .primaryFinal
+    var onAddToGlossary: ((String, NSRange, OverlayTextSection) -> Void)?
 
     func makeUIView(context: Context) -> SelectableUITextView {
         let textView = SelectableUITextView()
         configureStaticProperties(of: textView)
         applyContent(to: textView)
+        textView.section = section
+        textView.onAddToGlossary = onAddToGlossary
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
         return textView
@@ -397,6 +426,8 @@ private struct SelectableTextView: UIViewRepresentable {
 
     func updateUIView(_ uiView: SelectableUITextView, context: Context) {
         applyContent(to: uiView)
+        uiView.section = section
+        uiView.onAddToGlossary = onAddToGlossary
         uiView.invalidateIntrinsicContentSize()
     }
 
@@ -451,6 +482,8 @@ private struct SelectableTextView: UIViewRepresentable {
     final class SelectableUITextView: UITextView {
         var constrainedWidth: CGFloat?
         private var lastWidth: CGFloat = 0
+        var section: OverlayTextSection = .primaryFinal
+        var onAddToGlossary: ((String, NSRange, OverlayTextSection) -> Void)?
 
         override func layoutSubviews() {
             super.layoutSubviews()
@@ -474,6 +507,30 @@ private struct SelectableTextView: UIViewRepresentable {
                 return false
             }
             return super.canPerformAction(action, withSender: sender)
+        }
+        @available(iOS 16.0, *)
+        override func editMenu(
+            for textRange: UITextRange,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            guard let handler = onAddToGlossary else {
+                return super.editMenu(for: textRange, suggestedActions: suggestedActions)
+            }
+            let location = offset(from: beginningOfDocument, to: textRange.start)
+            let length = offset(from: textRange.start, to: textRange.end)
+            let nsRange = NSRange(location: location, length: length)
+            guard nsRange.length > 0,
+                  let text = text,
+                  let swiftRange = Range(nsRange, in: text) else {
+                return super.editMenu(for: textRange, suggestedActions: suggestedActions)
+            }
+            let selected = String(text[swiftRange])
+            let range = nsRange
+            let action = UIAction(title: "용어집에 추가", image: UIImage(systemName: "book.closed")) { [weak self] _ in
+                guard let self else { return }
+                handler(selected, range, self.section)
+            }
+            return UIMenu(children: suggestedActions + [action])
         }
     }
 }
