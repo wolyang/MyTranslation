@@ -34,6 +34,10 @@ extension Glossary.SDModel {
         var termDeletionFilter: (@Sendable (String) -> Bool)? = nil
         var patternDeletionFilter: (@Sendable (String) -> Bool)? = nil
     }
+
+    private enum Defaults {
+        static let groupLabel = "그룹"
+    }
     
     @MainActor
     final class GlossaryUpserter {
@@ -77,20 +81,10 @@ extension Glossary.SDModel {
             let incomingTerms = deduplicatedMap(bundle.terms, key: \JSTerm.key)
             let incomingPatterns = deduplicatedMap(bundle.patterns, key: \JSPattern.name)
 
-            var tNew = 0
-            var tUpd = 0
-            var tSame = 0
-            for (key, term) in incomingTerms {
-                if let existing = existingTermSnapshots[key] {
-                    if existing == termSnapshot(of: term) {
-                        tSame += 1
-                    } else {
-                        tUpd += 1
-                    }
-                } else {
-                    tNew += 1
-                }
-            }
+            let termChanges = computeTermChanges(
+                incoming: incomingTerms,
+                existing: existingTermSnapshots
+            )
             let tDel: Int
             if sync.removeMissingTerms {
                 let candidates = Set(existingTermSnapshots.keys).subtracting(incomingTerms.keys)
@@ -138,7 +132,12 @@ extension Glossary.SDModel {
             if !termCollisions.isEmpty { warns.append("Duplicate Term keys in import: \(termCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             if !patternCollisions.isEmpty { warns.append("Duplicate Pattern ids in import: \(patternCollisions.map{ "\($0.key)×\($0.count)" }.joined(separator: ", "))") }
             return ImportDryRunReport(
-                terms: .init(newCount: tNew, updateCount: tUpd, unchangedCount: tSame, deleteCount: tDel),
+                terms: .init(
+                    newCount: termChanges.new,
+                    updateCount: termChanges.updated,
+                    unchangedCount: termChanges.unchanged,
+                    deleteCount: tDel
+                ),
                 patterns: .init(newCount: pNew, updateCount: pUpd, unchangedCount: pSame, deleteCount: pDel),
                 warnings: warns,
                 termKeyCollisions: termCollisions,
@@ -154,7 +153,7 @@ extension Glossary.SDModel {
             var activationMap: [String: [String]] = [:]  // termKey → activatorKeys
             for src in items {
                 // 입력값 정제(공백 제거 후 중복 제거)
-                let trimmedActivators = Array(LinkedHashSet(src.activatedByKeys ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+                let trimmedActivators = normalizedActivatorKeys(src.activatedByKeys, termKey: src.key)
 
                 let dst: SDTerm
                 if let existing = map[src.key] {
@@ -352,7 +351,7 @@ extension Glossary.SDModel {
             let trimmedDisplay = js.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayName = trimmedDisplay.isEmpty ? js.name : trimmedDisplay
             let trimmedLabel = js.groupLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let groupLabel = trimmedLabel.isEmpty ? "그룹" : trimmedLabel
+            let groupLabel = trimmedLabel.isEmpty ? Defaults.groupLabel : trimmedLabel
             if let meta = metaMap[js.name] {
                 if merge == .overwrite {
                     meta.displayName = displayName
@@ -368,7 +367,7 @@ extension Glossary.SDModel {
                     }
                     if meta.roles.isEmpty { meta.roles = js.roles }
                     meta.grouping = grouping
-                    if meta.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || meta.groupLabel == "그룹" {
+                    if meta.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || meta.groupLabel == Defaults.groupLabel {
                         meta.groupLabel = groupLabel
                     }
                 }
@@ -527,6 +526,50 @@ extension Glossary.SDModel {
             return out
         }
 
+        private func computeTermChanges(
+            incoming: [String: JSTerm],
+            existing: [String: TermSnapshot]
+        ) -> (new: Int, updated: Int, unchanged: Int) {
+            var newCount = 0
+            var updatedCount = 0
+            var unchangedCount = 0
+
+            for (key, term) in incoming {
+                if let snapshot = existing[key] {
+                    if snapshot == termSnapshot(of: term) {
+                        unchangedCount += 1
+                    } else {
+                        updatedCount += 1
+                    }
+                } else {
+                    newCount += 1
+                }
+            }
+
+            return (newCount, updatedCount, unchangedCount)
+        }
+
+        private func normalizedActivatorKeys(_ rawKeys: [String]?, termKey: String) -> [String] {
+            let keys = rawKeys ?? []
+            var filtered: [String] = []
+            var set = LinkedHashSet<String>()
+
+            for key in keys {
+                let trimmed = key.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty {
+                    filtered.append(key)
+                    continue
+                }
+                _ = set.insert(trimmed)
+            }
+
+            if !filtered.isEmpty {
+                print("[Import][WARN] Ignored empty activator keys for term \(termKey): \(filtered)")
+            }
+
+            return Array(set)
+        }
+
         private func termSnapshot(of term: SDTerm) -> TermSnapshot {
             let sourceSet = Set(term.sources.map { SourceSnapshot(text: $0.text, prohibitStandalone: $0.prohibitStandalone) })
             let componentSet = Set(term.components.map { comp in
@@ -564,7 +607,7 @@ extension Glossary.SDModel {
                     tgtTplIdx: comp.tgtTplIdx
                 )
             })
-            let activators = Set((term.activatedByKeys ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+            let activators = Set(normalizedActivatorKeys(term.activatedByKeys, termKey: term.key))
             return TermSnapshot(
                 target: term.target,
                 variants: orderedUnique(term.variants),
@@ -592,7 +635,7 @@ extension Glossary.SDModel {
                 displayName: meta?.displayName ?? pattern.name,
                 roles: meta?.roles ?? [],
                 grouping: meta?.grouping ?? .optional,
-                groupLabel: meta?.groupLabel ?? "그룹",
+                groupLabel: meta?.groupLabel ?? Defaults.groupLabel,
                 defaultProhibitStandalone: meta?.defaultProhibitStandalone ?? true,
                 defaultIsAppellation: meta?.defaultIsAppellation ?? false,
                 defaultPreMask: meta?.defaultPreMask ?? false
@@ -603,8 +646,8 @@ extension Glossary.SDModel {
             let trimmedDisplay = pattern.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayName = trimmedDisplay.isEmpty ? pattern.name : trimmedDisplay
             let trimmedLabel = pattern.groupLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let groupLabel = trimmedLabel.isEmpty ? "그룹" : trimmedLabel
-            PatternSnapshot(
+            let groupLabel = trimmedLabel.isEmpty ? Defaults.groupLabel : trimmedLabel
+            return PatternSnapshot(
                 name: pattern.name,
                 left: selectorSnapshot(pattern.left),
                 right: selectorSnapshot(pattern.right),
@@ -653,6 +696,8 @@ extension Glossary.SDModel {
             return Dictionary(uniqueKeysWithValues: metaList.map { ($0.name, $0) })
         }
 
+        /// 변경 감지를 위해 Term의 전체 상태를 캡처합니다.
+        /// dry-run 시 기존 데이터와 비교하여 실제 변경 여부를 판단합니다.
         private struct TermSnapshot: Hashable {
             let target: String
             let variants: [String]
