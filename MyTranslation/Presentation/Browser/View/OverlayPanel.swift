@@ -106,6 +106,7 @@ private struct OverlayPanelView: View {
 
     private var primaryFinalTitle: String { "\(state.primaryEngineTitle) 최종 번역" }
     private var primaryPreNormalizedTitle: String { "\(state.primaryEngineTitle) 정규화 전" }
+    private var isDebugModeEnabled: Bool { DebugConfig.isDebugModeEnabled }
 
     private var measurementText: String {
         var blocks: [String] = []
@@ -116,7 +117,9 @@ private struct OverlayPanelView: View {
             blocks.append(sectionMeasurementText(title: "AI 개선 번역", body: improved))
         }
         blocks.append(sectionMeasurementText(title: primaryFinalTitle, body: displayText(for: state.primaryFinalText)))
-        blocks.append(sectionMeasurementText(title: primaryPreNormalizedTitle, body: displayText(for: state.primaryPreNormalizedText)))
+        if isDebugModeEnabled {
+            blocks.append(sectionMeasurementText(title: primaryPreNormalizedTitle, body: displayText(for: state.primaryPreNormalizedText)))
+        }
         for translation in state.translations {
             let body = displayText(for: translation)
             blocks.append(sectionMeasurementText(title: translation.title, body: body))
@@ -222,13 +225,15 @@ private struct OverlayPanelView: View {
                 errorMessage: nil,
                 availableWidth: contentWidth
             )
-            TranslationSectionView(
-                title: primaryPreNormalizedTitle,
-                text: state.primaryPreNormalizedText,
-                isLoading: false,
-                errorMessage: nil,
-                availableWidth: contentWidth
-            )
+            if isDebugModeEnabled {
+                TranslationSectionView(
+                    title: primaryPreNormalizedTitle,
+                    text: state.primaryPreNormalizedText,
+                    isLoading: false,
+                    errorMessage: nil,
+                    availableWidth: contentWidth
+                )
+            }
             ForEach(state.translations) { translation in
                 TranslationSectionView(
                     title: translation.title,
