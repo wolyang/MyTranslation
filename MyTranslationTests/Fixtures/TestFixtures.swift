@@ -31,7 +31,7 @@ enum TestFixtures {
             makeSegment(id: "zh1", text: "你好"),
             makeSegment(id: "zh2", text: "再见")
         ]
-    }
+    } // 다국어 마스킹/정규화 테스트 대비 예비 데이터
 
     static var sampleTranslationResults: [TranslationResult] {
         let now = Date()

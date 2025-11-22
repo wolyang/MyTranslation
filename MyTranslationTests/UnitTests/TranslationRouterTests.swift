@@ -23,13 +23,18 @@ struct TranslationRouterTests {
         return Glossary.Service(context: context)
     }
 
-    private func makeRouter(engine: MockTranslationEngine, cache: MockCacheStore) throws -> DefaultTranslationRouter {
+    private func makeRouter(
+        afm: MockTranslationEngine? = nil,
+        deepl: MockTranslationEngine? = nil,
+        google: MockTranslationEngine? = nil,
+        cache: MockCacheStore
+    ) throws -> DefaultTranslationRouter {
         let glossary = try makeGlossaryService()
         let postEditor = StubPostEditor()
         return DefaultTranslationRouter(
-            afm: engine,
-            deepl: engine,
-            google: engine,
+            afm: afm ?? MockTranslationEngine(tag: .afm),
+            deepl: deepl ?? MockTranslationEngine(tag: .deepl),
+            google: google ?? MockTranslationEngine(tag: .google),
             cache: cache,
             glossaryService: glossary,
             postEditor: postEditor,
@@ -42,7 +47,7 @@ struct TranslationRouterTests {
     func cacheHitReturnsCachedPayloadWithoutEngineCall() async throws {
         let engine = MockTranslationEngine(tag: .afm)
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
 
         let segment = TestFixtures.sampleSegments[0]
         let cachedResult = TestFixtures.sampleTranslationResults[0]
@@ -71,7 +76,7 @@ struct TranslationRouterTests {
     func cacheMissCallsEngineAndSavesResult() async throws {
         let engine = MockTranslationEngine(tag: .afm)
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
 
         let segment = TestFixtures.sampleSegments[0]
         let result = TestFixtures.makeTranslationResult(segmentID: segment.id, engine: .afm, text: "translated")
@@ -132,7 +137,7 @@ struct TranslationRouterTests {
     func streamingEmitsPartialFinalAndCompletedInOrder() async throws {
         let engine = MockTranslationEngine(tag: .afm)
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
         cache.shouldReturnNil = true
 
         let segments = Array(TestFixtures.sampleSegments.prefix(2))
@@ -174,7 +179,7 @@ struct TranslationRouterTests {
         let engine = MockTranslationEngine(tag: .afm)
         engine.configureTo(throwError: TranslationEngineError.emptySegments)
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
         cache.shouldReturnNil = true
 
         var events: [TranslationStreamEvent.Kind] = []
@@ -204,7 +209,7 @@ struct TranslationRouterTests {
             TestFixtures.makeTranslationResult(segmentID: TestFixtures.sampleSegments[0].id, engine: .afm, text: "slow")
         ]
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
         cache.shouldReturnNil = true
         let runID = UUID().uuidString
 
@@ -237,7 +242,7 @@ struct TranslationRouterTests {
             TestFixtures.makeTranslationResult(segmentID: TestFixtures.sampleSegments[0].id, engine: .afm, text: "v1")
         ]
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
 
         let segment = TestFixtures.sampleSegments[0]
         let optionsA = TestFixtures.makeTranslationOptions(style: .neutralDictionaryTone, applyGlossary: true)
@@ -272,7 +277,7 @@ struct TranslationRouterTests {
             [TestFixtures.makeTranslationResult(segmentID: "ghost", engine: .afm, text: "???")]
         ]
         let cache = MockCacheStore()
-        let router = try makeRouter(engine: engine, cache: cache)
+        let router = try makeRouter(afm: engine, cache: cache)
         cache.shouldReturnNil = true
 
         let segment = TestFixtures.sampleSegments[0]

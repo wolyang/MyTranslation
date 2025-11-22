@@ -13,7 +13,11 @@ final class DefaultCacheStore: CacheStore {
     private var store: [String: TranslationResult] = [:]
     func lookup(key: String) -> TranslationResult? { store[key] }
     func save(result: TranslationResult, forKey key: String) { store[key] = result }
-    func purge(before date: Date) { /* no-op for MVP */ }
+    func purge(before date: Date) {
+        store = store.filter { _, value in
+            value.createdAt >= date
+        }
+    }
     func clearAll() { store.removeAll() }
     func clearBySegmentIDs(_ ids: [String]) {
         guard ids.isEmpty == false else { return }

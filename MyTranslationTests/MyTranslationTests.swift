@@ -163,6 +163,7 @@ struct MyTranslationTests {
     func chooseJosaResolvesCompositeParticles() {
         let masker = TermMasker()
 
+        // 공백이 포함된 입력은 이미 결정된 형태를 유지해야 하므로 교체하지 않는다.
         #expect(masker.chooseJosa(for: "만가", baseHasBatchim: false, baseIsRieul: false) == "만이")
         #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 는")
         #expect(masker.chooseJosa(for: "만로", baseHasBatchim: true, baseIsRieul: true) == "만으로")

@@ -63,4 +63,22 @@ struct CacheStoreTests {
         #expect(cache.lookup(key: "seg3|afm|style") != nil)
         #expect(cache.lookup(key: "unparsed-key") != nil)
     }
+
+    @Test
+    func purgeRemovesEntriesOlderThanGivenDate() {
+        let cache = DefaultCacheStore()
+        let oldDate = Date(timeIntervalSinceNow: -3600)
+        let recentDate = Date()
+
+        let oldResult = TestFixtures.makeTranslationResult(segmentID: "old", text: "Old", createdAt: oldDate)
+        let newResult = TestFixtures.makeTranslationResult(segmentID: "new", text: "New", createdAt: recentDate)
+
+        cache.save(result: oldResult, forKey: "old-key")
+        cache.save(result: newResult, forKey: "new-key")
+
+        cache.purge(before: Date(timeIntervalSinceNow: -1800))
+
+        #expect(cache.lookup(key: "old-key") == nil)
+        #expect(cache.lookup(key: "new-key")?.text == "New")
+    }
 }
