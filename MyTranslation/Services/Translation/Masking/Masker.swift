@@ -1145,6 +1145,226 @@ public final class TermMasker {
         }
         return ids
     }
+
+    // MARK: - 순서 기반 정규화/언마스킹 헬퍼
+
+    private func makeCandidates(target: String, variants: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for candidate in [target] + variants {
+            guard candidate.isEmpty == false else { continue }
+            // 알파벳 variants는 대소문자 차이만 제거해 하나로 통합한다.
+            let key: String
+            if candidate.rangeOfCharacter(from: .letters) != nil {
+                key = candidate.lowercased()
+            } else {
+                key = candidate
+            }
+            if seen.insert(key).inserted {
+                result.append(candidate)
+            }
+        }
+        return result.sorted { $0.count > $1.count }
+    }
+
+    private func findNextCandidate(
+        in text: String,
+        candidates: [String],
+        startIndex: String.Index
+    ) -> (candidate: String, range: Range<String.Index>)? {
+        guard candidates.isEmpty == false else { return nil }
+
+        // 1) 순서 기반 검색부터 시도
+        for candidate in candidates {
+            if let range = text.range(of: candidate, options: [.caseInsensitive], range: startIndex..<text.endIndex) {
+                return (candidate, range)
+            }
+        }
+        // 2) 실패 시 전체 검색으로 완화 (Phase 3 전역 검색 전에 한 번만 수행)
+        for candidate in candidates {
+            if let range = text.range(of: candidate, options: [.caseInsensitive]) {
+                return (candidate, range)
+            }
+        }
+        return nil
+    }
+
+    private func replaceWithParticleFix(
+        in text: String,
+        range: Range<String.Index>,
+        replacement: String,
+        baseHasBatchim: Bool? = nil,
+        baseIsRieul: Bool? = nil
+    ) -> (text: String, nextIndex: String.Index) {
+        let nsRange = NSRange(range, in: text)
+        let replaced = (text as NSString).replacingCharacters(in: nsRange, with: replacement)
+
+        let canonicalRange = NSRange(location: nsRange.location, length: (replacement as NSString).length)
+        let jongInfo = hangulFinalJongInfo(replacement)
+        let (fixed, fixedRange) = fixParticles(
+            in: replaced,
+            afterCanonical: canonicalRange,
+            baseHasBatchim: baseHasBatchim ?? jongInfo.hasBatchim,
+            baseIsRieul: baseIsRieul ?? jongInfo.isRieul
+        )
+
+        if let swiftRange = Range(fixedRange, in: fixed) {
+            return (fixed, swiftRange.upperBound)
+        }
+        return (fixed, fixed.endIndex)
+    }
+
+    private static let tokenNumberRegex = try? NSRegularExpression(pattern: "(?i)E#(\\d+)")
+
+    private func sortedTokensByIndex(_ locks: [String: LockInfo]) -> [String] {
+        func tokenNumber(_ token: String) -> Int? {
+            guard let rx = Self.tokenNumberRegex else { return nil }
+            guard let r = rx.firstMatch(in: token, options: [], range: NSRange(location: 0, length: (token as NSString).length))?.range(at: 1) else {
+                return nil
+            }
+            let nsToken = token as NSString
+            return Int(nsToken.substring(with: r))
+        }
+
+        return locks.keys.sorted { lhs, rhs in
+            guard let l = tokenNumber(lhs), let r = tokenNumber(rhs) else {
+                return lhs < rhs
+            }
+            return l < r
+        }
+    }
+
+    // MARK: - 순서 기반 정규화/언마스킹
+
+    func normalizeWithOrder(
+        in text: String,
+        pieces: SegmentPieces,
+        nameGlossaries: [NameGlossary]
+    ) -> String {
+        guard text.isEmpty == false else { return text }
+        guard nameGlossaries.isEmpty == false else { return text }
+
+        var out = text.precomposedStringWithCompatibilityMapping
+        let nameByTarget = Dictionary(nameGlossaries.map { ($0.target, $0) }, uniquingKeysWith: { first, _ in first })
+        var processed: Set<Int> = []
+        var lastMatchUpperBound: String.Index? = nil
+        var phase2LastMatch: String.Index? = nil
+
+        let unmaskedTerms: [(index: Int, entry: GlossaryEntry)] = pieces.pieces.enumerated().compactMap { idx, piece in
+            if case .term(let entry) = piece, entry.preMask == false {
+                return (index: idx, entry: entry)
+            }
+            return nil
+        }
+
+        // Phase 1: target + variants 순서 기반 매칭
+        for (index, entry) in unmaskedTerms {
+            guard let name = nameByTarget[entry.target] else { continue }
+            let candidates = makeCandidates(target: name.target, variants: name.variants)
+            guard let matched = findNextCandidate(
+                in: out,
+                candidates: candidates,
+                startIndex: lastMatchUpperBound ?? out.startIndex
+            ) else { continue }
+
+            let result = replaceWithParticleFix(
+                in: out,
+                range: matched.range,
+                replacement: name.target
+            )
+            out = result.text
+            lastMatchUpperBound = result.nextIndex
+            processed.insert(index)
+        }
+
+        // Phase 2: Pattern fallback 순서 기반 매칭
+        for (index, entry) in unmaskedTerms where processed.contains(index) == false {
+            guard let name = nameByTarget[entry.target],
+                  let fallbacks = name.fallbackTerms else { continue }
+
+            for fallback in fallbacks {
+                let candidates = makeCandidates(target: fallback.target, variants: fallback.variants)
+                guard let matched = findNextCandidate(
+                    in: out,
+                    candidates: candidates,
+                    startIndex: phase2LastMatch ?? out.startIndex
+                ) else { continue }
+
+                let result = replaceWithParticleFix(
+                    in: out,
+                    range: matched.range,
+                    replacement: fallback.target
+                )
+                out = result.text
+                phase2LastMatch = result.nextIndex
+                processed.insert(index)
+                break
+            }
+        }
+
+        // Phase 3: 전역 검색 Fallback (기존 로직 재사용)
+        let remainingTargets = Set(
+            unmaskedTerms
+                .filter { processed.contains($0.index) == false }
+                .map { $0.entry.target }
+        )
+        let remainingGlossaries = nameGlossaries.filter { remainingTargets.contains($0.target) }
+        if remainingGlossaries.isEmpty == false {
+            out = normalizeVariantsAndParticles(in: out, entries: remainingGlossaries)
+        }
+
+        return out
+    }
+
+    func unmaskWithOrder(
+        in text: String,
+        pieces: SegmentPieces,
+        locksByToken: [String: LockInfo]
+    ) -> String {
+        guard text.isEmpty == false else { return text }
+        guard locksByToken.isEmpty == false else { return text }
+
+        var out = text.precomposedStringWithCompatibilityMapping
+        let tokensInOrder = sortedTokensByIndex(locksByToken)
+        var tokenCursor: Int = 0
+        var lastMatchUpperBound: String.Index? = nil
+
+        let maskedTerms: [GlossaryEntry] = pieces.pieces.compactMap { piece in
+            if case .term(let entry) = piece, entry.preMask {
+                return entry
+            }
+            return nil
+        }
+
+        while tokenCursor < maskedTerms.count, tokenCursor < tokensInOrder.count {
+            let token = tokensInOrder[tokenCursor]
+            tokenCursor += 1
+            guard let lock = locksByToken[token] else { continue }
+
+            let start = lastMatchUpperBound ?? out.startIndex
+            let range = out.range(of: token, options: [], range: start..<out.endIndex)
+                ?? out.range(of: token, options: [])
+            guard let tokenRange = range else { continue }
+
+            let result = replaceWithParticleFix(
+                in: out,
+                range: tokenRange,
+                replacement: lock.target,
+                baseHasBatchim: lock.endsWithBatchim,
+                baseIsRieul: lock.endsWithRieul
+            )
+            out = result.text
+            lastMatchUpperBound = result.nextIndex
+        }
+
+        // 토큰 순서가 어긋난 경우 전역 검색으로 재시도 (아직 처리되지 않은 토큰만)
+        let processedTokens = Set(tokensInOrder.prefix(tokenCursor))
+        let remainingLocks = locksByToken.filter { processedTokens.contains($0.key) == false }
+        if remainingLocks.isEmpty == false {
+            out = normalizeTokensAndParticles(in: out, locksByToken: remainingLocks)
+        }
+        return out
+    }
     
     func normalizeDamagedETokens(_ text: String, locks: [String: LockInfo]) -> String {
         // 이번 배치에서 실제 존재하는 토큰 id 화이트리스트

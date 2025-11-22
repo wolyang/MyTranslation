@@ -1,8 +1,8 @@
 # SPEC: 순서 기반 용어 정규화/언마스킹 개선
 
 **작성일**: 2025-11-21
-**최종 수정**: 2025-11-21
-**상태**: Planning (구현 전)
+**최종 수정**: 2025-11-22
+**상태**: Implemented (코드 반영 완료)
 **우선순위**: P2
 **의존성**: SPEC_SEGMENT_PIECES_REFACTORING.md 구현 완료 필요
 
@@ -824,7 +824,13 @@ let restored = outputPostprocessor.restoreOutput(
 2. Phase 3에서 기존 로직으로 Fallback
 3. 기존 동작 100% 보존
 
-### 6.4 성능 고려사항
+### 6.4 구현 시 참고 사항
+
+- 구현에서는 OccurrenceTracker 대신 간단한 Set/커서(`lastMatchUpperBound`, `phase2LastMatch`)로 순서 상태를 관리해 복잡도를 줄였다.
+- Phase 2(Pattern fallback)는 Phase 1과 별도 커서로 순서를 추적해 앞쪽 용어가 누락되지 않도록 했다.
+- Phase 1/2에서 처리되지 않은 용어/토큰은 Phase 3 전역 검색으로 보완해 하위 호환성을 유지한다.
+
+### 6.5 성능 고려사항
 
 **추가 오버헤드**:
 - OccurrenceTracker 생성: 세그먼트당 약 50-100 bytes
@@ -911,18 +917,13 @@ func findNextVariantWithRange(
 
 ### 8.1 단위 테스트
 
-1. **OccurrenceTracker 테스트**:
-   - nextUnprocessedTerms() 순서 정확성
-   - markProcessed() 동작 확인
-   - remainingCount 정확성
-
-2. **normalizeWithOrder 테스트**:
+1. **normalizeWithOrder 테스트**:
    - Phase 1: 순서 기반 + Pattern variants
    - Phase 2: 순서 기반 + Pattern Fallback
    - Phase 3: 전역 검색 Fallback
    - 조사 보정 정확성
 
-3. **unmaskWithOrder 테스트**:
+2. **unmaskWithOrder 테스트**:
    - 순서 기반 언마스킹
    - 토큰 순서 바뀐 경우 Fallback
    - 조사 보정 정확성

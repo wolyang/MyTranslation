@@ -377,6 +377,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     pack: pack,
                     termMasker: termMasker,
                     nameGlossaries: maskingContext.nameGlossariesPerSegment[index],
+                    pieces: maskingContext.segmentPieces[index],
                     shouldNormalizeNames: true
                 )
                     
@@ -453,14 +454,26 @@ final class DefaultTranslationRouter: TranslationRouter {
         pack: MaskedPack,
         termMasker: TermMasker,
         nameGlossaries: [TermMasker.NameGlossary],
+        pieces: SegmentPieces,
         shouldNormalizeNames: Bool
     ) -> String {
         print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
         var output = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
 //        print("[T] router.processStream [\(pack.seg.id)] NORMALIZED DAMAGED TOKENS RESULT: \(output)")
         
-        output = termMasker.normalizeVariantsAndParticles(in: output, entries: nameGlossaries)
-        output = termMasker.normalizeTokensAndParticles(in: output, locksByToken: pack.locks)
+        if shouldNormalizeNames, nameGlossaries.isEmpty == false {
+            output = termMasker.normalizeWithOrder(
+                in: output,
+                pieces: pieces,
+                nameGlossaries: nameGlossaries
+            )
+        }
+
+        output = termMasker.unmaskWithOrder(
+            in: output,
+            pieces: pieces,
+            locksByToken: pack.locks
+        )
         
 //        // 마스킹된 토큰을 언마스킹하고 조사를 보정한다.
 //        output = termMasker.normalizeEntitiesAndParticles(
