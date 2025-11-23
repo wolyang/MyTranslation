@@ -1266,14 +1266,12 @@ public final class GlossaryComposer {
 리팩토링 작업 항목 추가:
 
 ```markdown
-## 진행 중/우선 작업
-
 - [ ] (P0) Glossary Service 리팩토링 (`History/SPEC_GLOSSARY_SERVICE_REFACTOR.md` 참조)
-  - [ ] Phase 1: 타입 및 파일 분리
-  - [ ] Phase 2: 데이터 계층 리팩토링 (GlossaryDataProvider)
-  - [ ] Phase 3: 서비스 계층 구현 (GlossaryComposer)
-  - [ ] Phase 4: TranslationRouter 통합
-  - [ ] Phase 5: 레거시 코드 제거 및 문서 업데이트
+  - [x] Phase 1: 타입 및 파일 분리
+  - [x] Phase 2: 데이터 계층 리팩토링 (GlossaryDataProvider)
+  - [x] Phase 3: 서비스 계층 구현 (GlossaryComposer)
+  - [x] Phase 4: TranslationRouter 통합
+  - [x] Phase 5: 레거시 코드 제거 및 문서 업데이트
 ```
 
 ---

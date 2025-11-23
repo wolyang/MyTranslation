@@ -33,6 +33,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
    * WKWebView에 JS를 주입해 `data-seg-id`를 붙인 세그먼트 단위 텍스트를 추출
 2. **Masking & Normalization 준비**
 
+   * `GlossaryDataProvider`가 페이지 텍스트에서 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
    * `TermMasker`가 `SegmentPieces`를 생성해 용어 위치를 식별하고, preMask 용어를 토큰으로 치환할 준비를 함
    * 정규화(variants→target) 및 언마스킹에 필요한 메타데이터(`TermHighlightMetadata`)를 함께 추적
 3. **Translation Routing & Streaming**
@@ -93,14 +94,22 @@ FMConfig(
 )
 ```
 
-### 4. Glossary System (`Domain/Glossary/`)
+### 4. Glossary System (`Domain/Glossary/`, `Services/Translation/Glossary/`)
 
-SwiftData 기반 Glossary 시스템.
+데이터 계층과 서비스 계층으로 분리된 SwiftData 기반 Glossary 시스템.
 
-* 모델: `SDTerm`, `SDPattern`, `SDComponent`, `SDTag`
-* 인덱싱: `GlossarySDSourceIndexMaintainer`
-* Import: `GlossarySheetImport`로 Google Sheets에서 불러오기
-* Service: `Glossary.Service`가 Glossary 조회/적용 로직 제공
+**데이터 계층 (Domain/Glossary/Persistence/)**
+* `GlossaryDataProvider`: 페이지 텍스트로 매칭된 Term/패턴을 조회
+* `GlossarySDModel`: SwiftData 모델 (SDTerm, SDPattern, SDComponent 등)
+* `GlossarySDSourceIndexMaintainer`: Q-gram 인덱스 자동 유지
+
+**서비스 계층 (Services/Translation/Glossary/)**
+* `GlossaryComposer`: 단독/패턴 조합 엔트리 생성, 세그먼트별 조합 최적화
+* `Deduplicator`: GlossaryEntry 중복 병합
+
+**Import (Domain/Glossary/Services/)**
+* `GlossarySheetImport`: Google Sheets 연동
+* `GlossaryJSONParser`: JSON 형식 파싱
 
 ### 5. Web Rendering (`Services/WebRendering/`)
 
@@ -115,6 +124,7 @@ WKWebView 번역 결과 반영.
 
 민감한 용어/인명을 보호하기 위한 마스킹 로직.
 
+* `GlossaryDataProvider`가 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
 * `TermMasker`: 마스킹/언마스킹 처리, variants 정규화, 하이라이트 range 추적
 * `MaskedPack`: 원문/마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
 * `TermHighlightMetadata`: 원문/정규화 전/최종 번역문 하이라이트 정보
@@ -127,8 +137,8 @@ WKWebView 번역 결과 반영.
 
   * SwiftData ModelContext
   * 번역 엔진들
+  * Glossary: `GlossaryDataProvider`, `GlossaryComposer`
   * `DefaultTranslationRouter`
-  * Glossary 서비스
   * FM 파이프라인 구성
   * Masking: `SegmentPieces` 기반 마스킹/정규화 컨텍스트 조립
 

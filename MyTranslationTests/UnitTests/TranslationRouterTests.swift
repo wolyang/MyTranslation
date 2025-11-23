@@ -4,7 +4,7 @@ import Testing
 @testable import MyTranslation
 
 struct TranslationRouterTests {
-    private func makeGlossaryService() throws -> Glossary.Service {
+    private func makeGlossaryDataProvider() throws -> Glossary.DataProvider {
         let schema = Schema([
             Glossary.SDModel.SDTerm.self,
             Glossary.SDModel.SDSource.self,
@@ -20,7 +20,7 @@ struct TranslationRouterTests {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: schema, configurations: config)
         let context = ModelContext(container)
-        return Glossary.Service(context: context)
+        return Glossary.DataProvider(context: context)
     }
 
     private func makeRouter(
@@ -29,14 +29,15 @@ struct TranslationRouterTests {
         google: MockTranslationEngine? = nil,
         cache: MockCacheStore
     ) throws -> DefaultTranslationRouter {
-        let glossary = try makeGlossaryService()
+        let dataProvider = try makeGlossaryDataProvider()
         let postEditor = StubPostEditor()
         return DefaultTranslationRouter(
             afm: afm ?? MockTranslationEngine(tag: .afm),
             deepl: deepl ?? MockTranslationEngine(tag: .deepl),
             google: google ?? MockTranslationEngine(tag: .google),
             cache: cache,
-            glossaryService: glossary,
+            glossaryDataProvider: dataProvider,
+            glossaryComposer: GlossaryComposer(),
             postEditor: postEditor,
             comparer: nil,
             reranker: nil
@@ -105,13 +106,14 @@ struct TranslationRouterTests {
         let afm = MockTranslationEngine(tag: .afm)
         let google = MockTranslationEngine(tag: .google)
         let cache = MockCacheStore()
-        let glossary = try makeGlossaryService()
+        let dataProvider = try makeGlossaryDataProvider()
         let router = DefaultTranslationRouter(
             afm: afm,
             deepl: MockTranslationEngine(tag: .deepl),
             google: google,
             cache: cache,
-            glossaryService: glossary,
+            glossaryDataProvider: dataProvider,
+            glossaryComposer: GlossaryComposer(),
             postEditor: StubPostEditor(),
             comparer: nil,
             reranker: nil

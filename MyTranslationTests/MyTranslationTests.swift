@@ -1138,6 +1138,30 @@ struct GlossaryImportTests {
 
     @Test
     func composerCandidateProducesMultipleKeys() {
+        let componentTerms: [GlossaryEntry.ComponentTerm] = [
+            .init(
+                key: "L",
+                target: "L-tgt",
+                variants: [],
+                sources: [.init(text: "A", prohibitStandalone: false)],
+                matchedSources: ["A"],
+                preMask: false,
+                isAppellation: false,
+                activatorKeys: [],
+                activatesKeys: []
+            ),
+            .init(
+                key: "R",
+                target: "R-tgt",
+                variants: [],
+                sources: [.init(text: "B", prohibitStandalone: false)],
+                matchedSources: ["B"],
+                preMask: false,
+                isAppellation: false,
+                activatorKeys: [],
+                activatesKeys: []
+            )
+        ]
         let entry = GlossaryEntry(
             source: "AB",
             target: "AB-tgt",
@@ -1145,7 +1169,8 @@ struct GlossaryImportTests {
             preMask: false,
             isAppellation: false,
             prohibitStandalone: false,
-            origin: .composer(composerId: "comp", leftKey: "L", rightKey: "R", needPairCheck: false)
+            origin: .composer(composerId: "comp", leftKey: "L", rightKey: "R", needPairCheck: false),
+            componentTerms: componentTerms
         )
         let originalText = "AB"
         let range = find("AB", in: originalText, occurrence: 0)

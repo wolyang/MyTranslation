@@ -152,24 +152,21 @@ enum GlossaryAddCandidateUtil {
                 ))
             case let .composer(_, leftKey, rightKey, _):
                 let keys = [leftKey, rightKey].compactMap { $0 }
-                if keys.isEmpty {
-                    candidates.append(GlossaryAddSheetState.UnmatchedTermCandidate(
-                        termKey: nil,
-                        entry: entry,
-                        appearanceOrder: index,
-                        similarity: score
-                    ))
-                } else {
-                    for key in keys {
-                        candidates.append(
-                            GlossaryAddSheetState.UnmatchedTermCandidate(
-                                termKey: key,
-                                entry: entry,
-                                appearanceOrder: index,
-                                similarity: score
-                            )
+                guard keys.isEmpty == false else { continue }
+                for key in keys {
+                    guard
+                        let term = entry.componentTerms.first(where: { $0.key == key }),
+                        let termEntry = makeCandidateEntry(from: term, selection: loweredSelection)
+                    else { continue }
+
+                    candidates.append(
+                        GlossaryAddSheetState.UnmatchedTermCandidate(
+                            termKey: key,
+                            entry: termEntry,
+                            appearanceOrder: index,
+                            similarity: bestSimilarityScore(for: termEntry, against: loweredSelection)
                         )
-                    }
+                    )
                 }
             }
         }
@@ -205,6 +202,45 @@ enum GlossaryAddCandidateUtil {
         let limited = maxCount > 0 ? Array(sorted.prefix(maxCount)) : sorted
         let truncated = sorted.count > limited.count || metadata.originalTermRanges.count > scanList.count
         return (limited, truncated)
+    }
+
+    private static func makeCandidateEntry(
+        from term: GlossaryEntry.ComponentTerm,
+        selection: String
+    ) -> GlossaryEntry? {
+        guard let source = bestSource(for: term, selection: selection) else { return nil }
+        let prohibit = term.sources.first(where: { $0.text == source })?.prohibitStandalone ?? false
+        return GlossaryEntry(
+            source: source,
+            target: term.target,
+            variants: term.variants,
+            preMask: term.preMask,
+            isAppellation: term.isAppellation,
+            prohibitStandalone: prohibit,
+            origin: .termStandalone(termKey: term.key),
+            componentTerms: [term],
+            activatorKeys: term.activatorKeys,
+            activatesKeys: term.activatesKeys
+        )
+    }
+
+    private static func bestSource(
+        for term: GlossaryEntry.ComponentTerm,
+        selection: String
+    ) -> String? {
+        let candidates = prioritizedSources(for: term)
+        guard candidates.isEmpty == false else { return nil }
+        guard selection.isEmpty == false else { return candidates.first }
+
+        return candidates.max { lhs, rhs in
+            similarityScore(lhs.lowercased(), selection) < similarityScore(rhs.lowercased(), selection)
+        }
+    }
+
+    private static func prioritizedSources(for term: GlossaryEntry.ComponentTerm) -> [String] {
+        let matched = term.sources.filter { term.matchedSources.contains($0.text) }.map { $0.text }
+        if matched.isEmpty == false { return matched }
+        return term.sources.map { $0.text }
     }
 
     private static func bestSimilarityScore(for entry: GlossaryEntry, against text: String) -> Double {
