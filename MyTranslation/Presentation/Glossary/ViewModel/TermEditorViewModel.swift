@@ -173,12 +173,18 @@ final class TermEditorViewModel {
         generalDraft.activatedBy = filtered.joined(separator: ";")
     }
 
-    func fetchAllTermsForPicker() throws -> [(key: String, target: String)] {
+    func fetchAllTermsForPicker() throws -> [TermPickerItem] {
         let descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(
             sortBy: [SortDescriptor(\.target)]
         )
         let terms = try context.fetch(descriptor)
-        return terms.map { (key: $0.key, target: $0.target) }
+        return terms.map { term in
+            TermPickerItem(
+                key: term.key,
+                target: term.target,
+                sourcePreview: term.sources.first?.text ?? ""
+            )
+        }
     }
 
     func termTarget(for key: String) -> String? {

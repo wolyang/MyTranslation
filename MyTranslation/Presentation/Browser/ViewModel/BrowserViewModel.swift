@@ -30,6 +30,7 @@ final class BrowserViewModel: ObservableObject {
         currentPageTranslation?.url.absoluteString ?? attachedWebView?.url?.absoluteString ?? urlString
     }
     @Published var overlayState: OverlayState?
+    @Published var glossaryAddSheet: GlossaryAddSheetState?
     @Published var translateRunID: String = ""
     @Published var translationProgress: Double = 0
     @Published var failedSegmentIDs: Set<String> = []

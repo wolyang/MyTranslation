@@ -770,6 +770,70 @@ struct MyTranslationTests {
         #expect(normalized.text.contains("쟈그라만이"))
         #expect(normalized.text.contains("쿠레나이 가이만에게"))
     }
+    
+    @Test
+    func unmatchedCandidatesRespectAnchorOrdering() {
+        let entryA = GlossaryEntry(
+            source: "凯",
+            target: "가이",
+            variants: ["카이", "케이"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "termperson_6b5084f18cbb")
+        )
+        let entryB = GlossaryEntry(
+            source: "伽古拉",
+            target: "쟈그라",
+            variants: ["가고라", "가구라"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "termperson_5dd6e5c5e67f")
+        )
+
+        // 원문: A B A B
+        let originalText = "当凯问伽古拉是否喜欢凯时，伽古拉笑了。"
+        let originalRanges: [TermRange] = [
+            TermRange(entry: entryA, range: find("凯", in: originalText, occurrence: 0), type: .normalized),
+            TermRange(entry: entryB, range: find("伽古拉", in: originalText, occurrence: 0), type: .normalized),
+            TermRange(entry: entryA, range: find("凯", in: originalText, occurrence: 1), type: .normalized),
+            TermRange(entry: entryB, range: find("伽古拉", in: originalText, occurrence: 1), type: .normalized)
+        ]
+
+        // 번역문: B-tgt ... A-tgt (앞의 B, 뒤의 A가 매칭됨)
+        let finalText = "Guy가 쟈그라에게 가이를 좋아하냐고 물었을 때, Juggler는 미소를 지었다."
+        let finalRanges: [TermRange] = [
+            TermRange(entry: entryB, range: find("쟈그라", in: finalText, occurrence: 0), type: .normalized),
+            TermRange(entry: entryA, range: find("가이", in: finalText, occurrence: 0), type: .normalized)
+        ]
+
+        let metadata = TermHighlightMetadata(
+            originalTermRanges: originalRanges,
+            finalTermRanges: finalRanges,
+            preNormalizedTermRanges: nil
+        )
+
+        // 선택 범위가 첫 번째 번역(B-tgt) 앞이라면 A(뒤쪽 미매칭)가 우선
+        let front = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: metadata,
+            selectedText: "Guy",
+            finalText: finalText,
+            preNormalizedText: nil,
+            selectionAnchor: 0
+        )
+        #expect(front.candidates.first?.entry.source == "凯")
+
+        // 선택 범위가 마지막 번역(A-tgt) 뒤라면 B(뒤쪽 미매칭)가 우선
+        let back = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: metadata,
+            selectedText: "Juggler",
+            finalText: finalText,
+            preNormalizedText: nil,
+            selectionAnchor: finalText.count
+        )
+        #expect(back.candidates.first?.entry.source == "伽古拉")
+    }
 }
 
 struct GlossaryImportTests {
@@ -929,4 +993,193 @@ struct GlossaryImportTests {
         #expect(overwriteTerm.variants == ["new"])
         #expect(Set(overwriteTerm.termTagLinks.map { $0.tag.name }) == Set(["modern"]))
     }
+
+    // MARK: - GlossaryAdd candidate tests
+
+    @Test
+    func unmatchedCandidatesRespectAnchorOrdering() {
+        let entryA = GlossaryEntry(
+            source: "A",
+            target: "A-tgt",
+            variants: ["A-alt"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "A")
+        )
+        let entryB = GlossaryEntry(
+            source: "B",
+            target: "B-tgt",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "B")
+        )
+
+        // 원문: A B A B
+        let originalText = "A B A B"
+        let originalRanges: [TermRange] = [
+            TermRange(entry: entryA, range: find("A", in: originalText, occurrence: 0), type: .normalized),
+            TermRange(entry: entryB, range: find("B", in: originalText, occurrence: 0), type: .normalized),
+            TermRange(entry: entryA, range: find("A", in: originalText, occurrence: 1), type: .normalized),
+            TermRange(entry: entryB, range: find("B", in: originalText, occurrence: 1), type: .normalized)
+        ]
+
+        // 번역문: B-tgt ... A-tgt (앞의 B, 뒤의 A가 매칭됨)
+        let finalText = "B-tgt ... A-tgt"
+        let finalRanges: [TermRange] = [
+            TermRange(entry: entryB, range: find("B-tgt", in: finalText, occurrence: 0), type: .normalized),
+            TermRange(entry: entryA, range: find("A-tgt", in: finalText, occurrence: 0), type: .normalized)
+        ]
+
+        let metadata = TermHighlightMetadata(
+            originalTermRanges: originalRanges,
+            finalTermRanges: finalRanges,
+            preNormalizedTermRanges: nil
+        )
+
+        // 선택 범위가 첫 번째 번역(B-tgt) 앞이라면 앞쪽 미매칭인 A가 우선
+        let front = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: metadata,
+            selectedText: "dummy",
+            finalText: finalText,
+            preNormalizedText: nil,
+            selectionAnchor: 0,
+            maxCount: 5
+        )
+        #expect(front.candidates.first?.entry.source == "A")
+
+        // 선택 범위가 마지막 번역(A-tgt) 뒤라면 뒤쪽 미매칭인 B가 우선
+        let back = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: metadata,
+            selectedText: "dummy",
+            finalText: finalText,
+            preNormalizedText: nil,
+            selectionAnchor: finalText.count,
+            maxCount: 5
+        )
+        #expect(back.candidates.first?.entry.source == "B")
+    }
+
+    @Test
+    func unmatchedCandidatesTruncateWhenTooMany() {
+        let base = GlossaryEntry(
+            source: "X",
+            target: "X-tgt",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "X")
+        )
+        let originalText = (0..<20).map { _ in "X" }.joined(separator: " ")
+        let originalRanges: [TermRange] = (0..<20).map { idx in
+            TermRange(entry: base, range: find("X", in: originalText, occurrence: idx), type: .normalized)
+        }
+        let metadata = TermHighlightMetadata(
+            originalTermRanges: originalRanges,
+            finalTermRanges: [],
+            preNormalizedTermRanges: nil
+        )
+
+        let result = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: metadata,
+            selectedText: "dummy",
+            finalText: nil,
+            preNormalizedText: nil,
+            selectionAnchor: 0,
+            maxCount: 5
+        )
+        #expect(result.candidates.count == 5)
+        #expect(result.truncated == true)
+    }
+
+    @Test
+    func matchedEntryForOriginalFindsExactRange() {
+        let text = "Hello A and B"
+        let entryA = GlossaryEntry(
+            source: "A",
+            target: "A-tgt",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "A")
+        )
+        let entryB = GlossaryEntry(
+            source: "B",
+            target: "B-tgt",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "B")
+        )
+
+        let rA = find("A", in: text, occurrence: 0)
+        let rB = find("B", in: text, occurrence: 0)
+        let meta = TermHighlightMetadata(
+            originalTermRanges: [
+                TermRange(entry: entryA, range: rA, type: .normalized),
+                TermRange(entry: entryB, range: rB, type: .normalized)
+            ],
+            finalTermRanges: [],
+            preNormalizedTermRanges: nil
+        )
+
+        let nsA = NSRange(rA, in: text)
+        let nsB = NSRange(rB, in: text)
+        #expect(meta.matchedEntryForOriginal(nsRange: nsA, in: text)?.source == "A")
+        #expect(meta.matchedEntryForOriginal(nsRange: nsB, in: text)?.source == "B")
+        let miss = NSRange(location: 0, length: 3)
+        #expect(meta.matchedEntryForOriginal(nsRange: miss, in: text) == nil)
+    }
+
+    @Test
+    func composerCandidateProducesMultipleKeys() {
+        let entry = GlossaryEntry(
+            source: "AB",
+            target: "AB-tgt",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .composer(composerId: "comp", leftKey: "L", rightKey: "R", needPairCheck: false)
+        )
+        let originalText = "AB"
+        let range = find("AB", in: originalText, occurrence: 0)
+        let meta = TermHighlightMetadata(
+            originalTermRanges: [TermRange(entry: entry, range: range, type: .normalized)],
+            finalTermRanges: [],
+            preNormalizedTermRanges: nil
+        )
+        let result = GlossaryAddCandidateUtil.computeUnmatchedCandidates(
+            metadata: meta,
+            selectedText: "dummy",
+            finalText: nil,
+            preNormalizedText: nil,
+            selectionAnchor: 0,
+            maxCount: 10
+        )
+        let keys = result.candidates.compactMap { $0.termKey }
+        #expect(keys.contains("L"))
+        #expect(keys.contains("R"))
+        #expect(keys.count == 2)
+    }
+}
+
+// MARK: - Helpers
+
+private func find(_ needle: String, in haystack: String, occurrence: Int) -> Range<String.Index> {
+    var start = haystack.startIndex
+    var count = 0
+    while let r = haystack.range(of: needle, range: start..<haystack.endIndex) {
+        if count == occurrence {
+            return r
+        }
+        count += 1
+        start = r.upperBound
+    }
+    return haystack.startIndex..<haystack.startIndex
 }
