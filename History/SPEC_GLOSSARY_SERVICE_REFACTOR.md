@@ -54,20 +54,30 @@
 
 ```
 [TranslationRouter]
-    ↓ fetchGlossaryData(fullText)
+    ↓ fetchGlossaryData(fullText) // 페이지 전체 텍스트로 1회 데이터 조회
 [GlossaryDataProvider] (새 이름, 데이터 계층)
     ├─ Recall: Q-gram 기반 후보 Term 리콜
     ├─ Store: Term/Pattern SwiftData 조회
     ├─ Matcher: AhoCorasick로 페이지 전체 텍스트에서 매칭
     └─ 필터링된 Term 목록 + 전체 Pattern 목록 반환
-    ↓ GlossaryData { matchedTerms: [SDTerm], patterns: [SDPattern] }
-[GlossaryComposer] (새로운 서비스 계층)
-    ├─ 단독 엔트리 생성 (termStandalone)
-    └─ 세그먼트별 조합 엔트리 생성 (composer)
-    ↓ [GlossaryEntry] (단독+조합)
-[TranslationRouter]
-    └─ TermMasker.buildSegmentPieces()
+    ↓ GlossaryData { matchedTerms: [SDTerm], patterns: [SDPattern], matchedSourcesByKey }
+[TranslationRouter - prepareMaskingContext]
+    FOR EACH SEGMENT:  // 핵심: 세그먼트별로 루프
+        ↓ buildEntriesForSegment(data, segmentText)
+        [GlossaryComposer] (서비스 계층)
+            ├─ 단독 엔트리 생성 (termStandalone)
+            ├─ 세그먼트 텍스트 기반 조합 엔트리 생성 (composer)
+            │  └─ AC 매칭으로 실제 나타나는 조합만 생성 (최적화!)
+            └─ 중복 제거
+            ↓ [GlossaryEntry] (해당 세그먼트용 단독+조합)
+        [TermMasker]
+            └─ buildSegmentPieces(segment, glossary: entries)
 ```
+
+**주요 특징:**
+- 데이터 조회는 페이지 레벨로 1회만 수행 (효율성)
+- 조합 엔트리 생성은 세그먼트별로 수행 (메모리 최적화)
+- 각 세그먼트는 자신에게 필요한 조합만 생성 (10-100배 적은 엔트리)
 
 ---
 
@@ -100,6 +110,49 @@ public struct GlossaryData: Sendable {
         self.matchedSourcesByKey = matchedSourcesByKey
     }
 }
+```
+
+#### 3.1.2 GlossaryEntry.Origin 확장 (Domain/Glossary/Models/)
+
+**중요**: GlossaryAddCandidateUtil 연동을 위해 composer origin에 Term 정보를 보존해야 합니다.
+
+```swift
+extension GlossaryEntry {
+    public enum Origin: Sendable, Hashable {
+        case termStandalone(termKey: String)
+        case composer(leftKey: String?, rightKey: String?)  // ← 변경: Term 키 추가
+    }
+}
+```
+
+**설계 근거**:
+- `computeUnmatchedCandidates`에서 `origin == .composer`이고 `leftKey/rightKey`가 있을 때, 해당 Term의 source/target으로 `UnmatchedTermCandidate`를 생성해야 함
+- `leftKey/rightKey`가 모두 `nil`인 경우에만 후보 추가를 건너뜀 (패턴으로만 생성된 조합)
+- TermHighlightMetadata를 통해 Composer → 하이라이팅 → 후보 생성까지 Term 정보 전달
+
+**Composer에서의 사용**:
+```swift
+// L-R 쌍 조합
+let entry = GlossaryEntry(
+    source: composedSource,
+    target: composedTarget,
+    // ...
+    origin: .composer(
+        leftKey: leftTerm.key,
+        rightKey: rightTerm.key
+    )
+)
+
+// L만 조합 (R 없음)
+let entry = GlossaryEntry(
+    source: composedSource,
+    target: composedTarget,
+    // ...
+    origin: .composer(
+        leftKey: leftTerm.key,
+        rightKey: nil
+    )
+)
 ```
 
 ### 3.2 데이터 계층 리팩토링
@@ -195,27 +248,28 @@ public final class GlossaryComposer {
 
     public init() {}
 
-    /// 페이지 전체용 엔트리 생성 (기존 호환성)
+    /// 세그먼트별 엔트리 생성 (메인 구현)
     @MainActor
-    public func buildEntries(
+    public func buildEntriesForSegment(
         from data: GlossaryData,
-        pageText: String
+        segmentText: String
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
 
-        // 1) 단독 엔트리 생성
+        // 1) 단독 엔트리 생성 (세그먼트 텍스트 기준)
         let standaloneEntries = buildStandaloneEntries(
             from: data.matchedTerms,
-            matchedSources: data.matchedSourcesByKey
+            matchedSources: data.matchedSourcesByKey,
+            targetText: segmentText
         )
         entries.append(contentsOf: standaloneEntries)
 
-        // 2) 조합 엔트리 생성
-        let composedEntries = buildComposedEntries(
+        // 2) 세그먼트별 조합 엔트리 생성 (핵심 최적화!)
+        let composedEntries = buildComposedEntriesForSegment(
             from: data.patterns,
             terms: data.matchedTerms,
             matchedSources: data.matchedSourcesByKey,
-            pageText: pageText
+            segmentText: segmentText  // 세그먼트 텍스트만 사용!
         )
 
         // 3) 단독 엔트리와 겹치는 조합 제외
@@ -229,22 +283,22 @@ public final class GlossaryComposer {
         return Deduplicator.deduplicate(entries)
     }
 
-    /// 세그먼트별 엔트리 생성 (향후 최적화용)
+    /// 페이지 전체용 엔트리 생성 (레거시 호환성)
     @MainActor
-    public func buildEntriesForSegment(
+    public func buildEntries(
         from data: GlossaryData,
-        segmentText: String
+        pageText: String
     ) -> [GlossaryEntry] {
-        // 세그먼트 텍스트 기반으로 필요한 조합만 생성
-        // TODO: 향후 구현
-        return buildEntries(from: data, pageText: segmentText)
+        // 레거시: 페이지 전체를 단일 세그먼트로 처리
+        return buildEntriesForSegment(from: data, segmentText: pageText)
     }
 
     // MARK: - Private Helpers
 
     private func buildStandaloneEntries(
         from terms: [Glossary.SDModel.SDTerm],
-        matchedSources: [String: Set<String>]
+        matchedSources: [String: Set<String>],
+        targetText: String
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
 
@@ -256,6 +310,9 @@ public final class GlossaryComposer {
 
             for source in term.sources {
                 guard matchedSourcesForTerm.contains(source.text) else { continue }
+
+                // 세그먼트에 실제로 나타나는지 확인
+                guard targetText.contains(source.text) else { continue }
 
                 entries.append(GlossaryEntry(
                     source: source.text,
@@ -274,20 +331,21 @@ public final class GlossaryComposer {
         return entries
     }
 
-    private func buildComposedEntries(
+    private func buildComposedEntriesForSegment(
         from patterns: [Glossary.SDModel.SDPattern],
         terms: [Glossary.SDModel.SDTerm],
         matchedSources: [String: Set<String>],
-        pageText: String
+        segmentText: String  // 핵심: 세그먼트 텍스트만 사용
     ) -> [GlossaryEntry] {
-        // 기존 Composer 로직을 여기로 이동
-        // (GlossaryEntry.swift의 Composer.composeEntriesForMatched 로직 활용)
+        // 기존 로직과 유사하지만 중요한 차이점:
+        // 1. pageText 대신 segmentText 사용
+        // 2. 조합된 source가 segmentText에 실제로 나타나는지 AC 매칭으로 확인
+        // 3. 나타나지 않는 조합은 생성하지 않음 (메모리 절약!)
 
         let matchedTermKeys = Set(matchedSources.keys)
-        let termsByKey = Dictionary(uniqueKeysWithValues: terms.map { ($0.key, $0) })
+        var candidateEntries: [GlossaryEntry] = []
 
-        var entries: [GlossaryEntry] = []
-
+        // 패턴별로 후보 엔트리 생성
         for pattern in patterns {
             let usesR = pattern.sourceTemplates.contains { $0.contains("{R}") }
                      || pattern.targetTemplates.contains { $0.contains("{R}") }
@@ -299,10 +357,9 @@ public final class GlossaryComposer {
                     terms: terms,
                     matched: matchedTermKeys
                 )
-                entries.append(contentsOf: buildEntriesFromPairs(
+                candidateEntries.append(contentsOf: buildEntriesFromPairs(
                     pairs: pairs,
-                    pattern: pattern,
-                    pageText: pageText
+                    pattern: pattern
                 ))
             } else {
                 // L만 매칭
@@ -311,25 +368,47 @@ public final class GlossaryComposer {
                     terms: terms,
                     matched: matchedTermKeys
                 )
-                entries.append(contentsOf: buildEntriesFromLefts(
+                candidateEntries.append(contentsOf: buildEntriesFromLefts(
                     lefts: lefts,
-                    pattern: pattern,
-                    pageText: pageText
+                    pattern: pattern
                 ))
             }
         }
 
-        return entries
+        // 핵심 최적화: segmentText에 실제로 나타나는 것만 필터링
+        let acBundle = makeACBundleForEntries(candidateEntries)
+        let hits = acBundle.ac.find(in: segmentText)
+        let matchedSources = Set(hits.map { acBundle.sources[$0.pid] })
+
+        return candidateEntries.filter { matchedSources.contains($0.source) }
+    }
+
+    private func makeACBundleForEntries(
+        _ entries: [GlossaryEntry]
+    ) -> (ac: AhoCorasick, sources: [String], pidToEntry: [Int: GlossaryEntry]) {
+        // 엔트리들의 source로 AC 트라이 구성
+        var sources: [String] = []
+        var pidToEntry: [Int: GlossaryEntry] = [:]
+
+        for (idx, entry) in entries.enumerated() {
+            sources.append(entry.source)
+            pidToEntry[idx] = entry
+        }
+
+        let ac = AhoCorasick(patterns: sources)
+        return (ac, sources, pidToEntry)
     }
 
     // ... 나머지 헬퍼 메서드들 (기존 Composer 로직 이동)
+    // matchedPairs, matchedLeftComponents, buildEntriesFromPairs, buildEntriesFromLefts
 }
 ```
 
 **주요 특징:**
-- 조합 용어 생성 로직을 서비스 계층으로 이동
-- 페이지 전체/세그먼트별 생성 옵션 제공 (향후 최적화)
-- 기존 Composer 로직 재사용
+- `buildEntriesForSegment()`가 메인 구현 (세그먼트별 최적화)
+- `buildEntries()`는 레거시 호환성 유지
+- AC 매칭으로 세그먼트에 실제 나타나는 조합만 생성 (10-100배 메모리 절약)
+- 세그먼트별 컨텍스트 인식 조합
 
 #### 3.3.2 중복 제거 유틸 (Services/Translation/Glossary/)
 
@@ -357,8 +436,14 @@ public enum Deduplicator {
             if var existing = map[key] {
                 // variants 병합
                 existing.variants.formUnion(entry.variants)
+
+                // prohibitStandalone 병합: AND 연산
+                // 의도: 하나라도 허용(false)이면 허용으로 병합
+                // Pattern 기반 엔트리는 기본적으로 false이므로,
+                // Term standalone + Pattern 조합 시 Pattern이 우선됨
                 existing.prohibitStandalone =
                     existing.prohibitStandalone && entry.prohibitStandalone
+
                 map[key] = existing
             } else {
                 map[key] = entry
@@ -369,6 +454,83 @@ public enum Deduplicator {
     }
 }
 ```
+
+**prohibitStandalone 병합 로직 설명**:
+- `prohibitStandalone`은 Term이 Pattern에 포함되지 않았을 때 번역을 허용할지 금지할지를 제어하는 플래그
+- Pattern 기반 조합 엔트리는 기본적으로 `prohibitStandalone == false` (패턴 검사를 무조건 통과)
+- `&&` 연산으로 병합하면: `false && true == false`, `false && false == false`
+- 결과: 하나라도 패턴 엔트리가 있으면 허용 상태로 유지 (의도된 동작)
+- 예시:
+  - Term standalone entry: `prohibitStandalone = true`
+  - Pattern composed entry: `prohibitStandalone = false`
+  - 병합 결과: `true && false = false` (허용됨)
+
+#### 3.3.3 GlossaryAddCandidateUtil 연동 고려사항
+
+Glossary 추가 패널에서 사용하는 `GlossaryAddCandidateUtil.computeUnmatchedCandidates`는 Composer 기원 엔트리를 다음처럼 처리해야 합니다:
+
+```swift
+// GlossaryAddCandidateUtil.swift
+func computeUnmatchedCandidates(
+    highlights: [TermHighlightMetadata],
+    existingTerms: [SDTerm]
+) -> [UnmatchedTermCandidate] {
+    var candidates: [UnmatchedTermCandidate] = []
+
+    for highlight in highlights {
+        switch highlight.entry.origin {
+        case .termStandalone(let termKey):
+            // 기존 로직: termKey로 SDTerm 조회 후 후보 생성
+            if let term = existingTerms.first(where: { $0.key == termKey }) {
+                // source/target이 다르면 후보 추가
+                if term.sources.contains(where: { $0.text != highlight.source }) {
+                    candidates.append(UnmatchedTermCandidate(
+                        source: highlight.source,
+                        target: term.target,
+                        existingTermKey: termKey
+                    ))
+                }
+            }
+
+        case .composer(let leftKey, let rightKey):
+            // 핵심: leftKey/rightKey가 있을 때만 후보 생성
+            if let leftKey = leftKey {
+                if let leftTerm = existingTerms.first(where: { $0.key == leftKey }) {
+                    // L Term의 source/target으로 후보 생성
+                    candidates.append(UnmatchedTermCandidate(
+                        source: leftTerm.sources.first?.text ?? highlight.source,
+                        target: leftTerm.target,
+                        existingTermKey: leftKey
+                    ))
+                }
+            }
+
+            if let rightKey = rightKey {
+                if let rightTerm = existingTerms.first(where: { $0.key == rightKey }) {
+                    // R Term의 source/target으로 후보 생성
+                    candidates.append(UnmatchedTermCandidate(
+                        source: rightTerm.sources.first?.text ?? highlight.source,
+                        target: rightTerm.target,
+                        existingTermKey: rightKey
+                    ))
+                }
+            }
+
+            // leftKey/rightKey가 모두 nil인 경우:
+            // 패턴으로만 생성된 조합이므로 후보 추가하지 않음
+        }
+    }
+
+    return candidates.deduplicated()
+}
+```
+
+**설계 원칙**:
+1. `origin == .composer(nil, nil)`: 후보 추가 안 함 (패턴으로만 생성)
+2. `origin == .composer(leftKey, nil)`: L Term 정보로 후보 생성
+3. `origin == .composer(leftKey, rightKey)`: L, R 각각 후보 생성
+4. GlossaryEntry 자체의 source/target이 아닌, **원본 Term의 source/target**을 사용
+5. Composer → TermHighlightMetadata → computeUnmatchedCandidates까지 Term 정보 전달 보장
 
 ### 3.4 TranslationRouter 수정
 
@@ -399,16 +561,18 @@ final class DefaultTranslationRouter: TranslationRouter {
     public func translateStream(...) async throws -> TranslationStreamSummary {
         // ...
 
-        // 1) 데이터 조회
+        // 1) 데이터 조회 (1회만, 페이지 전체 텍스트로)
         let glossaryData = await fetchGlossaryData(
             fullText: segments.map({ $0.originalText }).joined(),
             shouldApply: options.applyGlossary
         )
 
-        // 2) 엔트리 생성
-        let glossaryEntries = await buildGlossaryEntries(
-            from: glossaryData,
-            fullText: segments.map({ $0.originalText }).joined()
+        // 2) 세그먼트별 마스킹 컨텍스트 준비 (여기서 세그먼트별 조합 수행!)
+        let maskingContext = await prepareMaskingContext(
+            from: segments,
+            glossaryData: glossaryData,  // 엔트리가 아닌 데이터 전달
+            engine: selectedEngine,
+            termMasker: termMasker
         )
 
         // ... 나머지 로직 동일
@@ -424,17 +588,65 @@ final class DefaultTranslationRouter: TranslationRouter {
         }
     }
 
-    private func buildGlossaryEntries(
+    private func prepareMaskingContext(
+        from segments: [Segment],
+        glossaryData: GlossaryData?,  // 변경: entries → data
+        engine: TranslationEngine,
+        termMasker: TermMasker
+    ) async -> MaskingContext {
+        var allSegmentPieces: [SegmentPieces] = []
+        var maskedPacks: [MaskedPack] = []
+        var nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = []
+
+        for segment in segments {
+            // 핵심 변경: 세그먼트별 엔트리 생성!
+            let glossaryEntries = await buildEntriesForSegment(
+                from: glossaryData,
+                segmentText: segment.originalText
+            )
+
+            let (pieces, _) = termMasker.buildSegmentPieces(
+                segment: segment,
+                glossary: glossaryEntries  // 세그먼트별 엔트리 사용
+            )
+            allSegmentPieces.append(pieces)
+
+            // ... 나머지 마스킹 로직
+            let masked = termMasker.maskSegment(
+                pieces: pieces,
+                engine: engine
+            )
+            maskedPacks.append(masked.pack)
+            nameGlossariesPerSegment.append(masked.nameGlossaries)
+        }
+
+        return MaskingContext(
+            allSegmentPieces: allSegmentPieces,
+            maskedPacks: maskedPacks,
+            nameGlossariesPerSegment: nameGlossariesPerSegment
+        )
+    }
+
+    private func buildEntriesForSegment(
         from data: GlossaryData?,
-        fullText: String
+        segmentText: String
     ) async -> [GlossaryEntry] {
         guard let data = data else { return [] }
         return await MainActor.run {
-            glossaryComposer.buildEntries(from: data, pageText: fullText)
+            glossaryComposer.buildEntriesForSegment(
+                from: data,
+                segmentText: segmentText
+            )
         }
     }
 }
 ```
+
+**주요 변경점:**
+- `translateStream()`에서 페이지 레벨 엔트리 생성 제거
+- `prepareMaskingContext()` 내에서 세그먼트별 엔트리 생성
+- 각 세그먼트가 자신만의 GlossaryEntry 배열 사용
+- 데이터 조회는 1회, 조합 생성은 N회 (세그먼트 수만큼)
 
 ### 3.5 AppContainer 수정
 
@@ -654,36 +866,57 @@ Services/Translation/
 
 ### 5.3 Phase 3: 서비스 계층 구현
 
-**목표**: GlossaryComposer 서비스 구현
+**목표**: GlossaryComposer 서비스 구현 (세그먼트별 조합 포함)
 
 **작업:**
 1. ✅ GlossaryComposer 구현
-   - `buildEntries(from:pageText:)` 구현
-   - 기존 Composer 로직 이동
+   - `buildEntriesForSegment(from:segmentText:)` 구현 (PRIMARY)
+     * `buildStandaloneEntries()` 헬퍼 구현
+     * `buildComposedEntriesForSegment()` 헬퍼 구현
+       - 패턴별 후보 엔트리 생성
+       - AC 매칭으로 세그먼트에 실제 나타나는 조합만 필터링
+       - `makeACBundleForEntries()` 유틸 구현
+     * `matchedPairs()`, `matchedLeftComponents()` 등 기존 Composer 로직 이동
+     * `buildEntriesFromPairs()`, `buildEntriesFromLefts()` 구현
+   - `buildEntries(from:pageText:)` 구현 (LEGACY 호환성)
 2. ✅ Deduplicator 유틸 분리
 3. ✅ 단위 테스트 작성
    - 단독 엔트리 생성 테스트
-   - 조합 엔트리 생성 테스트
+   - 세그먼트별 조합 생성 테스트 (핵심!)
+     * 세그먼트에 나타나는 조합만 생성되는지 검증
+     * 불필요한 조합이 생성되지 않는지 검증
+   - 페이지 레벨 vs 세그먼트 레벨 결과 비교 테스트
    - 중복 제거 테스트
 
 **검증:**
 - GlossaryComposer 단위 테스트 통과
-- 기존 결과와 동일한 GlossaryEntry 배열 생성 확인
+- 세그먼트별 조합이 올바르게 작동하는지 확인
+- 메모리 효율성 개선 측정 (페이지 레벨 대비 생성되는 엔트리 수)
 
 ### 5.4 Phase 4: TranslationRouter 통합
 
-**목표**: Router가 새로운 구조 사용하도록 전환
+**목표**: Router가 세그먼트별 조합을 사용하도록 전환
 
 **작업:**
 1. ✅ DefaultTranslationRouter 수정
    - GlossaryDataProvider + GlossaryComposer 사용
-   - `fetchGlossaryData()` + `buildGlossaryEntries()` 분리
+   - `translateStream()`에서 페이지 레벨 엔트리 생성 제거
+   - `prepareMaskingContext()` 수정
+     * 세그먼트 루프 내에서 `buildEntriesForSegment()` 호출
+     * 각 세그먼트가 자신만의 GlossaryEntry 배열 사용
+   - `buildEntriesForSegment()` 헬퍼 메서드 추가
 2. ✅ AppContainer DI 수정
+   - `glossaryDataProvider` 등록
+   - `glossaryComposer` 등록
 3. ✅ 통합 테스트 실행
+   - 세그먼트별 조합이 올바르게 작동하는지 검증
+   - 메모리 사용량 개선 측정
 
 **검증:**
 - 번역 파이프라인 end-to-end 테스트
-- 기존 동작과 완전히 동일한지 확인
+- 세그먼트별 마스킹이 올바르게 작동하는지 확인
+- 기존 동작과 동일한 번역 결과 생성 확인
+- 성능 회귀 없음 확인 (오히려 개선되어야 함)
 
 ### 5.5 Phase 5: 레거시 코드 제거
 
@@ -733,21 +966,52 @@ final class GlossaryDataProviderTests: XCTestCase {
 ```swift
 final class GlossaryComposerTests: XCTestCase {
     func testBuildStandaloneEntries() async throws {
-        // Given: matchedTerms와 matchedSources
-        // When: buildEntries 호출
-        // Then: 올바른 standalone 엔트리 생성
+        // Given: matchedTerms와 matchedSources, 특정 세그먼트 텍스트
+        // When: buildEntriesForSegment 호출
+        // Then: 세그먼트에 나타나는 standalone 엔트리만 생성
     }
 
     func testBuildComposedEntries_withPairs() async throws {
-        // Given: L-R 쌍 패턴과 매칭 Term
-        // When: buildEntries 호출
-        // Then: 올바른 composed 엔트리 생성
+        // Given: L-R 쌍 패턴과 매칭 Term, 특정 세그먼트 텍스트
+        // When: buildEntriesForSegment 호출
+        // Then: 세그먼트에 나타나는 composed 엔트리만 생성
     }
 
     func testBuildEntries_excludesOverlap() async throws {
         // Given: standalone과 겹치는 source를 가진 composed 엔트리
-        // When: buildEntries 호출
+        // When: buildEntriesForSegment 호출
         // Then: 겹치는 composed 엔트리 제외됨
+    }
+
+    // 핵심 추가 테스트
+    func testBuildEntriesForSegment_onlyGeneratesNeededCompositions() async throws {
+        // Given: 10개 패턴이 있고, 세그먼트에는 2개 조합만 나타남
+        // When: buildEntriesForSegment 호출
+        // Then: 2개 조합만 생성됨 (8개는 생성 안 됨)
+    }
+
+    func testBuildEntriesForSegment_vsPageLevel_efficiency() async throws {
+        // Given: 여러 세그먼트를 가진 페이지
+        // When: 세그먼트별 vs 페이지 레벨 조합 생성 비교
+        // Then: 세그먼트별이 훨씬 적은 엔트리 생성 (10-100배)
+    }
+
+    func testBuildEntriesForSegment_handlesEmptySegment() async throws {
+        // Given: 빈 세그먼트 텍스트
+        // When: buildEntriesForSegment 호출
+        // Then: 빈 배열 반환
+    }
+
+    func testBuildEntriesForSegment_multipleSegmentsSameData() async throws {
+        // Given: 동일한 GlossaryData, 3개 다른 세그먼트
+        // When: 각 세그먼트별로 buildEntriesForSegment 호출
+        // Then: 각 세그먼트에 맞는 다른 엔트리 배열 생성
+    }
+
+    func testBuildEntriesForSegment_noUnnecessaryCompositions() async throws {
+        // Given: 패턴은 있지만 세그먼트에 조합 결과가 없음
+        // When: buildEntriesForSegment 호출
+        // Then: 조합 엔트리 0개 생성 (메모리 낭비 방지)
     }
 }
 ```
@@ -797,68 +1061,166 @@ final class GlossaryPerformanceTests: XCTestCase {
 
 ## 7. 향후 최적화 방향
 
-### 7.1 세그먼트별 조합 생성
+세그먼트별 조합 생성은 이미 메인 구현에 포함되었으므로, 다음은 추가 최적화 기회입니다.
 
-현재는 페이지 전체 텍스트 기반으로 조합을 생성하지만, 향후 세그먼트별로 필요한 조합만 생성하도록 최적화 가능:
+### 7.1 세그먼트별 조합 결과 캐싱
 
+**현재 상황**: 매 세그먼트마다 조합을 새로 생성하지만, 같은 세그먼트가 반복되거나 유사한 패턴이 많을 경우 캐싱으로 성능 향상 가능
+
+**구현 예시**:
 ```swift
-// TranslationRouter
-for segment in segments {
-    let segmentEntries = glossaryComposer.buildEntriesForSegment(
-        from: glossaryData,
-        segmentText: segment.originalText
-    )
-    // ... 세그먼트별 마스킹 처리
+public final class GlossaryComposer {
+    // 세그먼트 텍스트 해시 → 생성된 엔트리
+    private var segmentCache: [Int: [GlossaryEntry]] = [:]
+
+    @MainActor
+    public func buildEntriesForSegment(
+        from data: GlossaryData,
+        segmentText: String
+    ) -> [GlossaryEntry] {
+        // 캐시 키 생성 (세그먼트 텍스트 + 데이터 해시)
+        let cacheKey = makeCacheKey(text: segmentText, data: data)
+
+        if let cached = segmentCache[cacheKey] {
+            return cached
+        }
+
+        let entries = // ... 기존 생성 로직
+        segmentCache[cacheKey] = entries
+        return entries
+    }
+
+    private func makeCacheKey(text: String, data: GlossaryData) -> Int {
+        var hasher = Hasher()
+        hasher.combine(text)
+        hasher.combine(data.matchedTerms.count)
+        hasher.combine(data.patterns.count)
+        return hasher.finalize()
+    }
 }
 ```
 
 **장점:**
-- 불필요한 조합 엔트리 생성 방지
-- 메모리 사용량 감소
-- 성능 향상
+- 동일/유사 세그먼트 재처리 시 즉시 반환
+- 특히 반복적인 문장 구조에서 효과적
 
-### 7.2 조합 결과 캐싱
+**주의사항:**
+- 캐시 크기 제한 필요 (LRU 등)
+- 메모리와 성능 트레이드오프 고려
 
-GlossaryComposer에 캐싱 레이어 추가:
+### 7.2 패턴별 병렬 처리
 
+**현재 상황**: 패턴을 순차적으로 처리하지만, 많은 패턴이 있을 때 병렬 처리 가능
+
+**구현 예시**:
 ```swift
-public final class GlossaryComposer {
-    private var cache: [String: [GlossaryEntry]] = [:]
-
-    public func buildEntries(from data: GlossaryData, pageText: String) -> [GlossaryEntry] {
-        let cacheKey = makeCacheKey(data: data, pageText: pageText)
-        if let cached = cache[cacheKey] {
-            return cached
-        }
-
-        let entries = // ... 생성 로직
-        cache[cacheKey] = entries
-        return entries
+private func buildComposedEntriesForSegment(...) async -> [GlossaryEntry] {
+    // 패턴이 많을 때만 병렬 처리
+    guard patterns.count > 10 else {
+        return buildComposedEntriesSequentially(...)
     }
-}
-```
 
-### 7.3 병렬 처리
-
-많은 Pattern이 있을 때 병렬 처리로 성능 향상:
-
-```swift
-private func buildComposedEntries(...) -> [GlossaryEntry] {
-    await withTaskGroup(of: [GlossaryEntry].self) { group in
+    return await withTaskGroup(of: [GlossaryEntry].self) { group in
         for pattern in patterns {
             group.addTask {
-                self.buildEntriesForPattern(pattern, ...)
+                await self.buildEntriesForPattern(
+                    pattern: pattern,
+                    terms: terms,
+                    matchedSources: matchedSources,
+                    segmentText: segmentText
+                )
             }
         }
 
-        var allEntries: [GlossaryEntry] = []
+        var allCandidates: [GlossaryEntry] = []
         for await entries in group {
-            allEntries.append(contentsOf: entries)
+            allCandidates.append(contentsOf: entries)
         }
-        return allEntries
+
+        // AC 필터링
+        let acBundle = makeACBundleForEntries(allCandidates)
+        let hits = acBundle.ac.find(in: segmentText)
+        let matchedSources = Set(hits.map { acBundle.sources[$0.pid] })
+
+        return allCandidates.filter { matchedSources.contains($0.source) }
     }
 }
 ```
+
+**장점:**
+- 많은 패턴 처리 시 성능 향상
+- 멀티코어 활용
+
+**주의사항:**
+- 오버헤드로 인해 패턴 수가 적으면 오히려 느릴 수 있음
+- 임계값 설정 필요 (예: 10개 이상일 때만)
+
+### 7.3 점진적 조합 생성 (Lazy Composition)
+
+**현재 상황**: 모든 조합을 미리 생성하지만, 실제로 마스킹에 사용되는 것만 생성 가능
+
+**구현 예시**:
+```swift
+/// 패턴별 조합 생성기 (lazy)
+public struct CompositionGenerator {
+    private let pattern: SDPattern
+    private let terms: [SDTerm]
+    private let segmentText: String
+
+    func generateNext() -> GlossaryEntry? {
+        // 다음 조합 하나만 생성
+        // 세그먼트에 나타나는지 즉시 확인
+        // 나타나면 반환, 아니면 다음 시도
+    }
+}
+
+// 사용
+for pattern in patterns {
+    var generator = CompositionGenerator(pattern, terms, segmentText)
+    while let entry = generator.generateNext() {
+        entries.append(entry)
+    }
+}
+```
+
+**장점:**
+- 메모리 효율성 극대화
+- 불필요한 조합 생성 완전 방지
+
+**단점:**
+- 구현 복잡도 증가
+- 현재 구조로도 충분히 효율적
+
+### 7.4 AC 트라이 재사용
+
+**현재 상황**: 세그먼트마다 AC 트라이를 새로 생성하지만, 후보 엔트리 패턴이 유사하면 재사용 가능
+
+**구현 예시**:
+```swift
+public final class GlossaryComposer {
+    // 패턴 조합 → AC 트라이 캐시
+    private var acTrieCache: [Set<String>: AhoCorasick] = [:]
+
+    private func getOrCreateACTrie(for entries: [GlossaryEntry]) -> AhoCorasick {
+        let patternSet = Set(entries.map { $0.source })
+
+        if let cached = acTrieCache[patternSet] {
+            return cached
+        }
+
+        let ac = AhoCorasick(patterns: Array(patternSet))
+        acTrieCache[patternSet] = ac
+        return ac
+    }
+}
+```
+
+**장점:**
+- AC 트라이 구성 시간 절약 (O(m) where m = 총 패턴 길이)
+
+**주의사항:**
+- 캐시 크기 관리 필요
+- 패턴이 매번 다르면 효과 없음
 
 ---
 
@@ -950,6 +1312,182 @@ private func buildComposedEntries(...) -> [GlossaryEntry] {
 **대응**:
 - 명시적인 `await MainActor.run` 사용
 - 데이터 조회와 비즈니스 로직 분리로 오히려 단순화
+
+### 9.5 메인 스레드 부하 (중요!)
+
+**문제**: `fetchData`/`buildEntriesForSegment`가 모두 `@MainActor`에서 실행되면 UI 스터터 발생 가능
+
+현재 설계에서 메인 스레드 부하 발생 지점:
+1. `fetchData`: Q-gram 리콜, AC 트라이 구성, 문자열 매칭
+2. `buildEntriesForSegment`: 패턴 조합 생성, AC 필터링 (세그먼트 수만큼 반복!)
+3. 특히 세그먼트가 많을 때 (10+ 세그먼트) 누적 부하 증가
+
+**대응 전략**:
+
+#### 1. SwiftData 접근 최소화
+```swift
+extension Glossary {
+    public final class DataProvider: DataProviding {
+        @MainActor
+        public func fetchData(for pageText: String) throws -> GlossaryData {
+            // MainActor 필수: SwiftData 접근
+            let candidateKeys = try Recall.recallTermKeys(...)
+            let candidateTerms = try Store.fetchTerms(keys: candidateKeys, ctx: context)
+            let patterns = try Store.fetchPatterns(ctx: context)
+
+            // 여기서 MainActor 탈출!
+            return await withCheckedContinuation { continuation in
+                Task.detached {
+                    // 백그라운드: AC 트라이 구성 및 매칭
+                    let acBundle = Matcher.makeACBundle(from: candidateTerms)
+                    let hits = acBundle.ac.find(in: pageText)
+
+                    // 매칭 테이블 구성
+                    var matchedSourcesByKey: [String: Set<String>] = [:]
+                    // ... 매칭 로직
+
+                    let data = GlossaryData(...)
+                    continuation.resume(returning: data)
+                }
+            }
+        }
+    }
+}
+```
+
+#### 2. Composer도 백그라운드 처리
+```swift
+public final class GlossaryComposer {
+    // MainActor 제거!
+    public func buildEntriesForSegment(
+        from data: GlossaryData,
+        segmentText: String
+    ) async -> [GlossaryEntry] {
+        // 모든 문자열 처리는 백그라운드에서 안전
+        let standaloneEntries = buildStandaloneEntries(...)
+        let composedEntries = buildComposedEntriesForSegment(...)
+
+        return Deduplicator.deduplicate(standaloneEntries + composedEntries)
+    }
+}
+```
+
+#### 3. TranslationRouter 수정
+```swift
+final class DefaultTranslationRouter: TranslationRouter {
+    private func fetchGlossaryData(...) async -> GlossaryData? {
+        guard shouldApply else { return nil }
+
+        // MainActor는 fetchData 내부에서만
+        return await MainActor.run {
+            try? glossaryDataProvider.fetchData(for: fullText)
+        }
+    }
+
+    private func prepareMaskingContext(...) async -> MaskingContext {
+        // 세그먼트 루프는 백그라운드
+        for segment in segments {
+            let glossaryEntries = await glossaryComposer.buildEntriesForSegment(
+                from: glossaryData,
+                segmentText: segment.originalText
+            )
+
+            // MainActor 필요: TermMasker가 UI 관련일 경우
+            let pieces = await MainActor.run {
+                termMasker.buildSegmentPieces(segment: segment, glossary: glossaryEntries)
+            }
+            // ...
+        }
+        return MaskingContext(...)
+    }
+}
+```
+
+**핵심 원칙**:
+1. **SwiftData 접근만 MainActor**: `context.fetch()`, `context.insert()` 등
+2. **문자열 처리는 백그라운드**: AC 트라이 구성, 매칭, 조합 생성
+3. **세그먼트 루프 전체는 백그라운드**: 10개 세그먼트 * 각 100ms = 1초 UI 프리즈 방지
+4. **필요한 경우만 MainActor로 전환**: UI 업데이트, SwiftData 접근
+
+**검증 방법**:
+- Instruments의 Time Profiler로 메인 스레드 점유율 측정
+- 10+ 세그먼트 페이지에서 UI 반응성 테스트
+- 목표: 메인 스레드 점유 < 100ms (프레임 드랍 방지)
+
+### 9.6 페이지 텍스트 결합 시 경계 문제
+
+**문제**: 세그먼트 텍스트를 공백 없이 이어붙이면 경계에서 오탐/미탐 발생 가능
+
+**현재 구현**:
+```swift
+let fullText = segments.map({ $0.originalText }).joined()
+// "Hello world" + "Nice day" → "Hello worldNice day"
+```
+
+**발생 가능한 문제**:
+1. **오탐 (False Positive)**:
+   - 세그먼트 1: "super"
+   - 세그먼트 2: "man"
+   - 결합: "superman" → 의도하지 않은 매칭
+
+2. **미탐 (False Negative)**:
+   - 일반적으로는 문제 없음 (세그먼트는 문장 단위이므로)
+   - 하지만 긴 단어가 세그먼트 경계를 넘으면 매칭 실패 가능
+
+**현재 설계의 타당성**:
+- 대부분의 경우 세그먼트는 문장 단위로 분리됨
+- 문장은 자연스러운 공백으로 구분됨
+- 실제 오탐/미탐 확률은 낮음
+
+**대응 방안**:
+
+#### Option 1: 현상 유지 + 명시적 인지
+```swift
+// 코드 주석으로 명시
+let fullText = segments.map({ $0.originalText }).joined()
+// 주의: 세그먼트 경계에서 공백 없이 결합됨
+// 대부분의 경우 문제 없으나, 드물게 오탐 가능성 존재
+```
+
+**장점**:
+- 구현 단순
+- 실용적 (실제 문제 발생 확률 낮음)
+
+**단점**:
+- 이론적 오탐 가능성 존재
+
+#### Option 2: 공백으로 결합 (권장하지 않음)
+```swift
+let fullText = segments.map({ $0.originalText }).joined(separator: " ")
+```
+
+**문제점**:
+- 원본 텍스트에 없는 공백 추가
+- AC 매칭 결과가 실제 세그먼트와 불일치
+- 더 큰 문제 발생 가능
+
+#### Option 3: 세그먼트별 데이터 조회 (과도한 최적화)
+```swift
+// 각 세그먼트마다 독립적으로 데이터 조회
+for segment in segments {
+    let data = await fetchGlossaryData(fullText: segment.originalText)
+    // ...
+}
+```
+
+**문제점**:
+- 성능 저하 (N회 조회)
+- Q-gram 리콜 효율 감소
+- 복잡도 증가
+
+**권장 방안**: Option 1 (현상 유지)
+- 세그먼트 경계 오탐은 실무에서 거의 발생하지 않음
+- 발생하더라도 사용자가 수동으로 수정 가능
+- 복잡도 증가 대비 이득이 크지 않음
+
+**모니터링**:
+- 사용자 피드백으로 실제 문제 발생 빈도 측정
+- 필요시 추후 개선 (세그먼트 경계에 특수 마커 삽입 등)
 
 ---
 
