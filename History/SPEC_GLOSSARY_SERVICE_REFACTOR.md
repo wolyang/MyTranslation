@@ -465,6 +465,11 @@ public enum Deduplicator {
   - Pattern composed entry: `prohibitStandalone = false`
   - 병합 결과: `true && false = false` (허용됨)
 
+**정렬/순서 주의**:
+- `Deduplicator`는 Map 기반이라 **입력 순서를 보존하지 않는다.**
+- downstream에서 순서가 의미가 있다면(예: 원문 위치 기반 정렬 필요), `source` range나 세그먼트 내 등장 순서를 기준으로 별도의 정렬 단계를 둔다.
+- 현재 파이프라인은 TermMasker/하이라이트가 실제 텍스트 위치로 재정렬하므로 순서 비보존이 문제되지 않는다는 전제하에 설계한다.
+
 #### 3.3.3 GlossaryAddCandidateUtil 연동 고려사항
 
 Glossary 추가 패널에서 사용하는 `GlossaryAddCandidateUtil.computeUnmatchedCandidates`는 Composer 기원 엔트리를 다음처럼 처리해야 합니다:
@@ -1334,7 +1339,7 @@ extension Glossary {
             let patterns = try Store.fetchPatterns(ctx: context)
 
             // 여기서 MainActor 탈출!
-            return await withCheckedContinuation { continuation in
+            return try await withCheckedThrowingContinuation { continuation in
                 Task.detached {
                     // 백그라운드: AC 트라이 구성 및 매칭
                     let acBundle = Matcher.makeACBundle(from: candidateTerms)
@@ -1344,8 +1349,13 @@ extension Glossary {
                     var matchedSourcesByKey: [String: Set<String>] = [:]
                     // ... 매칭 로직
 
-                    let data = GlossaryData(...)
-                    continuation.resume(returning: data)
+                    do {
+                        let data = GlossaryData(...)
+                        continuation.resume(returning: data)
+                    } catch {
+                        // AC 매칭/조립 중 오류도 상위로 전달
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
         }
@@ -1482,6 +1492,7 @@ for segment in segments {
 - 세그먼트 경계 오탐은 실무에서 거의 발생하지 않음
 - 발생하더라도 사용자가 수동으로 수정 가능
 - 복잡도 증가 대비 이득이 크지 않음
+- 리뷰 피드백(경계 구분자 삽입)은 AC 매칭 위치/하이라이트 보정 로직을 모두 바꿔야 하고, 원문에 없는 문자를 삽입하면 range 불일치 위험이 더 커서 일단 채택하지 않음. 이후 실제 오탐 사례가 누적되면 구분자 삽입 + range 재계산을 묶은 실험 플래그로 도입한다.
 
 **모니터링**:
 - 사용자 피드백으로 실제 문제 발생 빈도 측정

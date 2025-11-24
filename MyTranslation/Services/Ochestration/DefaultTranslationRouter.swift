@@ -322,6 +322,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         segmentText: String
     ) async -> [GlossaryEntry] {
         guard let data else { return [] }
+        // GlossaryComposer는 문자열/AC 계산이므로 백그라운드에서 수행해 UI 스레드 점유를 피한다.
         return await Task.detached { [glossaryComposer] in
             glossaryComposer.buildEntriesForSegment(
                 from: data,

@@ -5,6 +5,7 @@ public final class GlossaryComposer {
     public init() { }
 
     /// 세그먼트별 엔트리 생성 (메인 구현).
+    /// - Note: 세그먼트 텍스트에 실제 나타나는 단독/조합 엔트리만 생성해 메모리를 절약한다.
     public func buildEntriesForSegment(
         from data: GlossaryData,
         segmentText: String
@@ -33,6 +34,7 @@ public final class GlossaryComposer {
     }
 
     /// 페이지 전체 엔트리 생성 (레거시 호환).
+    /// - Warning: 세그먼트 단위 최적화가 없으므로 가능하면 `buildEntriesForSegment`를 사용한다.
     public func buildEntries(
         from data: GlossaryData,
         pageText: String
@@ -42,6 +44,7 @@ public final class GlossaryComposer {
 
     // MARK: - Private Helpers
 
+    /// 세그먼트에 실제 등장하는 단독 용어 엔트리만 추출한다.
     private func buildStandaloneEntries(
         from terms: [Glossary.SDModel.SDTerm],
         matchedSources: [String: Set<String>],
@@ -86,6 +89,7 @@ public final class GlossaryComposer {
         return entries
     }
 
+    /// 세그먼트에 실제 등장하는 패턴 조합 엔트리만 생성한다.
     private func buildComposedEntriesForSegment(
         from patterns: [Glossary.SDModel.SDPattern],
         terms: [Glossary.SDModel.SDTerm],

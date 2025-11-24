@@ -39,6 +39,14 @@ struct GlossaryServiceTests {
         return composer.buildEntries(from: data, pageText: text)
     }
 
+    /// 테스트에서 composer origin을 가진 엔트리의 source만 빠르게 모을 때 사용한다.
+    private func composerSources(in entries: [GlossaryEntry]) -> [String] {
+        entries.compactMap {
+            if case .composer = $0.origin { return $0.source }
+            return nil
+        }
+    }
+
     private func makeTerm(
         key: String,
         source: String,
@@ -173,8 +181,8 @@ struct GlossaryServiceTests {
         let firstSegmentEntries = composer.buildEntriesForSegment(from: data, segmentText: "Alpha Beta appear here.")
         let secondSegmentEntries = composer.buildEntriesForSegment(from: data, segmentText: "Gamma Delta appear later.")
 
-        let firstComposed = firstSegmentEntries.filter { if case .composer = $0.origin { return true } else { return false } }.map { $0.source }
-        let secondComposed = secondSegmentEntries.filter { if case .composer = $0.origin { return true } else { return false } }.map { $0.source }
+        let firstComposed = composerSources(in: firstSegmentEntries)
+        let secondComposed = composerSources(in: secondSegmentEntries)
 
         #expect(firstComposed == ["Alpha Beta"])
         #expect(secondComposed == ["Gamma Delta"])
@@ -218,12 +226,11 @@ struct GlossaryServiceTests {
         let data = try await provider.fetchData(for: fullText)
 
         let pageEntries = composer.buildEntries(from: data, pageText: fullText)
-        let pageComposedCount = pageEntries.filter { if case .composer = $0.origin { return true } else { return false } }.count
+        let pageComposedCount = composerSources(in: pageEntries).count
 
         let seg1 = composer.buildEntriesForSegment(from: data, segmentText: "Alpha Beta appear here.")
         let seg2 = composer.buildEntriesForSegment(from: data, segmentText: "Gamma Delta appear later.")
-        let segmentComposedCount = seg1.filter { if case .composer = $0.origin { return true } else { return false } }.count
-            + seg2.filter { if case .composer = $0.origin { return true } else { return false } }.count
+        let segmentComposedCount = composerSources(in: seg1).count + composerSources(in: seg2).count
 
         #expect(pageComposedCount == 2)  // 모든 조합 생성
         #expect(segmentComposedCount == 2) // 세그먼트별 조합 합계는 동일

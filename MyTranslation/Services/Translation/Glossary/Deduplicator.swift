@@ -1,6 +1,8 @@
 import Foundation
 
 /// GlossaryEntry 중복 제거 유틸.
+/// 주의: 반환 배열의 순서는 입력 순서를 보존하지 않는다.
+/// 순서 의미가 필요한 소비자(예: 원문 위치 기준 정렬)는 deduplicate 이후에 별도 정렬 단계를 수행해야 한다.
 public enum Deduplicator {
     public static func deduplicate(_ entries: [GlossaryEntry]) -> [GlossaryEntry] {
         struct Key: Hashable {
