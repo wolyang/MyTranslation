@@ -606,7 +606,7 @@ struct MyTranslationTests {
 
         let masker = TermMasker()
         let result = masker.normalizeWithOrder(
-            in: "케빈이 말할 때, Kevin도",
+            in: "케이빈이 말할 때, 케이빈도",
             pieces: pieces,
             nameGlossaries: [glossary]
         )
@@ -787,7 +787,7 @@ struct MyTranslationTests {
 
         let masker = TermMasker()
         let result = masker.normalizeWithOrder(
-            in: "케이빈과 Kevin과 케빈",
+            in: "케이빈과 케이빈과 케이빈",
             pieces: pieces,
             nameGlossaries: [glossary]
         )
@@ -838,6 +838,140 @@ struct MyTranslationTests {
 
         #expect(result.text == "케빈")
         #expect(result.ranges.count == 1)
+    }
+
+    @Test
+    func normalizeWithOrderFiltersSingleCharacterVariantsInPhase4() {
+        let original = "奥の力"
+        guard let range = original.range(of: "奥") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let entry = GlossaryEntry(
+            source: "奥",
+            target: "울트라",
+            variants: ["오", "오쿠", "올림픽"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "ao")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-single-char",
+            originalText: original,
+            pieces: [
+                .term(entry, range: range)
+            ]
+        )
+
+        let glossary = TermMasker.NameGlossary(
+            target: "울트라",
+            variants: ["오", "오쿠", "올림픽"],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "오를 바라보고 오늘은",
+            pieces: pieces,
+            nameGlossaries: [glossary]
+        )
+
+        #expect(result.text == "울트라를 바라보고 오늘은")
+        #expect(result.text.contains("오늘은"))
+    }
+
+    @Test
+    func normalizeWithOrderReusesOnlyMatchedVariantsInPhase4() {
+        let original = "伽古拉"
+        guard let range = original.range(of: "伽古拉") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let entry = GlossaryEntry(
+            source: "伽古拉",
+            target: "쟈그라",
+            variants: ["가고라", "가구라"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "jg")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-matched-only",
+            originalText: original,
+            pieces: [
+                .term(entry, range: range)
+            ]
+        )
+
+        let glossary = TermMasker.NameGlossary(
+            target: "쟈그라",
+            variants: ["가고라", "가굴라"],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "가고라는 그 가구라도 사기로 했다.",
+            pieces: pieces,
+            nameGlossaries: [glossary]
+        )
+
+        #expect(result.text == "쟈그라는 그 가구라도 사기로 했다.")
+    }
+
+    @Test
+    func normalizeWithOrderHandlesMatchedFallbackVariantsInPhase4() {
+        let original = "가이"
+        guard let range = original.range(of: "가이") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let entry = GlossaryEntry(
+            source: "가이",
+            target: "가이",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "guy")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-fallback-positive",
+            originalText: original,
+            pieces: [
+                .term(entry, range: range)
+            ]
+        )
+
+        let glossary = TermMasker.NameGlossary(
+            target: "가이",
+            variants: [],
+            expectedCount: 1,
+            fallbackTerms: [
+                .init(termKey: "guy-fallback", target: "가이", variants: ["Guy"])
+            ]
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "Guy와 Guy를 만났다",
+            pieces: pieces,
+            nameGlossaries: [glossary]
+        )
+
+        #expect(result.text == "가이와 가이를 만났다")
+        #expect(result.ranges.count == 2)
+        #expect(result.ranges.allSatisfy { String(result.text[$0.range]) == "가이" })
     }
 
     @Test
@@ -1000,6 +1134,7 @@ struct MyTranslationTests {
         for r in result.ranges {
             #expect(String(result.text[r.range]) == "gray")
         }
+        #expect(result.matchedVariants["gray"]?.contains("grey") == true)
     }
 
     @Test

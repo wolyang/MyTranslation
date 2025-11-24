@@ -126,7 +126,7 @@ WKWebView 번역 결과 반영.
 
 * `GlossaryDataProvider`가 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
 * `TermMasker`: 마스킹/언마스킹 처리, variants 정규화, 하이라이트 range 추적
-  * Phase 4 잔여 일괄 교체: 이미 정규화된 범위는 보호하면서 번역 엔진이 추가한 여분의 variants를 일괄 정규화하고 범위를 함께 추적
+  * Phase 4 잔여 일괄 교체: 이미 정규화된 범위는 보호하고, 실제 매칭된 변형만 재사용하며 1글자 변형은 건너뛰어 오정규화를 방지하면서 여분 인스턴스를 일괄 정규화하고 범위를 함께 추적
 * `MaskedPack`: 원문/마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
 * `TermHighlightMetadata`: 원문/정규화 전/최종 번역문 하이라이트 정보
 * **Hangul handling**: 한글 조사 선택을 위해 받침(종성) 여부를 판별하는 `hangulFinalJongInfo()` 로직을 포함해,
