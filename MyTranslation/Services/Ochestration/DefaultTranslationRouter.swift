@@ -58,14 +58,27 @@ final class DefaultTranslationRouter: TranslationRouter {
         preferredEngine: TranslationEngineID?,
         progress: @escaping (TranslationStreamEvent) -> Void
     ) async throws -> TranslationStreamSummary {
+        return try await translateStreamInternal(
+            runID: runID,
+            segments: segments,
+            options: options,
+            preferredEngine: preferredEngine,
+            preparedContext: nil,
+            progress: progress
+        )
+    }
+
+    /// 미리 생성된 마스킹 컨텍스트를 재사용할 수 있는 내부용 스트리밍 번역 엔트리.
+    internal func translateStreamInternal(
+        runID: String,
+        segments: [Segment],
+        options: TranslationOptions,
+        preferredEngine: TranslationEngineID?,
+        preparedContext: MaskingContext?,
+        progress: @escaping (TranslationStreamEvent) -> Void
+    ) async throws -> TranslationStreamSummary {
         print("[Router] Start translateStream")
         let cancelBag = RouterCancellationCenter.shared.bag(for: runID)
-
-        // 주의: 세그먼트 텍스트를 공백 없이 결합한다. 경계에서 드물게 오탐/미탐이 생길 수 있어 필요 시 별도 구분자를 도입한다.
-        let glossaryData = await fetchGlossaryData(
-            fullText: segments.map { $0.originalText }.joined(),
-            shouldApply: options.applyGlossary
-        )
 
         let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
         let engine = engine(for: engineTag)
@@ -94,6 +107,17 @@ final class DefaultTranslationRouter: TranslationRouter {
             }
         }
 
+        let glossaryData: GlossaryData?
+        if preparedContext == nil {
+            // 주의: 세그먼트 텍스트를 공백 없이 결합한다. 경계에서 드물게 오탐/미탐이 생길 수 있어 필요 시 별도 구분자를 도입한다.
+            glossaryData = await fetchGlossaryData(
+                fullText: segments.map { $0.originalText }.joined(),
+                shouldApply: options.applyGlossary
+            )
+        } else {
+            glossaryData = nil
+        }
+
         let summary: TranslationStreamSummary = try await {
             // 아무 것도 번역할 것이 없으면 바로 요약 리턴
             guard !pendingSegments.isEmpty else {
@@ -118,12 +142,17 @@ final class DefaultTranslationRouter: TranslationRouter {
             let termMasker = TermMasker()
             // 페이지 언어에 맞춰 토큰 주변 공백 삽입 정책을 적용한다.
             termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
-            let maskingContext = await prepareMaskingContext(
-                from: pendingSegments,
-                glossaryData: glossaryData,
-                engine: engine,
-                termMasker: termMasker
-            )
+
+            let maskingContext: MaskingContext
+            if let preparedContext {
+                maskingContext = preparedContext
+            } else {
+                maskingContext = await prepareMaskingContextInternal(
+                    from: pendingSegments,
+                    glossaryData: glossaryData,
+                    termMasker: termMasker
+                )
+            }
             
             for index in maskingContext.maskedPacks.indices {
                 let originalSegment = pendingSegments[index]
@@ -155,6 +184,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     (sequence, streamState) = try await processStream(
                         runID: runID,
                         engine: engine,
+                        engineTag: engine.tag,
                         maskedSegments: maskingContext.maskedSegments,
                         pendingSegments: pendingSegments,
                         indexByID: indexByID,
@@ -262,11 +292,30 @@ final class DefaultTranslationRouter: TranslationRouter {
         return payload
     }
 
+    /// 외부(예: 오버레이)에서 사용할 수 있는 마스킹 컨텍스트 생성기. 엔진 독립적이다.
+    public func prepareMaskingContext(
+        segments: [Segment],
+        options: TranslationOptions
+    ) async -> MaskingContext? {
+        let glossaryData = await fetchGlossaryData(
+            fullText: segments.map { $0.originalText }.joined(),
+            shouldApply: options.applyGlossary
+        )
+
+        let termMasker = TermMasker()
+        termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
+
+        return await prepareMaskingContextInternal(
+            from: segments,
+            glossaryData: glossaryData,
+            termMasker: termMasker
+        )
+    }
+
     /// 스트리밍 처리를 위해 마스킹된 세그먼트와 보조 정보를 구성한다.
-    private func prepareMaskingContext(
+    private func prepareMaskingContextInternal(
         from segments: [Segment],
         glossaryData: GlossaryData?,
-        engine: TranslationEngine,
         termMasker: TermMasker
     ) async -> MaskingContext {
         var allSegmentPieces: [SegmentPieces] = []
@@ -312,8 +361,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             maskedSegments: maskedSegments,
             maskedPacks: maskedPacks,
             nameGlossariesPerSegment: nameGlossariesPerSegment,
-            segmentPieces: allSegmentPieces,
-            engineTag: engine.tag
+            segmentPieces: allSegmentPieces
         )
     }
 
@@ -335,6 +383,7 @@ final class DefaultTranslationRouter: TranslationRouter {
     private func processStream(
         runID: String,
         engine: TranslationEngine,
+        engineTag: EngineTag,
         maskedSegments: [Segment],
         pendingSegments: [Segment],
         indexByID: [String: Int],
@@ -437,7 +486,7 @@ final class DefaultTranslationRouter: TranslationRouter {
                     
                 st.succeededIDs.append(originalSegment.id)
                     
-                let cacheKey = cacheKey(for: pack.seg, options: options, engine: maskingContext.engineTag)
+                let cacheKey = cacheKey(for: pack.seg, options: options, engine: engineTag)
                 cache.save(result: finalResult, forKey: cacheKey)
             }
         }
@@ -615,13 +664,12 @@ final class DefaultTranslationRouter: TranslationRouter {
         return ranges
     }
 
-    /// 마스킹 연산에 필요한 컨텍스트를 표현한다.
-    private struct MaskingContext {
+    /// 마스킹 연산에 필요한 컨텍스트를 표현한다. 엔진 독립적이다.
+    internal struct MaskingContext: Sendable {
         let maskedSegments: [Segment]
         let maskedPacks: [MaskedPack]
         let nameGlossariesPerSegment: [[TermMasker.NameGlossary]]
         let segmentPieces: [SegmentPieces]
-        let engineTag: EngineTag
     }
 
     /// 스트림 진행 상황을 추적하기 위한 상태 값.

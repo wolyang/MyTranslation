@@ -662,7 +662,7 @@ public final class TermMasker {
         return out
     }
     
-    struct NameGlossary {
+    struct NameGlossary: Sendable {
         struct FallbackTerm: Sendable {
             let termKey: String
             let target: String

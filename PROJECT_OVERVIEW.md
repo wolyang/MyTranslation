@@ -61,6 +61,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
   * 캐시를 먼저 조회하고 필요 시 엔진 호출
   * AFM, Google, DeepL 등으로 라우팅
   * Glossary 적용을 위한 훅 제공
+  * 마스킹 컨텍스트 공유 API(`prepareMaskingContext`, `translateStreamInternal`)로 다중 엔진/오버레이에서 Glossary/SegmentPieces 재사용
 * 스트림 이벤트(`TranslationStreamingContract`) 예:
 
   * `cachedHit` → `requestScheduled` → `partial`/`final` → `failed` → `completed`
