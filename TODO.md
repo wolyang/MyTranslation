@@ -9,6 +9,12 @@
 
 ## 진행 중/우선 작업
 
+- [ ] (P0) Glossary Service 리팩토링(`History/SPEC_GLOSSARY_SERVICE_REFACTOR.md`):
+  - [x] Phase 1: 타입 및 파일 분리
+  - [x] Phase 2: 데이터 계층 리팩토링 (GlossaryDataProvider)
+  - [x] Phase 3: 서비스 계층 구현 (GlossaryComposer)
+  - [x] Phase 4: TranslationRouter 통합
+  - [x] Phase 5: 레거시 코드 제거 및 문서 업데이트
 - [ ] (P1) Glossary auto-variant 기능 구현(감지된 Term에 variants를 자동 추가해 관리 편의 개선).
 - [ ] (P1) 오버레이 패널에서 용어집 추가 기능 구현(`History/SPEC_OVERLAY_GLOSSARY_ADD.md` 참조):
   - [x] Phase 1: 기본 플로우 (번역문 선택 → variants 추가) — 컨텍스트 메뉴/시트/TermEditor 진입점, 기존 용어/새 용어 추가까지 연결

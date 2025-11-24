@@ -14,7 +14,8 @@ final class AppContainer: ObservableObject {
 
     // Router & infra
     let cache: CacheStore
-    let glossaryService: Glossary.Service
+    let glossaryDataProvider: Glossary.DataProvider
+    let glossaryComposer: GlossaryComposer
     let router: TranslationRouter
     
     let postEditor: PostEditor
@@ -59,14 +60,16 @@ final class AppContainer: ObservableObject {
         }
 
         self.cache = DefaultCacheStore()
-        self.glossaryService = Glossary.Service(context: context)
+        self.glossaryDataProvider = Glossary.DataProvider(context: context)
+        self.glossaryComposer = GlossaryComposer()
 
         self.router = DefaultTranslationRouter(
             afm: afmEngine,
             deepl: deeplEngine,
             google: googleEngine,
             cache: cache,
-            glossaryService: glossaryService,
+            glossaryDataProvider: glossaryDataProvider,
+            glossaryComposer: glossaryComposer,
             postEditor: postEditor,
             comparer: comparer,
             reranker: reranker

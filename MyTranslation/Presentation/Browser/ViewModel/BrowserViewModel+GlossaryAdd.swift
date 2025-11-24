@@ -88,7 +88,18 @@ extension BrowserViewModel {
 
 // MARK: - Candidate computation (shared for testing)
 
+// 하이라이트 메타데이터를 이용해 용어집 추가 후보를 계산하는 유틸.
 enum GlossaryAddCandidateUtil {
+    /// 하이라이트/선택 정보를 기반으로 아직 등록되지 않은 용어 후보를 우선순위로 반환한다.
+    /// - Parameters:
+    ///   - metadata: 하이라이트된 GlossaryEntry 정보.
+    ///   - selectedText: 사용자가 선택한 텍스트.
+    ///   - finalText: 정규화·언마스킹 이후 텍스트(있으면 finalTermRanges 사용).
+    ///   - preNormalizedText: 정규화 이전 텍스트(없으면 빈 문자열).
+    ///   - selectionAnchor: 선택 시작 위치(UTF-16 오프셋).
+    ///   - maxCount: 반환할 최대 후보 개수.
+    ///   - maxScanCount: 원문 하이라이트 스캔 상한(성능 보호).
+    /// - Returns: 후보 목록과 상한 초과로 절단되었는지 여부.
     static func computeUnmatchedCandidates(
         metadata: TermHighlightMetadata,
         selectedText: String,
@@ -152,24 +163,21 @@ enum GlossaryAddCandidateUtil {
                 ))
             case let .composer(_, leftKey, rightKey, _):
                 let keys = [leftKey, rightKey].compactMap { $0 }
-                if keys.isEmpty {
-                    candidates.append(GlossaryAddSheetState.UnmatchedTermCandidate(
-                        termKey: nil,
-                        entry: entry,
-                        appearanceOrder: index,
-                        similarity: score
-                    ))
-                } else {
-                    for key in keys {
-                        candidates.append(
-                            GlossaryAddSheetState.UnmatchedTermCandidate(
-                                termKey: key,
-                                entry: entry,
-                                appearanceOrder: index,
-                                similarity: score
-                            )
+                guard keys.isEmpty == false else { continue }
+                for key in keys {
+                    guard
+                        let term = entry.componentTerms.first(where: { $0.key == key }),
+                        let termEntry = makeCandidateEntry(from: term, selection: loweredSelection)
+                    else { continue }
+
+                    candidates.append(
+                        GlossaryAddSheetState.UnmatchedTermCandidate(
+                            termKey: key,
+                            entry: termEntry,
+                            appearanceOrder: index,
+                            similarity: bestSimilarityScore(for: termEntry, against: loweredSelection)
                         )
-                    }
+                    )
                 }
             }
         }
@@ -207,11 +215,55 @@ enum GlossaryAddCandidateUtil {
         return (limited, truncated)
     }
 
+    /// ComponentTerm 정보에서 GlossaryEntry를 생성해 후보로 사용한다.
+    private static func makeCandidateEntry(
+        from term: GlossaryEntry.ComponentTerm,
+        selection: String
+    ) -> GlossaryEntry? {
+        guard let source = bestSource(for: term, selection: selection) else { return nil }
+        let prohibit = term.sources.first(where: { $0.text == source })?.prohibitStandalone ?? false
+        return GlossaryEntry(
+            source: source,
+            target: term.target,
+            variants: term.variants,
+            preMask: term.preMask,
+            isAppellation: term.isAppellation,
+            prohibitStandalone: prohibit,
+            origin: .termStandalone(termKey: term.key),
+            componentTerms: [term],
+            activatorKeys: term.activatorKeys,
+            activatesKeys: term.activatesKeys
+        )
+    }
+
+    /// 매칭된 소스가 있으면 우선 사용하고, 없으면 등록된 소스 중 최적 유사도 소스를 반환한다.
+    private static func bestSource(
+        for term: GlossaryEntry.ComponentTerm,
+        selection: String
+    ) -> String? {
+        let candidates = prioritizedSources(for: term)
+        guard candidates.isEmpty == false else { return nil }
+        guard selection.isEmpty == false else { return candidates.first }
+
+        return candidates.max { lhs, rhs in
+            similarityScore(lhs.lowercased(), selection) < similarityScore(rhs.lowercased(), selection)
+        }
+    }
+
+    /// matchedSources를 우선 반환하고, 없으면 모든 등록 소스를 반환한다.
+    private static func prioritizedSources(for term: GlossaryEntry.ComponentTerm) -> [String] {
+        let matched = term.sources.filter { term.matchedSources.contains($0.text) }.map { $0.text }
+        if matched.isEmpty == false { return matched }
+        return term.sources.map { $0.text }
+    }
+
+    /// 타겟/variants 중 선택 텍스트와 가장 유사한 점수를 계산한다.
     private static func bestSimilarityScore(for entry: GlossaryEntry, against text: String) -> Double {
         let candidates = [entry.target] + Array(entry.variants)
         return candidates.map { similarityScore($0.lowercased(), text) }.max() ?? 0
     }
 
+    /// Levenshtein 거리 기반 유사도(1 - dist/maxLen).
     private static func similarityScore(_ a: String, _ b: String) -> Double {
         if a.isEmpty || b.isEmpty { return 0 }
         let dist = levenshteinDistance(a, b)
@@ -219,6 +271,7 @@ enum GlossaryAddCandidateUtil {
         return maxLen == 0 ? 0 : 1 - (Double(dist) / Double(maxLen))
     }
 
+    /// 표준 Levenshtein 거리 구현.
     private static func levenshteinDistance(_ a: String, _ b: String) -> Int {
         let aChars = Array(a)
         let bChars = Array(b)

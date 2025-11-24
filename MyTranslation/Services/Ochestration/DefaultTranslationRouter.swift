@@ -19,7 +19,8 @@ final class DefaultTranslationRouter: TranslationRouter {
     private let deepl: TranslationEngine
     private let google: TranslationEngine
     private let cache: CacheStore
-    private let glossaryService: Glossary.Service
+    private let glossaryDataProvider: Glossary.DataProvider
+    private let glossaryComposer: GlossaryComposer
     private let postEditor: PostEditor // 유지(호출 제거)
     private let comparer: ResultComparer? // 유지(호출 제거)
     private let reranker: Reranker? // 유지(호출 제거)
@@ -32,7 +33,8 @@ final class DefaultTranslationRouter: TranslationRouter {
         deepl: TranslationEngine,
         google: TranslationEngine,
         cache: CacheStore,
-        glossaryService: Glossary.Service,
+        glossaryDataProvider: Glossary.DataProvider,
+        glossaryComposer: GlossaryComposer,
         postEditor: PostEditor,
         comparer: ResultComparer?,
         reranker: Reranker?
@@ -41,7 +43,8 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.deepl = deepl
         self.google = google
         self.cache = cache
-        self.glossaryService = glossaryService
+        self.glossaryDataProvider = glossaryDataProvider
+        self.glossaryComposer = glossaryComposer
         self.postEditor = postEditor
         self.comparer = comparer
         self.reranker = reranker
@@ -58,8 +61,11 @@ final class DefaultTranslationRouter: TranslationRouter {
         print("[Router] Start translateStream")
         let cancelBag = RouterCancellationCenter.shared.bag(for: runID)
 
-        let glossaryEntries = await fetchGlossaryEntries(fullText: segments.map({ $0.originalText
-        }).joined(), shouldApply: options.applyGlossary)
+        // 주의: 세그먼트 텍스트를 공백 없이 결합한다. 경계에서 드물게 오탐/미탐이 생길 수 있어 필요 시 별도 구분자를 도입한다.
+        let glossaryData = await fetchGlossaryData(
+            fullText: segments.map { $0.originalText }.joined(),
+            shouldApply: options.applyGlossary
+        )
 
         let engineTag = preferredEngine.flatMap(EngineTag.init(rawValue:)) ?? .afm
         let engine = engine(for: engineTag)
@@ -112,9 +118,9 @@ final class DefaultTranslationRouter: TranslationRouter {
             let termMasker = TermMasker()
             // 페이지 언어에 맞춰 토큰 주변 공백 삽입 정책을 적용한다.
             termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
-            let maskingContext = prepareMaskingContext(
+            let maskingContext = await prepareMaskingContext(
                 from: pendingSegments,
-                glossaryEntries: glossaryEntries,
+                glossaryData: glossaryData,
                 engine: engine,
                 termMasker: termMasker
             )
@@ -229,10 +235,10 @@ final class DefaultTranslationRouter: TranslationRouter {
         return "\(segment.id)|\(engine.rawValue)|pf=\(options.preserveFormatting)|style=\(options.style)|g=\(options.applyGlossary)|src=\(sourceComponent)|tgt=\(targetComponent)"
     }
 
-    /// 용어집 사용 여부에 따라 최신 용어집 스냅샷을 가져온다.
-    private func fetchGlossaryEntries(fullText: String, shouldApply: Bool) async -> [GlossaryEntry] {
-        guard shouldApply else { return [] }
-        return await MainActor.run { (try? glossaryService.buildEntries(for: fullText)) ?? [] }
+    /// 용어집 사용 여부에 따라 최신 용어집 데이터를 가져온다.
+    private func fetchGlossaryData(fullText: String, shouldApply: Bool) async -> GlossaryData? {
+        guard shouldApply else { return nil }
+        return try? await glossaryDataProvider.fetchData(for: fullText)
     }
 
     /// 캐시 적중 시 최종 페이로드를 만들고, 적중하지 않으면 nil을 반환한다.
@@ -259,15 +265,19 @@ final class DefaultTranslationRouter: TranslationRouter {
     /// 스트리밍 처리를 위해 마스킹된 세그먼트와 보조 정보를 구성한다.
     private func prepareMaskingContext(
         from segments: [Segment],
-        glossaryEntries: [GlossaryEntry],
+        glossaryData: GlossaryData?,
         engine: TranslationEngine,
         termMasker: TermMasker
-    ) -> MaskingContext {
+    ) async -> MaskingContext {
         var allSegmentPieces: [SegmentPieces] = []
         var maskedPacks: [MaskedPack] = []
         var nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = []
 
         for segment in segments {
+            let glossaryEntries = await buildEntriesForSegment(
+                from: glossaryData,
+                segmentText: segment.originalText
+            )
             let (pieces, _) = termMasker.buildSegmentPieces(
                 segment: segment,
                 glossary: glossaryEntries
@@ -305,6 +315,20 @@ final class DefaultTranslationRouter: TranslationRouter {
             segmentPieces: allSegmentPieces,
             engineTag: engine.tag
         )
+    }
+
+    private func buildEntriesForSegment(
+        from data: GlossaryData?,
+        segmentText: String
+    ) async -> [GlossaryEntry] {
+        guard let data else { return [] }
+        // GlossaryComposer는 문자열/AC 계산이므로 백그라운드에서 수행해 UI 스레드 점유를 피한다.
+        return await Task.detached { [glossaryComposer] in
+            glossaryComposer.buildEntriesForSegment(
+                from: data,
+                segmentText: segmentText
+            )
+        }.value
     }
 
     /// 엔진 스트림을 소비하며 최종 이벤트를 생성한다.
