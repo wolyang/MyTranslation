@@ -57,8 +57,20 @@ extension BrowserViewModel {
         _ = try? await executor.runJS("window.MT && MT.CLEAR && MT.CLEAR();")
         _ = try? await executor.runJS(#"window.MT && MT.HILITE && MT.HILITE(\#(String(reflecting: id)));"#)
 
+        let preference = currentPageTranslation?.languagePreference ?? languagePreference
+        let options = makeTranslationOptions(using: preference)
+        let sharedContext = await prepareSharedMaskingContext(
+            for: segment,
+            options: options
+        )
+
         for engine in enginesToFetch {
-            startOverlayTranslation(for: engine, segment: segment)
+            startOverlayTranslation(
+                for: engine,
+                segment: segment,
+                options: options,
+                sharedContext: sharedContext
+            )
         }
     }
 
@@ -138,6 +150,18 @@ private extension BrowserViewModel {
         }
     }
 
+    /// 오버레이에서 비교용으로 실행할 여러 엔진이 공유할 마스킹 컨텍스트를 한 번만 생성한다.
+    func prepareSharedMaskingContext(
+        for segment: Segment,
+        options: TranslationOptions
+    ) async -> DefaultTranslationRouter.MaskingContext? {
+        guard let defaultRouter = router as? DefaultTranslationRouter else { return nil }
+        return await defaultRouter.prepareMaskingContext(
+            segments: [segment],
+            options: options
+        )
+    }
+
     /// 현재 페이지 캐시에 저장된 세그먼트 번역 페이로드를 조회한다.
     func cachedTranslationPayload(for segmentID: String, engineID: TranslationEngineID) -> TranslationStreamPayload? {
         guard let state = currentPageTranslation,
@@ -167,33 +191,57 @@ private extension BrowserViewModel {
     }
 
     /// 지정된 엔진으로 오버레이 번역 스트림을 시작하고 결과를 상태에 반영한다.
-    func startOverlayTranslation(for engine: EngineTag, segment: Segment) {
+    func startOverlayTranslation(
+        for engine: EngineTag,
+        segment: Segment,
+        options: TranslationOptions,
+        sharedContext: DefaultTranslationRouter.MaskingContext?
+    ) {
         let key = overlayTaskKey(segmentID: segment.id, engineID: engine.rawValue)
         overlayTranslationTasks[key]?.cancel()
         RouterCancellationCenter.shared.cancel(runID: key)
 
-        let preference = currentPageTranslation?.languagePreference ?? languagePreference
-        let options = makeTranslationOptions(using: preference)
         let bag = RouterCancellationCenter.shared.bag(for: key)
 
         let worker = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             
             do {
-                _ = try await router.translateStream(
-                    runID: key,
-                    segments: [segment],
-                    options: options,
-                    preferredEngine: engine.rawValue
-                ) { event in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        if Task.isCancelled { return }
-                        self.handleOverlayTranslationEvent(
-                            event,
-                            segmentID: segment.id,
-                            engineID: engine.rawValue
-                        )
+                if let defaultRouter = router as? DefaultTranslationRouter {
+                    _ = try await defaultRouter.translateStreamInternal(
+                        runID: key,
+                        segments: [segment],
+                        options: options,
+                        preferredEngine: engine.rawValue,
+                        preparedContext: sharedContext,
+                        progress: { event in
+                            Task { @MainActor [weak self] in
+                                guard let self else { return }
+                                if Task.isCancelled { return }
+                                self.handleOverlayTranslationEvent(
+                                    event,
+                                    segmentID: segment.id,
+                                    engineID: engine.rawValue
+                                )
+                            }
+                        }
+                    )
+                } else {
+                    _ = try await router.translateStream(
+                        runID: key,
+                        segments: [segment],
+                        options: options,
+                        preferredEngine: engine.rawValue
+                    ) { event in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            if Task.isCancelled { return }
+                            self.handleOverlayTranslationEvent(
+                                event,
+                                segmentID: segment.id,
+                                engineID: engine.rawValue
+                            )
+                        }
                     }
                 }
             } catch is CancellationError {
