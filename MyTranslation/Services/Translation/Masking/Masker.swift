@@ -1254,7 +1254,12 @@ public final class TermMasker {
             if let range = result.replacedRange {
                 ranges.append(.init(entry: entry, range: range, type: .normalized))
             }
-            let newLen = out.distance(from: out.startIndex, to: result.nextIndex) - lowerOffset
+            let newLen: Int
+            if let replacedRange = result.replacedRange {
+                newLen = out.distance(from: replacedRange.lowerBound, to: replacedRange.upperBound)
+            } else {
+                newLen = out.distance(from: out.startIndex, to: result.nextIndex) - lowerOffset
+            }
             cumulativeDelta += (newLen - oldLen)
             processed.insert(index)
         }
@@ -1291,7 +1296,12 @@ public final class TermMasker {
                 if let range = result.replacedRange {
                     ranges.append(.init(entry: entry, range: range, type: .normalized))
                 }
-                let newLen = out.distance(from: out.startIndex, to: result.nextIndex) - lowerOffset
+                let newLen: Int
+                if let replacedRange = result.replacedRange {
+                    newLen = out.distance(from: replacedRange.lowerBound, to: replacedRange.upperBound)
+                } else {
+                    newLen = out.distance(from: out.startIndex, to: result.nextIndex) - lowerOffset
+                }
                 cumulativeDelta += (newLen - oldLen)
                 processed.insert(index)
                 break
