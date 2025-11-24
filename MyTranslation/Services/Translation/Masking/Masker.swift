@@ -1333,6 +1333,100 @@ public final class TermMasker {
             }
         }
 
+        // Phase 4: 잔여 일괄 교체 (보호 범위 포함)
+        struct OffsetRange {
+            let entry: GlossaryEntry
+            var nsRange: NSRange
+            let type: TermRange.TermType
+        }
+
+        var normalizedOffsets: [OffsetRange] = ranges.compactMap { termRange in
+            guard let nsRange = NSRange(termRange.range, in: out) else { return nil }
+            return OffsetRange(entry: termRange.entry, nsRange: nsRange, type: termRange.type)
+        }
+        var protectedRanges: [NSRange] = normalizedOffsets.map { $0.nsRange }
+
+        let processedTargetsFromOffsets = normalizedOffsets.map { $0.entry.target }
+        let processedTargetsFromProcessed = processed.compactMap { idx -> String? in
+            guard idx < pieces.pieces.count else { return nil }
+            guard case .term(let entry, _) = pieces.pieces[idx] else { return nil }
+            return entry.target
+        }
+        let processedTargets = Set(processedTargetsFromOffsets + processedTargetsFromProcessed)
+
+        func overlapsProtected(_ range: NSRange) -> Bool {
+            return protectedRanges.contains { NSIntersectionRange($0, range).length > 0 }
+        }
+
+        func shiftRanges(after position: Int, delta: Int) {
+            guard delta != 0 else { return }
+            // 역순 교체에 기대어 location >= position 인 영역만 델타 보정한다.
+            for idx in normalizedOffsets.indices where normalizedOffsets[idx].nsRange.location >= position {
+                normalizedOffsets[idx].nsRange.location += delta
+            }
+            for idx in protectedRanges.indices where protectedRanges[idx].location >= position {
+                protectedRanges[idx].location += delta
+            }
+        }
+
+        func handleVariants(_ variants: [String], replacement: String, entry: GlossaryEntry) {
+            let sorted = variants.sorted { $0.count > $1.count }
+            for variant in sorted where variant.isEmpty == false {
+                var matches: [NSRange] = []
+                var searchStart = out.startIndex
+
+                while searchStart < out.endIndex,
+                      let found = out.range(of: variant, options: [.caseInsensitive], range: searchStart..<out.endIndex) {
+                    let nsRange = NSRange(found, in: out)
+                    if overlapsProtected(nsRange) == false {
+                        matches.append(nsRange)
+                    }
+                    searchStart = found.upperBound
+                }
+
+                // 뒤에서부터 교체해 앞선 NSRange가 무효화되지 않도록 한다.
+                for nsRange in matches.reversed() {
+                    guard let swiftRange = Range(nsRange, in: out) else { continue }
+                    let before = out
+                    let result = replaceWithParticleFix(
+                        in: out,
+                        range: swiftRange,
+                        replacement: replacement
+                    )
+                    // 문자열 길이 변화를 기록해 이후 하이라이트 오프셋을 보정한다.
+                    let delta = (result.text as NSString).length - (before as NSString).length
+                    out = result.text
+                    if delta != 0 {
+                        let threshold = nsRange.location + nsRange.length
+                        shiftRanges(after: threshold, delta: delta)
+                    }
+                    if let replacedRange = result.replacedRange,
+                       let nsReplaced = NSRange(replacedRange, in: out) {
+                        normalizedOffsets.append(.init(entry: entry, nsRange: nsReplaced, type: .normalized))
+                        protectedRanges.append(nsReplaced)
+                    }
+                }
+            }
+        }
+
+        for targetName in processedTargets {
+            guard let name = nameByTarget[targetName],
+                  let entry = entryByTarget[targetName] else { continue }
+
+            handleVariants(name.variants, replacement: name.target, entry: entry)
+
+            if let fallbacks = name.fallbackTerms {
+                for fallback in fallbacks {
+                    handleVariants(fallback.variants, replacement: fallback.target, entry: entry)
+                }
+            }
+        }
+
+        ranges = normalizedOffsets.compactMap { offset in
+            guard let swiftRange = Range(offset.nsRange, in: out) else { return nil }
+            return TermRange(entry: offset.entry, range: swiftRange, type: offset.type)
+        }
+
         return (out, ranges, preNormalizedRanges)
     }
 

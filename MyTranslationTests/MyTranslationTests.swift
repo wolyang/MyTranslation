@@ -570,6 +570,277 @@ struct MyTranslationTests {
     }
 
     @Test
+    func normalizeWithOrderHandlesResidualVariantsInPhase4() {
+        let original = "凯文说话"
+        guard let nameRange = original.range(of: "凯文") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let entry = GlossaryEntry(
+            source: "凯文",
+            target: "케빈",
+            variants: ["케이빈", "Kevin"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "c1")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4",
+            originalText: original,
+            pieces: [
+                .text(String(original[original.startIndex..<nameRange.lowerBound]), range: original.startIndex..<nameRange.lowerBound),
+                .term(entry, range: nameRange),
+                .text(String(original[nameRange.upperBound..<original.endIndex]), range: nameRange.upperBound..<original.endIndex)
+            ]
+        )
+
+        let glossary = TermMasker.NameGlossary(
+            target: "케빈",
+            variants: ["케이빈", "Kevin"],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "케빈이 말할 때, Kevin도",
+            pieces: pieces,
+            nameGlossaries: [glossary]
+        )
+
+        #expect(result.text == "케빈이 말할 때, 케빈도")
+        #expect(result.ranges.count == 2)
+        #expect(result.ranges.allSatisfy { String(result.text[$0.range]) == "케빈" })
+    }
+
+    @Test
+    func normalizeWithOrderRespectsProtectedRangesInPhase4() {
+        let original = "凯和k,凯"
+        guard let firstKai = original.range(of: "凯"),
+              let secondKai = original.range(of: "凯", range: firstKai.upperBound..<original.endIndex),
+              let kRange = original.range(of: "k") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let kaiEntry = GlossaryEntry(
+            source: "凯",
+            target: "가이",
+            variants: ["카이", "케이"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "kai")
+        )
+        let kEntry = GlossaryEntry(
+            source: "k",
+            target: "케이",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "k")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-protected",
+            originalText: original,
+            pieces: [
+                .term(kaiEntry, range: firstKai),
+                .text(String(original[firstKai.upperBound..<kRange.lowerBound]), range: firstKai.upperBound..<kRange.lowerBound),
+                .term(kEntry, range: kRange),
+                .text(String(original[kRange.upperBound..<secondKai.lowerBound]), range: kRange.upperBound..<secondKai.lowerBound),
+                .term(kaiEntry, range: secondKai)
+            ]
+        )
+
+        let kaiGlossary = TermMasker.NameGlossary(
+            target: "가이",
+            variants: ["카이", "케이"],
+            expectedCount: 2,
+            fallbackTerms: nil
+        )
+        let kGlossary = TermMasker.NameGlossary(
+            target: "케이",
+            variants: [],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "카이와 케이, 카이의 친구",
+            pieces: pieces,
+            nameGlossaries: [kaiGlossary, kGlossary]
+        )
+
+        #expect(result.text == "가이와 케이, 가이의 친구")
+        let kaiCount = result.ranges.filter { $0.entry.target == "가이" }.count
+        let keiCount = result.ranges.filter { $0.entry.target == "케이" }.count
+        #expect(kaiCount == 2)
+        #expect(keiCount == 1)
+        #expect(result.ranges.contains { $0.entry.target == "케이" && String(result.text[$0.range]) == "케이" })
+    }
+
+    @Test
+    func normalizeWithOrderSkipsProtectedRangesForFallbackVariants() {
+        let original = "凯和k"
+        guard let kaiRange = original.range(of: "凯"),
+              let kRange = original.range(of: "k") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let kaiEntry = GlossaryEntry(
+            source: "凯",
+            target: "가이",
+            variants: ["카이"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "kai")
+        )
+        let kEntry = GlossaryEntry(
+            source: "k",
+            target: "케이",
+            variants: [],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "k")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-fallback",
+            originalText: original,
+            pieces: [
+                .term(kaiEntry, range: kaiRange),
+                .text(String(original[kaiRange.upperBound..<kRange.lowerBound]), range: kaiRange.upperBound..<kRange.lowerBound),
+                .term(kEntry, range: kRange)
+            ]
+        )
+
+        let kaiGlossary = TermMasker.NameGlossary(
+            target: "가이",
+            variants: ["카이"],
+            expectedCount: 1,
+            fallbackTerms: [
+                .init(termKey: "kai-fallback", target: "가이", variants: ["케이"])
+            ]
+        )
+        let kGlossary = TermMasker.NameGlossary(
+            target: "케이",
+            variants: [],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "카이와 케이",
+            pieces: pieces,
+            nameGlossaries: [kaiGlossary, kGlossary]
+        )
+
+        #expect(result.text == "가이와 케이")
+        let kaiCount = result.ranges.filter { $0.entry.target == "가이" }.count
+        let keiCount = result.ranges.filter { $0.entry.target == "케이" }.count
+        #expect(kaiCount == 1)
+        #expect(keiCount == 1)
+    }
+
+    @Test
+    func normalizeWithOrderHandlesMultipleResidualInstances() {
+        let original = "凯文"
+        guard let kaiwenRange = original.range(of: "凯文") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let entry = GlossaryEntry(
+            source: "凯文",
+            target: "케빈",
+            variants: ["케이빈", "Kevin"],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "c2")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-multi",
+            originalText: original,
+            pieces: [
+                .term(entry, range: kaiwenRange)
+            ]
+        )
+
+        let glossary = TermMasker.NameGlossary(
+            target: "케빈",
+            variants: ["케이빈", "Kevin"],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "케이빈과 Kevin과 케빈",
+            pieces: pieces,
+            nameGlossaries: [glossary]
+        )
+
+        #expect(result.text == "케빈과 케빈과 케빈")
+        #expect(result.ranges.count == 3)
+    }
+
+    @Test
+    func normalizeWithOrderIgnoresEmptyVariants() {
+        let original = "凯文"
+        guard let kaiwenRange = original.range(of: "凯文") else {
+            #expect(false, "원문에서 용어를 찾지 못했습니다.")
+            return
+        }
+
+        let entry = GlossaryEntry(
+            source: "凯文",
+            target: "케빈",
+            variants: [""],
+            preMask: false,
+            isAppellation: false,
+            prohibitStandalone: false,
+            origin: .termStandalone(termKey: "c3")
+        )
+
+        let pieces = SegmentPieces(
+            segmentID: "seg3-phase4-empty-variant",
+            originalText: original,
+            pieces: [
+                .term(entry, range: kaiwenRange)
+            ]
+        )
+
+        let glossary = TermMasker.NameGlossary(
+            target: "케빈",
+            variants: [""],
+            expectedCount: 1,
+            fallbackTerms: nil
+        )
+
+        let masker = TermMasker()
+        let result = masker.normalizeWithOrder(
+            in: "케빈",
+            pieces: pieces,
+            nameGlossaries: [glossary]
+        )
+
+        #expect(result.text == "케빈")
+        #expect(result.ranges.count == 1)
+    }
+
+    @Test
     func unmaskWithOrderTracksRanges() {
         let original = "안녕 최강자님과 용사님"
         let entry1 = GlossaryEntry(
