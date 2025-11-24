@@ -1762,6 +1762,21 @@ public final class TermMasker {
             let oldJosa = ns.substring(with: josaRange)
             let josaCandidate: String? = oldJosa.isEmpty ? nil : oldJosa
 
+            // "이"가 부사/대명사 등의 일부인 경우(예: "이렇게", "이것")에는 조사를 교정하지 않는다.
+            // josaRange는 조사 후보 전체를 포함하므로, 다음 문자가 단어 본문으로 이어지면 조사로 보지 않는다.
+            if josaRange.length == 1, oldJosa == "이" {
+                let afterJosaIndex = josaRange.location + josaRange.length
+                if afterJosaIndex < ns.length {
+                    let nextRange = ns.rangeOfComposedCharacterSequence(at: afterJosaIndex)
+                    let next = ns.substring(with: nextRange)
+                    let hangulSet = CharacterSet(charactersIn: "\u{AC00}"..."\u{D7A3}")
+                    let nextIsHangul = next.unicodeScalars.contains { hangulSet.contains($0) }
+                    if next.range(of: cjkOrWord, options: .regularExpression) != nil || nextIsHangul {
+                        return (out, canonRange)
+                    }
+                }
+            }
+
             // 기존 chooseJosa 로직을 그대로 사용
             let newJosa = chooseJosa(
                 for: josaCandidate,
