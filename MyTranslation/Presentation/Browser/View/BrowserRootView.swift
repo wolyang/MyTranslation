@@ -100,6 +100,7 @@ struct BrowserRootView: View {
                     }
                 )
                 .presentationDetents([.medium, .large])
+                .presentationContentInteraction(.scrolls)
                 .presentationDragIndicator(.visible)
             }
             .sheet(
