@@ -30,21 +30,23 @@ struct GlossaryAddSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                sectionHeader
-                selectedTextCard
-                if state.selectionKind == .translated {
-                    sourceInputField
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    sectionHeader
+                    selectedTextCard
+                    if state.selectionKind == .translated {
+                        sourceInputField
+                    }
+                    if state.selectionKind == .original {
+                        originalActionButtons
+                    } else {
+                        translatedActionButtons
+                    }
                 }
-                if state.selectionKind == .original {
-                    originalActionButtons
-                } else {
-                    translatedActionButtons
-                }
-                Spacer()
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 20)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
             .navigationTitle("용어집에 추가")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
