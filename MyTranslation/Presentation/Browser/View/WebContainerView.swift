@@ -11,6 +11,7 @@ struct WebContainerView: UIViewRepresentable {
     var onSelectSegment: ((String, CGRect) -> Void)? = nil
     var onNavigate: (() -> Void)? = nil
     var onUserInteraction: (() -> Void)? = nil
+    var onUpdateNavigationState: ((WKWebView) -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -18,8 +19,12 @@ struct WebContainerView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
+        if #available(iOS 16.0, *) {
+            webView.isFindInteractionEnabled = true
+        }
         context.coordinator.install(on: webView)
         onAttach?(webView)
+        onUpdateNavigationState?(webView)
         return webView
     }
 
@@ -52,6 +57,8 @@ struct WebContainerView: UIViewRepresentable {
             print("[WebContainer] → skip (same URL + normal cache)")
             context.coordinator.lastProcessedRequestID = requestID
         }
+
+        onUpdateNavigationState?(uiView)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -215,10 +222,12 @@ struct WebContainerView: UIViewRepresentable {
             if let url = webView.url {
                 parent.onDidFinish?(webView, url)
             }
+            parent.onUpdateNavigationState?(webView)
         }
         
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             parent.onNavigate?()
+            parent.onUpdateNavigationState?(webView)
         }
 
         @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {

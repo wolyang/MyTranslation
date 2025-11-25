@@ -11,6 +11,10 @@ struct MoreMenuView: View {
     let onMoveFavorites: (IndexSet, Int) -> Void
     let onOpenGlossary: () -> Void
     let onOpenSettings: () -> Void
+    let onOpenHistory: () -> Void
+    let onFindInPage: () -> Void
+    let isDesktopMode: Bool
+    let onToggleDesktopMode: (Bool) -> Void
 
     /// 바텀시트 내 NavigationStack 경로입니다.
     @State private var path: [Route] = []
@@ -43,10 +47,29 @@ struct MoreMenuView: View {
                 }
 
                 Button {
+                    onOpenHistory()
+                } label: {
+                    Label("히스토리", systemImage: "clock")
+                        .labelStyle(.titleAndIcon)
+                }
+
+                Button {
                     onOpenSettings()
                 } label: {
                     Label("설정", systemImage: "gearshape")
                         .labelStyle(.titleAndIcon)
+                }
+
+                Section("페이지") {
+                    Button {
+                        onFindInPage()
+                    } label: {
+                        Label("페이지 내 검색", systemImage: "magnifyingglass")
+                    }
+
+                    Toggle(isOn: Binding(get: { isDesktopMode }, set: { onToggleDesktopMode($0) })) {
+                        Label("데스크톱 모드", systemImage: "desktopcomputer")
+                    }
                 }
             }
             .listStyle(.insetGrouped)
@@ -97,6 +120,10 @@ struct MoreSidebarView: View {
     let onManageFavorites: () -> Void
     let onOpenGlossary: () -> Void
     let onOpenSettings: () -> Void
+    let onOpenHistory: () -> Void
+    let onFindInPage: () -> Void
+    let isDesktopMode: Bool
+    let onToggleDesktopMode: (Bool) -> Void
 
     /// 사이드바 항목을 구성하는 본문 뷰입니다.
     var body: some View {
@@ -134,9 +161,25 @@ struct MoreSidebarView: View {
                 }
 
                 Button {
+                    onOpenHistory()
+                } label: {
+                    Label("히스토리", systemImage: "clock")
+                }
+
+                Button {
                     onOpenSettings()
                 } label: {
                     Label("설정", systemImage: "gearshape")
+                }
+
+                Button {
+                    onFindInPage()
+                } label: {
+                    Label("페이지 내 검색", systemImage: "magnifyingglass")
+                }
+
+                Toggle(isOn: Binding(get: { isDesktopMode }, set: { onToggleDesktopMode($0) })) {
+                    Label("데스크톱 모드", systemImage: "desktopcomputer")
                 }
             }
         }

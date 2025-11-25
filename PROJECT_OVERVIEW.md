@@ -19,7 +19,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 * **Application**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
 * **Domain**: 번역/세그먼트/Glossary 등 비즈니스 도메인 모델과 계약(프로토콜)
-* **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등)
+* **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등) — 주소창에서 뒤로/앞으로/새로고침, 페이지 내 검색, 데스크톱 모드 토글, 히스토리 진입점을 제공
 * **Services**: 번역 엔진/라우터, 마스킹, Web 렌더링, FM 파이프라인 등
 * **Persistence**: SwiftData 기반 Glossary 저장소, 설정, 캐시/키 관리
 * **Utils**: 공통 유틸리티
@@ -157,6 +157,7 @@ WKWebView 번역 결과 반영.
   * `clearAll()`: 전체 캐시 삭제
   * `clearBySegmentIDs(_:)`: 특정 세그먼트 캐시만 선택적 삭제
   * 새로고침 시 캐시 삭제로 항상 최신 번역 보장
+* **HistoryStore**: UserDefaults(JSON)로 방문 기록을 저장하고 중복 URL을 최신 순으로 정리, `HistoryView`에서 날짜별 그룹/검색/삭제·재방문 지원
 * SwiftData: 용어/패턴 저장
 * UserSettings: 번역/엔진/스타일 설정
 * API Keys: `Info.plist` 기반 (Google/DeepL)
@@ -205,6 +206,7 @@ MyTranslation/
 * `SegmentPieces`
 * `ContentExtractor` / `InlineReplacer` / `OverlayRenderer`
 * `FMOrchestrator`, `FMPostEditor`, `CrossEngineComparer`, `Reranker`
+* `HistoryStore` / `HistoryView`
 
 ---
 
