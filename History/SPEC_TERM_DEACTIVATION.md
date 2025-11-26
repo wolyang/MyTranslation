@@ -1,215 +1,348 @@
-# 기능 스펙: Term 문맥 기반 비활성화 (Context Deactivation)
+# SPEC: Term 문맥 기반 비활성화 (Context Deactivation)
 
-## 1. 기능 개요
+## 문서 정보
 
-### 1.1 목적
-일반적으로 사용 가능한 Term(`prohibitStandalone=false`)이 특정 문맥(prefix/suffix 조합)에서 등장할 때 조건부로 비활성화되어 **번역 용어 매칭에서 제외**되도록 하는 기능.
-
-### 1.2 배경
-기존 `activated_by` 시스템은 "기본적으로 사용 안 되는 용어를 조건부로 활성화"하는 방향이었습니다. 하지만 반대 방향의 요구사항도 존재합니다:
-
-- **기존 방향**: `prohibitStandalone=true` → activator 등장 시 → 활성화
-- **새 방향**: `prohibitStandalone=false` → 특정 문맥 등장 시 → 비활성화
-
-### 1.3 적용 범위
-- **SegmentPieces 생성 시 적용**
-  - `TermMasker.buildSegmentPieces`에서 deactivation 필터링
-  - 마스킹 방식(preMask=true)과 정규화 방식(isAppellation=true) 모두에 적용
-- **세그먼트 단위 판단**
-  - 각 세그먼트마다 독립적으로 deactivation 조건 체크
-  - 동일한 용어라도 세그먼트 문맥에 따라 다르게 동작
-
-### 1.4 사용 사례
-
-#### 사례 1: 부분 단어 회피
-
-**Segment:** "宇宙人は地球人だ"
-
-**Term 설정:**
-```
-key: sorato
-target: 소라토
-sources: [{ text: "宙人", deactivatingPrefixes: ["宇"] }]
-prohibitStandalone: false
-```
-
-**현재 동작:**
-- "宙人" 매칭됨 → "宇宙人"의 일부인데도 번역 시도
-- 결과: "宇소라토는 지구인이다" (오역)
-
-**변경 후:**
-- "宙人" 매칭됨
-- 앞에 "宇" 존재 → deactivation 조건 충족
-- 이 entry 제외
-- 결과: "우주인은 지구인이다" (정상)
-
-#### 사례 2: 복합어 회피
-
-**Segment:** "光波が来た"
-
-**Term 설정:**
-```
-key: hikaru
-target: 히카루
-sources: [{ text: "光", deactivatingSuffixes: ["波", "線"] }]
-prohibitStandalone: false
-```
-
-**동작:**
-- "光" 매칭됨
-- 뒤에 "波" 존재 → deactivation 조건 충족
-- 이 entry 제외
-- 결과: "광파가 왔다" (정상)
-
-**비교 세그먼트:** "光が来た"
-- "光" 매칭됨
-- 뒤에 아무것도 없음 → deactivation 조건 불충족
-- 이 entry 포함
-- 결과: "히카루가 왔다" (정상)
+- **작성일**: 2025-01-26
+- **버전**: 2.0 (통합 아키텍처)
+- **상태**: 설계 완료
 
 ---
 
-## 2. 데이터 모델 변경
+## 1. 기능 개요
 
-### 2.1 SDSource 모델 확장
+### 1.1 문제점
 
+현재 Term 정규화는 **부분 문자열 매칭**으로 인한 오역이 발생합니다.
+
+**예시:**
+```
+Term "sorato":
+  sources: ["宙人"]
+  target: "소라토"
+  variants: ["주인"]
+
+세그먼트: "我是宇宙人。" (나는 우주인이다)
+
+현재 동작:
+  - "宙人"이 "宇宙人" 내부에서 매칭됨
+  - 잘못된 정규화: "나는 우소라토이다" ❌
+
+기대 동작:
+  - "宙人"이 "宇宙人" 안에 있을 때는 비활성화
+  - 올바른 번역: "나는 우주인이다" ✓
+```
+
+### 1.2 해결 방안
+
+Term에 `deactivatedIn` 필드를 추가하여, **특정 문맥 내부에서는 해당 Term을 비활성화**합니다.
+
+### 1.3 핵심 개념
+
+**Deactivation Context:**
+- Term의 source가 특정 텍스트 **안에 포함될 때** 비활성화
+- 예: source "宙人"이 context "宇宙人" 안에 있으면 비활성화
+
+**Source별 판단:**
+- Term의 각 source마다 독립적으로 deactivation 체크
+- 하나의 source라도 활성화되면 해당 Term 사용 가능
+
+### 1.4 표준 예시
+
+이 문서 전체에서 사용하는 통일된 예시:
+
+```swift
+SDTerm "sorato":
+  key: "sorato"
+  sources: [SDSource(text: "宙人", prohibitStandalone: false)]
+  target: "소라토"
+  variants: ["주인"]
+  deactivatedIn: ["宇宙人"]
+```
+
+**테스트 세그먼트:**
+
+**케이스 1: 활성화**
+```
+세그먼트: "宙人是地球人。" (소라토는 지구인이다)
+
+처리:
+  - "宙人" 매칭 (offset 0)
+  - "宇宙人" 검색 → 세그먼트에 없음
+  - 활성화 ✓
+  - 번역: "소라토는 지구인이다"
+```
+
+**케이스 2: 비활성화**
+```
+세그먼트: "我是宇宙人。" (나는 우주인이다)
+
+처리:
+  - "宙人" 매칭 (offset 2)
+  - "宇宙人" 검색 → offset 2에서 발견
+  - "宙人"이 "宇宙人" 안에 포함됨 (offset 2 >= 2, end 4 <= 5)
+  - 비활성화 ✓
+  - 번역: "나는 우주인이다"
+```
+
+---
+
+## 2. 데이터 모델
+
+### 2.1 SDTerm 확장
+
+```swift
+@Model
+public final class SDTerm {
+    var key: String
+    var target: String
+    var variants: [String]
+    @Relationship var sources: [SDSource]
+    var components: [SDComponent]
+    var preMask: Bool
+    var isAppellation: Bool
+    @Relationship var activators: [SDTerm]
+    @Relationship var activates: [SDTerm]
+
+    // 신규: 비활성화 문맥 목록
+    var deactivatedIn: [String] = []
+
+    public init(
+        key: String,
+        target: String,
+        variants: [String] = [],
+        sources: [SDSource] = [],
+        components: [SDComponent] = [],
+        preMask: Bool = false,
+        isAppellation: Bool = false,
+        deactivatedIn: [String] = []
+    ) {
+        self.key = key
+        self.target = target
+        self.variants = variants
+        self.sources = sources
+        self.components = components
+        self.preMask = preMask
+        self.isAppellation = isAppellation
+        self.deactivatedIn = deactivatedIn
+    }
+}
+```
+
+**필드 설명:**
+- `deactivatedIn`: 이 배열의 문자열 안에 source가 포함되면 비활성화
+- 빈 배열 = 비활성화 조건 없음
+
+**SDSource는 변경 없음:**
 ```swift
 @Model
 public final class SDSource {
     var text: String
     var prohibitStandalone: Bool
-    @Relationship var term: SDTerm
+    @Relationship var term: SDTerm?
 
-    // 신규: 문맥 기반 비활성화 조건
-    var deactivatingPrefixes: [String] = []  // 이 prefix가 앞에 붙으면 비활성화
-    var deactivatingSuffixes: [String] = []  // 이 suffix가 뒤에 붙으면 비활성화
-
-    init(
-        text: String,
-        prohibitStandalone: Bool,
-        term: SDTerm,
-        deactivatingPrefixes: [String] = [],
-        deactivatingSuffixes: [String] = []
-    ) {
-        self.text = text
-        self.prohibitStandalone = prohibitStandalone
-        self.term = term
-        self.deactivatingPrefixes = deactivatingPrefixes
-        self.deactivatingSuffixes = deactivatingSuffixes
-    }
+    // deactivation 필드 없음 (Term 단위로 관리)
 }
 ```
 
 ### 2.2 GlossaryEntry 확장
 
 ```swift
-public struct GlossaryEntry: Sendable, Hashable {
+public struct GlossaryEntry: Hashable, Sendable {
     public var source: String
     public var target: String
-    public var variants: Set<String>
+    public var variants: [String]
     public var preMask: Bool
     public var isAppellation: Bool
-    public var prohibitStandalone: Bool
     public var origin: Origin
-    public var componentTerms: [ComponentTerm] = []
-    public var activatorKeys: Set<String> = []
-    public var activatesKeys: Set<String> = []
-
-    // 신규: 문맥 기반 비활성화 조건
-    public var deactivatingPrefixes: Set<String> = []
-    public var deactivatingSuffixes: Set<String> = []
+    public var componentTerms: [ComponentTerm]
 
     public init(
         source: String,
         target: String,
-        variants: Set<String>,
-        preMask: Bool,
-        isAppellation: Bool,
-        prohibitStandalone: Bool,
-        origin: Origin,
-        componentTerms: [ComponentTerm] = [],
-        activatorKeys: Set<String> = [],
-        activatesKeys: Set<String> = [],
-        deactivatingPrefixes: Set<String> = [],
-        deactivatingSuffixes: Set<String> = []
+        variants: [String] = [],
+        preMask: Bool = false,
+        isAppellation: Bool = false,
+        origin: Origin,  // required - 기본값 없음
+        componentTerms: [ComponentTerm] = []
     ) {
         self.source = source
         self.target = target
         self.variants = variants
         self.preMask = preMask
         self.isAppellation = isAppellation
-        self.prohibitStandalone = prohibitStandalone
         self.origin = origin
         self.componentTerms = componentTerms
-        self.activatorKeys = activatorKeys
-        self.activatesKeys = activatesKeys
-        self.deactivatingPrefixes = deactivatingPrefixes
-        self.deactivatingSuffixes = deactivatingSuffixes
     }
 }
 ```
 
-### 2.3 ComponentTerm 확장
+**변경 사항 (생성 시 주입 금지 필드 포함):**
+- `activatorKeys` 제거: Phase 2에서 `SDTerm.activators`를 직접 사용
+- `activatesKeys` 제거: 활성화는 SDTerm 단계에서 완료, Entry는 최종 결과물일 뿐
+- `deactivatedIn` 제거: Phase 0에서 필터링 완료
+- **GlossaryEntry는 활성화 계산에 사용되지 않음** - Phase 4에서 즉석 생성되는 최종 산출물
+- 생성 코드에서도 위 필드들을 넣지 않는다. Phase 4 레거시 정리 시 전체 코드베이스에서 제거된 필드를 참조/주입하는 곳을 추가로 청소한다(중복 체크를 위해 후순위 수행).
+
+### 2.3 ComponentTerm (단순화)
 
 ```swift
-public struct ComponentTerm: Sendable, Hashable {
-    public struct Source: Sendable, Hashable {
-        public let text: String
-        public let prohibitStandalone: Bool
-        public let deactivatingPrefixes: [String]  // 신규
-        public let deactivatingSuffixes: [String]  // 신규
+public extension GlossaryEntry {
+    struct ComponentTerm: Hashable, Sendable {
+        public let key: String
+        public let target: String
+        public let variants: [String]  // 사용된 변형(리스트)
+        public let source: String        // 단일 source 텍스트만
 
-        public init(
-            text: String,
-            prohibitStandalone: Bool,
-            deactivatingPrefixes: [String] = [],
-            deactivatingSuffixes: [String] = []
-        ) {
-            self.text = text
-            self.prohibitStandalone = prohibitStandalone
-            self.deactivatingPrefixes = deactivatingPrefixes
-            self.deactivatingSuffixes = deactivatingSuffixes
+        public init(key: String, target: String, variants: [String], source: String) {
+            self.key = key
+            self.target = target
+            self.variants = variants
+            self.source = source
+        }
+
+        public static func make(from appearedTerm: AppearedTerm) -> ComponentTerm {
+            let sourceText = appearedTerm.appearedSources.first?.text ?? ""
+            return ComponentTerm(
+                key: appearedTerm.key,
+                target: appearedTerm.target,
+                variants: appearedTerm.variants,
+                source: sourceText
+            )
         }
     }
-
-    public let key: String
-    public let target: String
-    public let variants: Set<String>
-    public let sources: [Source]
-    public let matchedSources: Set<String>
-    public let preMask: Bool
-    public let isAppellation: Bool
-    public let activatorKeys: Set<String>
-    public let activatesKeys: Set<String>
 }
 ```
+
+**변경 사항:**
+- **단순화**: key, target, variants, source만 유지
+- **제거된 필드**: sources, matchedSources, preMask, isAppellation, Source 중첩 구조
+- **용도**: UI/디버깅 - "이 Entry는 어떤 source들로 조합되었는가" 표시
+- **AppearedTerm 기반**: 필터링된 appearedSources 사용
+- **호환성**: `BrowserViewModel+GlossaryAdd.makeCandidateEntry`에서 variants를 사용하므로 필드를 유지합니다. 해당 ViewModel이 리팩토링되기 전까지는 GlossaryEntry 생성 시 필수 필드를 임시 값으로 채워 빌드 오류를 막으면 됩니다.
+
+### 2.4 AppearedTerm
+
+`buildSegmentPieces` 내부에서 사용하는 중간 데이터 구조로, **세그먼트에 실제로 등장하면서 비활성화되지 않은 sources**만 포함합니다.
+
+```swift
+public struct AppearedTerm {
+    public let sdTerm: SDTerm
+    public let appearedSources: [SDSource]  // 세그먼트에 등장 + 비활성화 안 됨
+
+    // SDTerm의 편의 프로퍼티들
+    public var key: String { sdTerm.key }
+    public var target: String { sdTerm.target }
+    public var variants: [String] { sdTerm.variants }
+    public var components: [SDComponent] { sdTerm.components }
+    public var preMask: Bool { sdTerm.preMask }
+    public var isAppellation: Bool { sdTerm.isAppellation }
+    public var activators: [SDTerm] { sdTerm.activators }
+    public var activates: [SDTerm] { sdTerm.activates }
+
+    public init(sdTerm: SDTerm, appearedSources: [SDSource]) {
+        self.sdTerm = sdTerm
+        self.appearedSources = appearedSources
+    }
+}
+```
+
+**목적:**
+- Phase 0에서 한 번 필터링한 후, Phase 1-3에서 재사용
+- matchedTerms를 여러 번 순회하는 비효율 제거
+
+**예시:**
+```swift
+// 세그먼트: "我是宇宙人。"
+// matchedTerms: [sorato, ginga, ...]
+
+// Phase 0 후:
+AppearedTerm(
+    sdTerm: sorato,
+    appearedSources: []  // "宙人"이 deactivatedIn에 의해 필터링됨
+)
+// → Phase 1-3에서 제외됨
+
+// 세그먼트: "宙人是地球人。"
+AppearedTerm(
+    sdTerm: sorato,
+    appearedSources: [SDSource(text: "宙人", prohibitStandalone: false)]
+)
+// → Phase 1-3에서 사용됨
+```
+
+### 2.5 AppearedComponent
+
+Phase 3 Composer에서 사용하는 중간 데이터 구조로, **SDComponent + AppearedTerm** 조합입니다.
+
+```swift
+public struct AppearedComponent {
+    public let appearedTerm: AppearedTerm
+    public let pattern: String
+    public let role: String?
+    public let srcTplIdx: Int?
+    public let tgtTplIdx: Int?
+    public let groupLinks: [SDGroupLink]
+
+    public init(from component: SDComponent, appearedTerm: AppearedTerm) {
+        self.appearedTerm = appearedTerm
+        self.pattern = component.pattern
+        self.role = component.role
+        self.srcTplIdx = component.srcTplIdx
+        self.tgtTplIdx = component.tgtTplIdx
+        self.groupLinks = component.groupLinks
+    }
+}
+```
+
+**목적:**
+- SDComponent의 term(원본 SDTerm) 대신 AppearedTerm 사용
+- matchedPairs/matchedLeftComponents가 이 타입 반환
+- 필터링된 appearedSources 기반으로 ComponentTerm 생성
+
+### 2.6 Deduplicator 병합 정책
+
+`Deduplicator.deduplicate()`는 동일한 `(source, target, preMask, isAppellation)` 키를 가진 Entry를 병합합니다.
+
+**병합 전략: Array Union (중복 제거)**
+
+```swift
+// Deduplicator.swift의 병합 블록 내부:
+// variants가 이제 Array이므로 Set으로 변환 후 union, 다시 Array로
+let combinedVariants = Set(existing.variants).union(entry.variants)
+existing.variants = Array(combinedVariants)
+```
+
+**근거:**
+- 여러 경로로 생성된 Entry가 합쳐질 수 있음
+- Union으로 모든 정보 보존 (중복 제거)
+- variants는 Array로 저장하되 병합 시 Set union 적용
 
 ---
 
-## 3. Google Sheets Import 지원
+## 3. Google Sheets Import
 
-### 3.1 Google Sheets 포맷
+### 3.1 포맷
 
-**권장 방식: 별도 컬럼 추가**
+**권장 방식: `deactivated_in` 컬럼 추가**
 
-| key | target | sources | deactivating_prefixes | deactivating_suffixes |
-|-----|--------|---------|----------------------|----------------------|
-| sorato | 소라토 | 宙人 | 宇 | |
-| hikaru | 히카루 | 光 | 小,大 | 波,線 |
-| ginga | 긴가 | 银河 | | |
+| key | target | sources | deactivated_in |
+|-----|--------|---------|----------------|
+| sorato | 소라토 | 宙人 | 宇宙人 |
+| hikaru | 히카루 | 光 | 光波,光線 |
+| ginga | 긴가 | 银河 | |
 
 **컬럼 형식:**
-- **deactivating_prefixes**: 쉼표(`,`) 또는 세미콜론(`;`)으로 구분
-- **deactivating_suffixes**: 쉼표(`,`) 또는 세미콜론(`;`)으로 구분
-- **빈 값**: 비활성화 조건 없음
-- **공백**: 자동 trim 처리
+- **deactivated_in**: 쉼표(`,`)로 구분된 비활성화 문맥 목록
+- 각 문자열 안에 source가 포함되면 비활성화
+- 빈 값: 비활성화 조건 없음
+- 공백: 자동 trim 처리
 
 **예시:**
 ```
-deactivating_prefixes: "宇"           → ["宇"]
-deactivating_prefixes: "小, 大"      → ["小", "大"]
-deactivating_prefixes: ""            → []
-deactivating_suffixes: "波;線;点"    → ["波", "線", "点"]
+deactivated_in: "宇宙人"           → ["宇宙人"]
+deactivated_in: "光波, 光線"       → ["光波", "光線"]
+deactivated_in: ""                → []
+deactivated_in: "宇宙人,火星人"    → ["宇宙人", "火星人"]
 ```
 
 ### 3.2 파싱 로직
@@ -218,13 +351,6 @@ deactivating_suffixes: "波;線;点"    → ["波", "線", "点"]
 
 ```swift
 extension Glossary.Sheet {
-    struct ParsedSource {
-        let text: String
-        let prohibitStandalone: Bool
-        let deactivatingPrefixes: [String]  // 신규
-        let deactivatingSuffixes: [String]  // 신규
-    }
-
     struct ParsedTerm {
         let key: String
         let target: String
@@ -233,37 +359,53 @@ extension Glossary.Sheet {
         let isAppellation: Bool
         let preMask: Bool
         let activatedByKeys: [String]
-        // deactivation은 source별로 관리되므로 여기에는 추가 안 함
+        let deactivatedIn: [String]  // 신규
+    }
+
+    struct ParsedSource {
+        let text: String
+        let prohibitStandalone: Bool
     }
 
     static func parseTermRow(_ row: [String], headers: [String]) -> ParsedTerm? {
-        // ... 기존 파싱 로직 (key, target, variants 등)
+        // 기존 파싱 (key, target, variants, sources 등)
+        guard let keyIndex = headers.firstIndex(of: "key"),
+              let targetIndex = headers.firstIndex(of: "target"),
+              keyIndex < row.count, targetIndex < row.count else {
+            return nil
+        }
 
-        // sources 파싱 (기존)
+        let key = row[keyIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = row[targetIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !key.isEmpty, !target.isEmpty else { return nil }
+
+        // variants 파싱
+        let variantsStr = getColumnValue(row, headers, "variants")
+        let variants = parseDelimitedList(variantsStr)
+
+        // sources 파싱
         let sourcesStr = getColumnValue(row, headers, "sources")
         let sourceParts = sourcesStr.split(separator: "|").map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
 
-        // deactivating_prefixes 파싱 (신규)
-        let deactivatingPrefixesStr = getColumnValue(row, headers, "deactivating_prefixes")
-        let deactivatingPrefixes = parseDelimitedList(deactivatingPrefixesStr)
-
-        // deactivating_suffixes 파싱 (신규)
-        let deactivatingSuffixesStr = getColumnValue(row, headers, "deactivating_suffixes")
-        let deactivatingSuffixes = parseDelimitedList(deactivatingSuffixesStr)
-
-        // ParsedSource 배열 생성
         var parsedSources: [ParsedSource] = []
         for sourcePart in sourceParts {
             let (sourceText, prohibit) = parseSourceWithProhibit(sourcePart)
             parsedSources.append(
-                ParsedSource(
-                    text: sourceText,
-                    prohibitStandalone: prohibit,
-                    deactivatingPrefixes: deactivatingPrefixes,
-                    deactivatingSuffixes: deactivatingSuffixes
-                )
+                ParsedSource(text: sourceText, prohibitStandalone: prohibit)
             )
         }
+
+        // deactivated_in 파싱 (신규)
+        let deactivatedInStr = getColumnValue(row, headers, "deactivated_in")
+        let deactivatedIn = parseDelimitedList(deactivatedInStr)
+
+        // 기타 필드 파싱
+        let isAppellation = getColumnValue(row, headers, "is_appellation").lowercased() == "true"
+        let preMask = getColumnValue(row, headers, "pre_mask").lowercased() == "true"
+
+        let activatedByStr = getColumnValue(row, headers, "activated_by")
+        let activatedByKeys = parseDelimitedList(activatedByStr)
 
         return ParsedTerm(
             key: key,
@@ -272,16 +414,16 @@ extension Glossary.Sheet {
             sources: parsedSources,
             isAppellation: isAppellation,
             preMask: preMask,
-            activatedByKeys: activatedByKeys
+            activatedByKeys: activatedByKeys,
+            deactivatedIn: deactivatedIn  // 신규
         )
     }
 
-    /// 쉼표/세미콜론 구분 리스트 파싱
+    /// 쉼표 구분 리스트 파싱
     private static func parseDelimitedList(_ str: String) -> [String] {
         guard !str.isEmpty else { return [] }
 
-        let separator = str.contains(",") ? "," : ";"
-        return str.split(separator: Character(separator))
+        return str.split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
     }
@@ -293,6 +435,15 @@ extension Glossary.Sheet {
         }
         return row[index].trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Source와 prohibit 파싱
+    private static func parseSourceWithProhibit(_ sourcePart: String) -> (text: String, prohibit: Bool) {
+        if sourcePart.hasPrefix("!") {
+            return (String(sourcePart.dropFirst()), true)
+        } else {
+            return (sourcePart, false)
+        }
+    }
 }
 ```
 
@@ -303,12 +454,10 @@ extension Glossary.Sheet {
 ```swift
 extension Glossary.SDUpserter {
     func upsertTermsFromSheet(_ parsedTerms: [Glossary.Sheet.ParsedTerm], context: ModelContext) async throws {
-        // Phase 1: Term 생성/업데이트
-        var termsByKey: [String: SDTerm] = [:]
-
         for parsed in parsedTerms {
             let term: SDTerm
 
+            // 기존 Term 찾기 또는 생성
             if let existing = try? context.fetch(
                 FetchDescriptor<SDTerm>(predicate: #Predicate { $0.key == parsed.key })
             ).first {
@@ -318,50 +467,27 @@ extension Glossary.SDUpserter {
                 context.insert(term)
             }
 
+            // 기본 필드 업데이트
             term.target = parsed.target
             term.variants = parsed.variants
             term.isAppellation = parsed.isAppellation
             term.preMask = parsed.preMask
+            term.deactivatedIn = parsed.deactivatedIn  // 신규
 
-            // Sources 업데이트 (deactivation 정보 포함)
+            // Sources 업데이트
             term.sources.removeAll()
             for parsedSource in parsed.sources {
                 let source = SDSource(
                     text: parsedSource.text,
                     prohibitStandalone: parsedSource.prohibitStandalone,
-                    term: term,
-                    deactivatingPrefixes: parsedSource.deactivatingPrefixes,  // 신규
-                    deactivatingSuffixes: parsedSource.deactivatingSuffixes   // 신규
+                    term: term
                 )
                 context.insert(source)
                 term.sources.append(source)
             }
 
-            termsByKey[parsed.key] = term
-        }
-
-        // Phase 2: activator 관계 설정 (기존 로직)
-        for parsed in parsedTerms {
-            guard let term = termsByKey[parsed.key] else { continue }
-
-            term.activators.removeAll()
-
-            for activatorKey in parsed.activatedByKeys {
-                if activatorKey == parsed.key {
-                    print("[Warning] Self-reference ignored for term '\(parsed.key)'")
-                    continue
-                }
-
-                if let activatorTerm = termsByKey[activatorKey] {
-                    term.activators.append(activatorTerm)
-                } else if let existingActivator = try? context.fetch(
-                    FetchDescriptor<SDTerm>(predicate: #Predicate { $0.key == activatorKey })
-                ).first {
-                    term.activators.append(existingActivator)
-                } else {
-                    print("[Warning] Activator term '\(activatorKey)' not found for term '\(parsed.key)'")
-                }
-            }
+            // activator 관계 설정 (기존 로직)
+            // ...
         }
 
         try context.save()
@@ -369,323 +495,257 @@ extension Glossary.SDUpserter {
 }
 ```
 
-### 3.4 Validation 규칙
+---
 
-**검증 항목:**
+## 4. TermActivationFilter
 
-1. **빈 prefix/suffix 제거**
-   - 파싱 시 자동으로 빈 문자열 필터링
+### 4.1 역할
 
-2. **중복 제거**
-   - 동일한 prefix/suffix가 여러 번 나열된 경우 중복 제거
+Source 단위 deactivation 판단만 담당합니다. `buildSegmentPieces` 내부에서 호출됩니다.
 
-3. **Source보다 긴 prefix/suffix 경고**
-   - 예: source="光", prefix="宇宙" → 경고 (절대 매칭 안 됨)
-
-4. **특수문자 처리**
-   - prefix/suffix에 공백, 개행 등이 포함되면 경고
-
-**Validation 코드:**
+### 4.2 구현
 
 ```swift
-extension Glossary.Sheet {
-    static func validateDeactivationRules(
-        _ parsedTerms: [ParsedTerm]
-    ) -> [String] {
-        var warnings: [String] = []
+public final class TermActivationFilter {
 
-        for term in parsedTerms {
-            for source in term.sources {
-                // prefix가 source보다 길면 경고
-                for prefix in source.deactivatingPrefixes {
-                    if prefix.count >= source.text.count {
-                        warnings.append(
-                            "[Term: \(term.key)] deactivating_prefix '\(prefix)' is longer than or equal to source '\(source.text)'"
-                        )
-                    }
-                }
+    /// Source가 deactivated context 안에 있는지 판단
+    /// - Returns: true면 비활성화해야 함, false면 활성화 유지
+    public func shouldDeactivate(
+        source: String,
+        deactivatedIn: [String],
+        segmentText: String
+    ) -> Bool {
+        guard !deactivatedIn.isEmpty else { return false }
 
-                // suffix가 source보다 길면 경고
-                for suffix in source.deactivatingSuffixes {
-                    if suffix.count >= source.text.count {
-                        warnings.append(
-                            "[Term: \(term.key)] deactivating_suffix '\(suffix)' is longer than or equal to source '\(source.text)'"
-                        )
-                    }
-                }
-
-                // 공백 포함 경고
-                for prefix in source.deactivatingPrefixes where prefix.contains(" ") {
-                    warnings.append(
-                        "[Term: \(term.key)] deactivating_prefix '\(prefix)' contains whitespace"
-                    )
-                }
-
-                for suffix in source.deactivatingSuffixes where suffix.contains(" ") {
-                    warnings.append(
-                        "[Term: \(term.key)] deactivating_suffix '\(suffix)' contains whitespace"
-                    )
-                }
+        // Deactivated context가 세그먼트에 한 번이라도 나타나면 비활성화
+        for deactivatedText in deactivatedIn {
+            if segmentText.contains(deactivatedText) {
+                return true
             }
         }
 
-        return warnings
+        return false
     }
 }
 ```
 
-### 3.5 UI 피드백
+**단순화된 로직:**
+- Deactivated context가 세그먼트 어디든 나타나면 즉시 비활성화
+- Source의 위치나 범위 체크 불필요
+- 성능 개선: `contains()` 만 사용
 
-**SheetsImportPreviewView에 deactivation 정보 표시:**
+**예외 케이스 (유저 에러):**
+```swift
+// source == deactivatedText인 케이스
+SDTerm "bad_example":
+  sources: ["宇宙人"]
+  deactivatedIn: ["宇宙人"]
+
+// 이 경우 shouldDeactivate는 true를 반환합니다.
+// 이는 본 기능의 의도된 사용 방법이 아니며, 유저가 잘못 입력한 경우입니다.
+// 정상적인 사용에서는 source가 deactivatedText의 부분 문자열이어야 합니다.
+```
+
+### 4.3 예시 실행
+
+**케이스 1: "我是宇宙人。"**
 
 ```swift
-struct TermRowPreview: View {
-    let parsed: Glossary.Sheet.ParsedTerm
+shouldDeactivate(source: "宙人", deactivatedIn: ["宇宙人"], segmentText: "我是宇宙人。")
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(parsed.target)
-                    .font(.headline)
-                Spacer()
-                Text(parsed.key)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+1. deactivatedIn.isEmpty → false, 계속
+2. for deactivatedText in ["宇宙人"]:
+   - segmentText.contains("宇宙人") → true
+3. return true (비활성화)
+```
 
-            // Sources 표시
-            ForEach(parsed.sources, id: \.text) { source in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text("원문:")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text(source.text)
-                            .font(.caption)
+**케이스 2: "宙人是地球人。"**
 
-                        if source.prohibitStandalone {
-                            Text("(단독 금지)")
-                                .font(.caption2)
-                                .foregroundColor(.orange)
-                        }
-                    }
+```swift
+shouldDeactivate(source: "宙人", deactivatedIn: ["宇宙人"], segmentText: "宙人是地球人。")
 
-                    // Deactivation 조건 표시 (신규)
-                    if !source.deactivatingPrefixes.isEmpty || !source.deactivatingSuffixes.isEmpty {
-                        HStack(spacing: 4) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption2)
-                                .foregroundColor(.red)
-                            Text("비활성화:")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-
-                            if !source.deactivatingPrefixes.isEmpty {
-                                Text("앞[\(source.deactivatingPrefixes.joined(separator: ", "))]")
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                            }
-
-                            if !source.deactivatingSuffixes.isEmpty {
-                                Text("뒤[\(source.deactivatingSuffixes.joined(separator: ", "))]")
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Activator 표시 (기존)
-            if !parsed.activatedByKeys.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "bolt.fill")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
-                    Text("활성화 조건:")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text(parsed.activatedByKeys.joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
+1. deactivatedIn.isEmpty → false, 계속
+2. for deactivatedText in ["宇宙人"]:
+   - segmentText.contains("宇宙人") → false
+3. return false (활성화)
 ```
 
 ---
 
-## 4. GlossaryComposer 변경
+## 5. TermMasker 통합 구현
 
-### 4.1 buildStandaloneEntries 수정
+### 5.1 새 시그니처
 
 ```swift
-private func buildStandaloneEntries(
-    from terms: [Glossary.SDModel.SDTerm],
-    matchedSources: [String: Set<String>],
-    targetText: String
-) -> [GlossaryEntry] {
-    var entries: [GlossaryEntry] = []
-
-    for term in terms {
-        guard let matchedSourcesForTerm = matchedSources[term.key] else { continue }
-
-        let activatorKeys = Set(term.activators.map { $0.key })
-        let activatesKeys = Set(term.activates.map { $0.key })
-
-        for source in term.sources {
-            guard matchedSourcesForTerm.contains(source.text) else { continue }
-            guard targetText.contains(source.text) else { continue }
-
-            entries.append(
-                GlossaryEntry(
-                    source: source.text,
-                    target: term.target,
-                    variants: Set(term.variants),
-                    preMask: term.preMask,
-                    isAppellation: term.isAppellation,
-                    prohibitStandalone: source.prohibitStandalone,
-                    origin: .termStandalone(termKey: term.key),
-                    componentTerms: [
-                        GlossaryEntry.ComponentTerm.make(
-                            from: term,
-                            matchedSources: matchedSourcesForTerm
-                        )
-                    ],
-                    activatorKeys: activatorKeys,
-                    activatesKeys: activatesKeys,
-                    deactivatingPrefixes: Set(source.deactivatingPrefixes),  // 신규
-                    deactivatingSuffixes: Set(source.deactivatingSuffixes)   // 신규
-                )
-            )
-        }
-    }
-
-    return entries
+public final class TermMasker {
+    func buildSegmentPieces(
+        segment: Segment,
+        matchedTerms: [SDTerm],
+        patterns: [SDPattern],
+        matchedSources: [String: Set<String>],
+        termActivationFilter: TermActivationFilter
+    ) -> (pieces: SegmentPieces, glossaryEntries: [GlossaryEntry])
 }
 ```
 
-### 4.2 ComponentTerm.make 수정
+**변경 사항:**
+- ❌ `glossary: [GlossaryEntry]` 파라미터 제거
+- ✅ 원시 데이터 직접 받음 (`matchedTerms`, `patterns`, `matchedSources`)
+- ✅ `termActivationFilter` 의존성 주입
+- ✅ **SegmentPieces와 [GlossaryEntry] 모두 반환**
+  - `pieces`: makeNameGlossariesFromPieces에 전달
+  - `glossaryEntries`: Deduplicator에 전달
 
-```swift
-extension GlossaryEntry.ComponentTerm {
-    static func make(
-        from term: Glossary.SDModel.SDTerm,
-        matchedSources: Set<String>
-    ) -> GlossaryEntry.ComponentTerm {
-        let sources = term.sources.map { sdSource in
-            GlossaryEntry.ComponentTerm.Source(
-                text: sdSource.text,
-                prohibitStandalone: sdSource.prohibitStandalone,
-                deactivatingPrefixes: sdSource.deactivatingPrefixes,  // 신규
-                deactivatingSuffixes: sdSource.deactivatingSuffixes   // 신규
-            )
-        }
+### 5.2 통합 로직 구현
 
-        return GlossaryEntry.ComponentTerm(
-            key: term.key,
-            target: term.target,
-            variants: Set(term.variants),
-            sources: sources,
-            matchedSources: matchedSources,
-            preMask: term.preMask,
-            isAppellation: term.isAppellation,
-            activatorKeys: Set(term.activators.map { $0.key }),
-            activatesKeys: Set(term.activates.map { $0.key })
-        )
-    }
-}
-```
-
-### 4.3 Composed Entries
-
-**Composed entries (패턴 기반)는 deactivation 조건을 상속하지 않음:**
-- Composer는 항상 `prohibitStandalone=false`
-- Deactivation은 단독 source에만 적용되는 규칙
-- Composed entry는 이미 "조합"이므로 문맥이 다름
-
-따라서 `buildEntriesFromPairs`, `buildEntriesFromLefts`는 수정 불필요.
-
----
-
-## 5. TermMasker 변경
-
-### 5.1 buildSegmentPieces 수정
+**핵심 변경사항:**
+- **Phase 0 추가**: 등장 체크 + 비활성화 필터링을 한 번만 수행
+- **AppearedTerm 사용**: Phase 1-3에서 matchedTerms 대신 appearedTerms 사용
+- **빈 세그먼트 처리**: matchedTerms가 비어도 `[.text(text)]` 반환
+- **SegmentPieces와 [GlossaryEntry] 모두 반환**: 반환한 glossaryEntries도 prepareMaskingContext에서 사용
 
 ```swift
 func buildSegmentPieces(
     segment: Segment,
-    glossary allEntries: [GlossaryEntry]
-) -> (pieces: SegmentPieces, activatedEntries: [GlossaryEntry]) {
+    matchedTerms: [SDTerm],
+    patterns: [SDPattern],
+    matchedSources: [String: Set<String>],
+    termActivationFilter: TermActivationFilter
+) -> (pieces: SegmentPieces, glossaryEntries: [GlossaryEntry]) {
     let text = segment.originalText
-    guard !text.isEmpty, !allEntries.isEmpty else {
+
+    // 빈 세그먼트 처리: 항상 최소한 .text 조각 반환
+    guard !text.isEmpty, !matchedTerms.isEmpty else {
         return (
-            pieces: SegmentPieces(
-                segmentID: segment.id,
-                originalText: text,
-                pieces: [.text(text, range: text.startIndex..<text.endIndex)]
-            ),
-            activatedEntries: []
+            pieces: SegmentPieces(segmentID: segment.id, originalText: text, pieces: [.text(text, range: text.startIndex..<text.endIndex)]),
+            glossaryEntries: []
         )
     }
 
-    // 1) 기본 활성화 (단독 허용)
-    let standaloneEntries = allEntries.filter { !$0.prohibitStandalone }
+    // 초기화
+    var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
+    var usedTermKeys: Set<String> = []
+    var sourceToEntry: [String: GlossaryEntry] = [:]  // source → GlossaryEntry 매핑
 
-    // 2) Pattern 기반 활성화
-    let patternPromoted = promoteProhibitedEntries(in: text, entries: allEntries)
+    // === Phase 0: Appearance Check & Deactivation Filtering ===
 
-    // 3) Term-to-Term 활성화
-    let termPromoted = promoteActivatedEntries(
-        from: allEntries,
-        standaloneEntries: standaloneEntries,
-        original: text
-    )
+    let appearedTerms: [AppearedTerm] = matchedTerms.compactMap { term in
+        // 1. 세그먼트에 등장하는 sources 필터링
+        let appearedSources = term.sources.filter { source in
+            // matchedSources에 포함되지 않으면 제외
+            guard let matchedSourceTexts = matchedSources[term.key],
+                  matchedSourceTexts.contains(source.text) else {
+                return false
+            }
 
-    // 4) 활성화 엔트리 합치기 (source 기준 중복 제거)
-    var combined = standaloneEntries
-    combined.append(contentsOf: patternPromoted)
-    combined.append(contentsOf: termPromoted)
+            // 세그먼트에 실제로 등장하는지 확인
+            guard text.contains(source.text) else {
+                return false
+            }
 
-    var seenSource: Set<String> = []
-    var allowedEntries: [GlossaryEntry] = []
-    for entry in combined {
-        if seenSource.insert(entry.source).inserted {
-            allowedEntries.append(entry)
+            // 2. Deactivation 체크
+            return !termActivationFilter.shouldDeactivate(
+                source: source.text,
+                deactivatedIn: term.deactivatedIn,
+                segmentText: text
+            )
+        }
+
+        // 등장한 source가 하나도 없으면 제외
+        guard !appearedSources.isEmpty else { return nil }
+
+        return AppearedTerm(sdTerm: term, appearedSources: appearedSources)
+    }
+
+    // === Phase 1: Standalone Activation ===
+
+    for appearedTerm in appearedTerms {
+        for source in appearedTerm.appearedSources {
+            // prohibitStandalone=false인 source만 즉시 사용
+            if !source.prohibitStandalone {
+                sourceToEntry[source.text] = GlossaryEntry(
+                    source: source.text,
+                    target: appearedTerm.target,
+                    variants: appearedTerm.variants,
+                    preMask: appearedTerm.preMask,
+                    isAppellation: appearedTerm.isAppellation,
+                    origin: .termStandalone(termKey: appearedTerm.key),
+                    componentTerms: [
+                        GlossaryEntry.ComponentTerm.make(from: appearedTerm)
+                    ]
+                )
+                usedTermKeys.insert(appearedTerm.key)
+            }
         }
     }
 
-    // 5) 문맥 기반 비활성화 필터링 (신규)
-    let contextFiltered = filterByContextDeactivation(
-        entries: allowedEntries,
-        in: text
+    // === Phase 2: Term-to-Term Activation ===
+
+    for appearedTerm in appearedTerms {
+        guard !usedTermKeys.contains(appearedTerm.key) else { continue }
+
+        // Activator 체크
+        let activatorKeys = Set(appearedTerm.activators.map { $0.key })
+        guard !activatorKeys.isEmpty && !activatorKeys.isDisjoint(with: usedTermKeys) else {
+            continue
+        }
+
+        // 활성화됨 → prohibitStandalone=true인 source도 사용
+        for source in appearedTerm.appearedSources {
+            guard source.prohibitStandalone else { continue }  // true만
+
+            sourceToEntry[source.text] = GlossaryEntry(
+                source: source.text,
+                target: appearedTerm.target,
+                variants: appearedTerm.variants,
+                preMask: appearedTerm.preMask,
+                isAppellation: appearedTerm.isAppellation,
+                origin: .termStandalone(termKey: appearedTerm.key),
+                componentTerms: [
+                    GlossaryEntry.ComponentTerm.make(from: appearedTerm)
+                ]
+            )
+        }
+
+        usedTermKeys.insert(appearedTerm.key)
+    }
+
+    // === Phase 3: Composer Entries ===
+
+    let composerEntries = buildComposerEntries(
+        patterns: patterns,
+        appearedTerms: appearedTerms,
+        segmentText: text
     )
 
-    // 6) 긴 용어가 덮는 짧은 용어 제외
-    let finalEntries = filterBySourceOcc(segment, contextFiltered)
+    // Composer sources를 sourceToEntry에 병합 (standalone 우선)
+    for entry in composerEntries {
+        if sourceToEntry[entry.source] == nil {
+            sourceToEntry[entry.source] = entry
+        }
+    }
 
-    // 7) Longest-first 분할
-    let sorted = finalEntries.sorted { $0.source.count > $1.source.count }
-    var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
+    // === Phase 4: Longest-First Segmentation ===
 
-    for entry in sorted {
-        guard !entry.source.isEmpty else { continue }
+    // Source를 길이 순으로 정렬
+    let sortedSources = sourceToEntry.keys.sorted { $0.count > $1.count }
+
+    for source in sortedSources {
+        guard let entry = sourceToEntry[source] else { continue }
         var newPieces: [SegmentPieces.Piece] = []
 
         for piece in pieces {
             switch piece {
             case .text(let str, let pieceRange):
-                guard str.contains(entry.source) else {
+                guard str.contains(source) else {
                     newPieces.append(.text(str, range: pieceRange))
                     continue
                 }
 
+                // 분할 로직
                 var searchStart = str.startIndex
-                while let foundRange = str.range(of: entry.source, range: searchStart..<str.endIndex) {
-                    // 앞쪽 텍스트 조각 보존
+                while let foundRange = str.range(of: source, range: searchStart..<str.endIndex) {
+                    // 앞쪽 텍스트 조각
                     if foundRange.lowerBound > searchStart {
                         let prefixLower = text.index(
                             pieceRange.lowerBound,
@@ -699,18 +759,18 @@ func buildSegmentPieces(
                         newPieces.append(.text(prefix, range: prefixLower..<prefixUpper))
                     }
 
-                    // 용어 range 기록
+                    // 용어 조각 (Entry 즉석 생성)
                     let originalLower = text.index(
                         pieceRange.lowerBound,
                         offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
                     )
-                    let originalUpper = text.index(originalLower, offsetBy: entry.source.count)
+                    let originalUpper = text.index(originalLower, offsetBy: source.count)
                     newPieces.append(.term(entry, range: originalLower..<originalUpper))
 
                     searchStart = foundRange.upperBound
                 }
 
-                // 남은 텍스트 조각 추가
+                // 남은 텍스트 조각
                 if searchStart < str.endIndex {
                     let suffixLower = text.index(
                         pieceRange.lowerBound,
@@ -728,978 +788,391 @@ func buildSegmentPieces(
         pieces = newPieces
     }
 
-    return (
-        pieces: SegmentPieces(
-            segmentID: segment.id,
-            originalText: text,
-            pieces: pieces
-        ),
-        activatedEntries: finalEntries
+    // === 반환: SegmentPieces + [GlossaryEntry] ===
+
+    let segmentPieces = SegmentPieces(
+        segmentID: segment.id,
+        originalText: text,
+        pieces: pieces
     )
+
+    let glossaryEntries = Array(sourceToEntry.values)
+
+    return (pieces: segmentPieces, glossaryEntries: glossaryEntries)
 }
 ```
 
-### 5.2 filterByContextDeactivation 구현 (신규)
+### 5.3 Composer 헬퍼 메서드 (GlossaryEntry 생성)
+
+**buildComposerEntries:**
 
 ```swift
-/// 문맥 기반 deactivation 필터링
-/// - Parameters:
-///   - entries: 활성화된 GlossaryEntry 배열
-///   - text: 세그먼트 원문
-/// - Returns: deactivation 조건을 통과한 Entry 배열
-private func filterByContextDeactivation(
-    entries: [GlossaryEntry],
-    in text: String
+private func buildComposerEntries(
+    patterns: [SDPattern],
+    appearedTerms: [AppearedTerm],
+    segmentText: String
 ) -> [GlossaryEntry] {
-    var filtered: [GlossaryEntry] = []
+    var allEntries: [GlossaryEntry] = []
 
-    for entry in entries {
-        // deactivation 규칙이 없으면 그대로 포함
-        guard !entry.deactivatingPrefixes.isEmpty ||
-              !entry.deactivatingSuffixes.isEmpty else {
-            filtered.append(entry)
-            continue
-        }
+    for pattern in patterns {
+        let usesR = pattern.sourceTemplates.contains { $0.contains("{R}") }
+            || pattern.targetTemplates.contains { $0.contains("{R}") }
 
-        // source가 실제로 나타나는 모든 위치 확인
-        let occurrences = allOccurrences(of: entry.source, in: text)
-        guard !occurrences.isEmpty else {
-            // 나타나지 않으면 포함 안 함 (이미 앞 단계에서 필터링되어야 하지만 방어 코드)
-            continue
-        }
-
-        // 각 위치마다 deactivation 조건 체크
-        var hasValidOccurrence = false
-        for offset in occurrences {
-            let shouldDeactivate = checkDeactivationCondition(
-                source: entry.source,
-                offset: offset,
-                in: text,
-                prefixes: entry.deactivatingPrefixes,
-                suffixes: entry.deactivatingSuffixes
-            )
-
-            if !shouldDeactivate {
-                // 하나라도 유효한 출현이 있으면 이 entry는 포함
-                hasValidOccurrence = true
-                break
-            }
-        }
-
-        if hasValidOccurrence {
-            filtered.append(entry)
+        if usesR {
+            // Pair patterns
+            let pairs = matchedPairs(for: pattern, appearedTerms: appearedTerms)
+            allEntries.append(contentsOf: buildEntriesFromPairs(
+                pairs: pairs,
+                pattern: pattern,
+                segmentText: segmentText
+            ))
+        } else {
+            // Left-only patterns
+            let lefts = matchedLeftComponents(for: pattern, appearedTerms: appearedTerms)
+            allEntries.append(contentsOf: buildEntriesFromLefts(
+                lefts: lefts,
+                pattern: pattern,
+                segmentText: segmentText
+            ))
         }
     }
 
-    return filtered
-}
-
-/// 특정 위치에서 deactivation 조건 체크
-/// - Parameters:
-///   - source: Entry의 source 문자열
-///   - offset: 세그먼트 내 source의 시작 오프셋 (문자 단위)
-///   - text: 세그먼트 원문
-///   - prefixes: 비활성화 prefix 집합
-///   - suffixes: 비활성화 suffix 집합
-/// - Returns: true면 비활성화해야 함, false면 활성 상태 유지
-private func checkDeactivationCondition(
-    source: String,
-    offset: Int,
-    in text: String,
-    prefixes: Set<String>,
-    suffixes: Set<String>
-) -> Bool {
-    // Prefix 체크
-    if !prefixes.isEmpty {
-        for prefix in prefixes {
-            let prefixStart = offset - prefix.count
-            if prefixStart >= 0 {
-                let prefixStartIndex = text.index(text.startIndex, offsetBy: prefixStart)
-                let prefixEndIndex = text.index(text.startIndex, offsetBy: offset)
-
-                if prefixEndIndex <= text.endIndex {
-                    let actualPrefix = String(text[prefixStartIndex..<prefixEndIndex])
-                    if actualPrefix == prefix {
-                        return true  // deactivate
-                    }
-                }
-            }
-        }
-    }
-
-    // Suffix 체크
-    if !suffixes.isEmpty {
-        let sourceEnd = offset + source.count
-        for suffix in suffixes {
-            let suffixEnd = sourceEnd + suffix.count
-            if suffixEnd <= text.count {
-                let suffixStartIndex = text.index(text.startIndex, offsetBy: sourceEnd)
-                let suffixEndIndex = text.index(text.startIndex, offsetBy: suffixEnd)
-
-                if suffixEndIndex <= text.endIndex {
-                    let actualSuffix = String(text[suffixStartIndex..<suffixEndIndex])
-                    if actualSuffix == suffix {
-                        return true  // deactivate
-                    }
-                }
-            }
-        }
-    }
-
-    return false  // 조건 안 맞으면 활성 상태 유지
+    return allEntries
 }
 ```
+
+**matchedPairs (AppearedComponent 반환):**
+
+```swift
+private func matchedPairs(
+    for pattern: SDPattern,
+    appearedTerms: [AppearedTerm]
+) -> [(AppearedComponent, AppearedComponent)] {
+    var lefts: [AppearedComponent] = []
+    var rights: [AppearedComponent] = []
+    var hasAnyGroup = false
+
+    // appearedTerms에서 L/R component 수집
+    for appearedTerm in appearedTerms {
+        for component in appearedTerm.components where component.pattern == pattern.name {
+            let isLeft = matchesRole(component.role, required: pattern.leftRole)
+            let isRight = matchesRole(component.role, required: pattern.rightRole)
+
+            if !component.groupLinks.isEmpty { hasAnyGroup = true }
+
+            let appearedComponent = AppearedComponent(from: component, appearedTerm: appearedTerm)
+
+            if isLeft { lefts.append(appearedComponent) }
+            if isRight { rights.append(appearedComponent) }
+        }
+    }
+
+    // 그룹 링크가 없으면 Cartesian product
+    if !hasAnyGroup {
+        var pairs: [(AppearedComponent, AppearedComponent)] = []
+        for l in lefts {
+            for r in rights where (!pattern.skipPairsIfSameTerm || l.appearedTerm.key != r.appearedTerm.key) {
+                pairs.append((l, r))
+            }
+        }
+        return pairs
+    }
+
+    // 그룹 링크 기반 페어링
+    var leftByGroup: [String: [AppearedComponent]] = [:]
+    var rightByGroup: [String: [AppearedComponent]] = [:]
+
+    for component in lefts {
+        for g in component.groupLinks.map({ $0.group.uid }) {
+            leftByGroup[g, default: []].append(component)
+        }
+    }
+    for component in rights {
+        for g in component.groupLinks.map({ $0.group.uid }) {
+            rightByGroup[g, default: []].append(component)
+        }
+    }
+
+    var pairs: [(AppearedComponent, AppearedComponent)] = []
+    for g in leftByGroup.keys {
+        guard let ls = leftByGroup[g], let rs = rightByGroup[g] else { continue }
+        for l in ls {
+            for r in rs where (!pattern.skipPairsIfSameTerm || l.appearedTerm.key != r.appearedTerm.key) {
+                pairs.append((l, r))
+            }
+        }
+    }
+
+    return pairs
+}
+
+private func matchesRole(_ componentRole: String?, required: String?) -> Bool {
+    guard
+        let requiredRole = required?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !requiredRole.isEmpty
+    else {
+        return true
+    }
+    guard
+        let role = componentRole?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !role.isEmpty
+    else {
+        return false
+    }
+    return role == requiredRole
+}
+```
+
+**matchedLeftComponents (AppearedComponent 반환):**
+
+```swift
+private func matchedLeftComponents(
+    for pattern: SDPattern,
+    appearedTerms: [AppearedTerm]
+) -> [AppearedComponent] {
+    var out: [AppearedComponent] = []
+    for appearedTerm in appearedTerms {
+        for component in appearedTerm.components where component.pattern == pattern.name {
+            if matchesRole(component.role, required: pattern.leftRole) {
+                out.append(AppearedComponent(from: component, appearedTerm: appearedTerm))
+            }
+        }
+    }
+    return out
+}
+```
+
+### 5.4 Composer Entry 생성 메서드
+
+**buildEntriesFromPairs:**
+
+```swift
+private func buildEntriesFromPairs(
+    pairs: [(AppearedComponent, AppearedComponent)],
+    pattern: SDPattern,
+    segmentText: String
+) -> [GlossaryEntry] {
+    var entries: [GlossaryEntry] = []
+    let joiners = Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+
+    for (lComp, rComp) in pairs {
+        let leftTerm = lComp.appearedTerm
+        let rightTerm = rComp.appearedTerm
+
+        let srcTplIdx = lComp.srcTplIdx ?? rComp.srcTplIdx ?? 0
+        let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
+        let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}{J}{R}"
+        let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L} {R}"
+        let variants: [String] = Glossary.Util.renderVariants(srcTpl, joiners: pattern.sourceJoiners, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+
+        for joiner in joiners {
+            let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+            let tgt = Glossary.Util.renderTarget(tgtTpl, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+
+            for src in srcs {
+                entries.append(
+                    GlossaryEntry(
+                        source: src,
+                        target: tgt,
+                        variants: variants,
+                        preMask: pattern.preMask,
+                        isAppellation: pattern.isAppellation,
+                        origin: .composer(
+                            composerId: pattern.name,
+                            leftKey: leftTerm.key,
+                            rightKey: rightTerm.key,
+                            needPairCheck: pattern.needPairCheck
+                        ),
+                        componentTerms: [
+                            GlossaryEntry.ComponentTerm.make(from: leftTerm),
+                            GlossaryEntry.ComponentTerm.make(from: rightTerm)
+                        ]
+                    )
+                )
+            }
+        }
+    }
+
+    return entries
+}
+```
+
+**buildEntriesFromLefts:**
+
+```swift
+private func buildEntriesFromLefts(
+    lefts: [AppearedComponent],
+    pattern: SDPattern,
+    segmentText: String
+) -> [GlossaryEntry] {
+    var entries: [GlossaryEntry] = []
+    let joiners = Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+
+    for lComp in lefts {
+        let term = lComp.appearedTerm
+
+        let srcTplIdx = lComp.srcTplIdx ?? 0
+        let tgtTplIdx = lComp.tgtTplIdx ?? 0
+        let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}"
+        let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L}"
+        let tgt = Glossary.Util.renderTarget(tgtTpl, L: term.sdTerm, R: nil)
+        let variants = Glossary.Util.renderVariants(srcTpl, joiners: joiners, L: term.sdTerm, R: nil)
+
+        for joiner in joiners {
+            let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: term.sdTerm, R: nil)
+
+            for src in srcs {
+                entries.append(
+                    GlossaryEntry(
+                        source: src,
+                        target: tgt,
+                        variants: variants,
+                        preMask: pattern.preMask,
+                        isAppellation: pattern.isAppellation,
+                        origin: .composer(
+                            composerId: pattern.name,
+                            leftKey: term.key,
+                            rightKey: nil,
+                            needPairCheck: false
+                        ),
+                        componentTerms: [
+                            GlossaryEntry.ComponentTerm.make(from: term)
+                        ]
+                    )
+                )
+            }
+        }
+    }
+
+    return entries
+}
+```
+
+### 5.5 기타
+
+- `TermInfo` 구조체는 제거합니다. Composer/standalone 단계에서 바로 `GlossaryEntry`를 생성해 `sourceToEntry`에 저장합니다.
 
 ---
 
 ## 6. 전체 플로우
 
-### 6.1 Import 시 (1회)
-
 ```
-Google Sheets Import
+DefaultTranslationRouter.prepareMaskingContext() async
   ↓
-parseTermRow() → ParsedSource에 deactivatingPrefixes/Suffixes 포함
-  ↓
-validateDeactivationRules() → 경고 메시지 생성
-  ↓
-upsertTermsFromSheet() → SDSource에 deactivation 정보 저장
-  ↓
-[DB에 저장 완료]
-```
+await Task.detached {
+  for each segment:
+    │
+    └─> TermMasker.buildSegmentPieces(
+          segment,
+          glossaryData.matchedTerms,
+          glossaryData.patterns,
+          glossaryData.matchedSourcesByKey,
+          termActivationFilter
+        )
 
-### 6.2 페이지 로드 시 (1회)
+        내부 처리:
+          Phase 1: Standalone Activation
+            - Source별 deactivation 체크
+            - prohibitStandalone=false만 사용
 
-```
-GlossaryDataProvider.fetch(pageText)
-  ↓
-매칭된 Term/Source 목록
-  ↓
-GlossaryComposer.buildEntriesForSegment()
-  ↓
-buildStandaloneEntries() → GlossaryEntry에 deactivation 정보 포함
-  ↓
-[모든 matched entries (deactivation 정보 포함)]
-```
+          Phase 2: Term-to-Term Activation
+            - usedTermKeys로 activator 체크
+            - prohibitStandalone=true도 활성화
 
-### 6.3 세그먼트 번역 시 (각 세그먼트마다)
+          Phase 3: Composer Entries
+            - Pattern 매칭 (pairs/lefts)
+            - 활성화된 term만 사용
 
-```
-TranslationRouter.translateStream()
-  ↓
-TermMasker.buildSegmentPieces()
-  ↓
-1) standaloneEntries 필터링 (prohibitStandalone=false)
-  ↓
-2) promoteProhibitedEntries() [Pattern-based activation]
-  ↓
-3) promoteActivatedEntries() [Term-to-Term activation]
-  ↓
-4) 중복 제거
-  ↓
-5) filterByContextDeactivation() [신규: 문맥 기반 비활성화]
-     ├─ 각 entry의 모든 출현 위치 찾기
-     ├─ 각 위치마다 prefix/suffix 조건 체크
-     └─ 하나라도 유효한 출현이 있으면 포함
-  ↓
-6) filterBySourceOcc() [긴 용어 우선]
-  ↓
-7) Longest-first 분할 → SegmentPieces
-  ↓
-번역 엔진 호출 (마스킹/정규화 적용)
-  ↓
-[번역 완료]
+          Phase 4: Pattern Proximity (선택적)
+
+          Phase 5: Longest-First Segmentation
+            - Entry 즉석 생성
+            - 분할
+
+        → SegmentPieces
+}
 ```
 
 ---
 
-## 7. 예시 실행
+## 7. 구현 우선순위
 
-### 7.1 데이터 준비
+### Phase 1: 아키텍처 변경 (3일)
 
-**Terms:**
-```
-sorato: {
-  key: "sorato",
-  target: "소라토",
-  sources: [
-    { text: "宙人", deactivatingPrefixes: ["宇"] }
-  ]
-}
+1. **TermActivationFilter 생성** (0.5일)
+2. **TermMasker 통합** (2일)
+3. **DefaultTranslationRouter 수정** (0.5일)
 
-hikaru: {
-  key: "hikaru",
-  target: "히카루",
-  sources: [
-    { text: "光", deactivatingSuffixes: ["波", "線"] }
-  ]
-}
-```
+### Phase 2: 데이터 모델 & Import (1.5일)
 
-**GlossaryEntries (buildEntriesForSegment 결과):**
-```
-1. source="宙人", target="소라토", prohibitStandalone=false,
-   deactivatingPrefixes=["宇"],
-   origin=.termStandalone("sorato")
+4. **SDTerm 모델** (0.5일)
+5. **Google Sheets Import** (0.5일)
+6. **UI** (0.5일)
 
-2. source="光", target="히카루", prohibitStandalone=false,
-   deactivatingSuffixes=["波", "線"],
-   origin=.termStandalone("hikaru")
-```
-
-### 7.2 케이스 1: Prefix 비활성화
-
-**세그먼트:** "宇宙人は地球人だ"
-
-**buildSegmentPieces 실행:**
-
-1. **standaloneEntries:**
-   ```
-   [Entry 1: "宙人", Entry 2: "光"]
-   ```
-
-2. **filterByContextDeactivation:**
-
-   **Entry 1 ("宙人") 처리:**
-   - 출현 위치: [1] (offset=1, "宇**宙人**は...")
-   - checkDeactivationCondition(offset=1):
-     - prefix "宇" 체크: offset 1 앞에 "宇" 존재 (offset 0)
-     - 조건 충족 → return true (비활성화)
-   - hasValidOccurrence = false
-   - **Entry 1 제외**
-
-   **Entry 2 ("光") 처리:**
-   - 출현 위치: [] (세그먼트에 없음)
-   - **Entry 2 제외**
-
-3. **최종 allowedEntries:** []
-
-4. **번역 결과:**
-   - "宙人" 매칭 안 됨
-   - 번역: "우주인은 지구인이다" ✓
-
-### 7.3 케이스 2: Suffix 비활성화
-
-**세그먼트:** "光波が来た"
-
-**buildSegmentPieces 실행:**
-
-1. **standaloneEntries:**
-   ```
-   [Entry 2: "光"]
-   ```
-
-2. **filterByContextDeactivation:**
-
-   **Entry 2 ("光") 처리:**
-   - 출현 위치: [0] (offset=0, "**光**波が...")
-   - checkDeactivationCondition(offset=0):
-     - suffix "波" 체크: offset 1 (sourceEnd) 뒤에 "波" 존재
-     - 조건 충족 → return true (비활성화)
-   - hasValidOccurrence = false
-   - **Entry 2 제외**
-
-3. **최종 allowedEntries:** []
-
-4. **번역 결과:**
-   - "光" 매칭 안 됨
-   - 번역: "광파가 왔다" ✓
-
-### 7.4 케이스 3: 조건 불충족 (정상 활성화)
-
-**세그먼트:** "光が来た"
-
-**buildSegmentPieces 실행:**
-
-1. **standaloneEntries:**
-   ```
-   [Entry 2: "光"]
-   ```
-
-2. **filterByContextDeactivation:**
-
-   **Entry 2 ("光") 처리:**
-   - 출현 위치: [0] (offset=0, "**光**が...")
-   - checkDeactivationCondition(offset=0):
-     - suffix "波" 체크: offset 1 뒤에 "が" 존재 → 불일치
-     - suffix "線" 체크: offset 1 뒤에 "が" 존재 → 불일치
-     - 조건 불충족 → return false (활성 유지)
-   - hasValidOccurrence = true
-   - **Entry 2 포함**
-
-3. **최종 allowedEntries:** [Entry 2]
-
-4. **번역 결과:**
-   - "光" → "히카루" 매칭됨
-   - 번역: "히카루가 왔다" ✓
-
-### 7.5 케이스 4: 복수 출현 (일부만 비활성화)
-
-**세그먼트:** "光は光波を使う"
-
-**buildSegmentPieces 실행:**
-
-1. **standaloneEntries:**
-   ```
-   [Entry 2: "光"]
-   ```
-
-2. **filterByContextDeactivation:**
-
-   **Entry 2 ("光") 처리:**
-   - 출현 위치: [0, 2]
-     - offset 0: "**光**は..."
-     - offset 2: "は**光**波を..."
-
-   - **첫 번째 출현 (offset=0) 체크:**
-     - suffix "波" 체크: offset 1 뒤에 "は" 존재 → 불일치
-     - 조건 불충족 → return false (이 위치는 유효)
-     - hasValidOccurrence = true → **Entry 2 포함**
-
-3. **최종 allowedEntries:** [Entry 2]
-
-4. **SegmentPieces 분할:**
-   - "光" 두 출현 모두 매칭됨:
-     - `[.term("光"), .text("は"), .term("光"), .text("波を使う")]`
-
-5. **번역 결과:**
-   - "히카루는 히카루파를 사용한다" (?)
-   - **문제:** 두 번째 "光"도 매칭되어 오역 발생
-
-**해결 방안:**
-
-현재 구현은 "하나라도 유효한 출현이 있으면 전체 entry를 포함"하는 방식입니다.
-더 정교한 처리를 위해서는 **출현 위치별로 비활성화를 판단**해야 하지만,
-이는 구현 복잡도가 크게 증가합니다.
-
-**권장:**
-- Phase 1에서는 현재 방식 유지 (간단, 대부분 케이스 커버)
-- Phase 2에서 필요 시 위치별 비활성화 구현 고려
-
----
-
-## 8. UI/UX 설계
-
-### 8.1 Term 편집 화면
-
-**TermEditorSheet 섹션 추가:**
-
-```
-┌─────────────────────────────────────┐
-│ Term 편집: 소라토                    │
-├─────────────────────────────────────┤
-│ 번역: 소라토                         │
-│ 변형: []                             │
-│                                      │
-│ Sources:                             │
-│   - 宙人                             │
-│                                      │
-│ ┌─ 문맥 비활성화 ───────────────────┐│
-│ │ ⚠️ 특정 문자가 앞뒤에 나타날 때   ││
-│ │    이 용어를 사용하지 않습니다    ││
-│ │                                   ││
-│ │ 비활성화 접두사 (prefix):         ││
-│ │   [宇] [×]                        ││
-│ │   ┌─────────┐ [추가]             ││
-│ │   │         │                     ││
-│ │   └─────────┘                     ││
-│ │                                   ││
-│ │ 비활성화 접미사 (suffix):         ││
-│ │   (없음)                          ││
-│ │   ┌─────────┐ [추가]             ││
-│ │   │         │                     ││
-│ │   └─────────┘                     ││
-│ │                                   ││
-│ │ 💡 예: "宇宙人"에서 "宙人"을      ││
-│ │     제외하려면 접두사에 "宇" 추가 ││
-│ └───────────────────────────────────┘│
-│                                      │
-│ [저장] [취소]                        │
-└─────────────────────────────────────┘
-```
-
-### 8.2 UI 구현
-
-**TermEditorSheet.swift:**
-
-```swift
-struct TermEditorSheet: View {
-    @State private var draft: TermDraft
-    @State private var newPrefix: String = ""
-    @State private var newSuffix: String = ""
-
-    var body: some View {
-        Form {
-            // ... 기존 섹션들 (번역, 변형, Sources 등)
-
-            // 신규: 문맥 비활성화 섹션
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.red)
-                        Text("특정 문자가 앞뒤에 나타날 때 이 용어를 사용하지 않습니다")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Divider()
-
-                    // Prefix 설정
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("비활성화 접두사 (prefix)")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        if draft.deactivatingPrefixes.isEmpty {
-                            Text("(없음)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        } else {
-                            TagChips(
-                                tags: draft.deactivatingPrefixes,
-                                color: .red,
-                                onRemove: { index in
-                                    draft.deactivatingPrefixes.remove(at: index)
-                                }
-                            )
-                        }
-
-                        HStack {
-                            TextField("예: 宇", text: $newPrefix)
-                                .textFieldStyle(.roundedBorder)
-
-                            Button("추가") {
-                                let trimmed = newPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !trimmed.isEmpty && !draft.deactivatingPrefixes.contains(trimmed) {
-                                    draft.deactivatingPrefixes.append(trimmed)
-                                    newPrefix = ""
-                                }
-                            }
-                            .disabled(newPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-
-                    Divider()
-
-                    // Suffix 설정
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("비활성화 접미사 (suffix)")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        if draft.deactivatingSuffixes.isEmpty {
-                            Text("(없음)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        } else {
-                            TagChips(
-                                tags: draft.deactivatingSuffixes,
-                                color: .red,
-                                onRemove: { index in
-                                    draft.deactivatingSuffixes.remove(at: index)
-                                }
-                            )
-                        }
-
-                        HStack {
-                            TextField("예: 波", text: $newSuffix)
-                                .textFieldStyle(.roundedBorder)
-
-                            Button("추가") {
-                                let trimmed = newSuffix.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !trimmed.isEmpty && !draft.deactivatingSuffixes.contains(trimmed) {
-                                    draft.deactivatingSuffixes.append(trimmed)
-                                    newSuffix = ""
-                                }
-                            }
-                            .disabled(newSuffix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-
-                    Divider()
-
-                    // 도움말
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "lightbulb.fill")
-                            .font(.caption)
-                            .foregroundColor(.yellow)
-                        Text("예: \"宇宙人\"에서 \"宙人\"을 제외하려면 접두사에 \"宇\"를 추가하세요")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            } header: {
-                Text("문맥 비활성화")
-            }
-
-            // ... 기존 섹션들 (조건부 활성화 등)
-        }
-        .navigationTitle("Term 편집")
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("저장") {
-                    saveDraft()
-                }
-            }
-
-            ToolbarItem(placement: .cancellationAction) {
-                Button("취소") {
-                    dismiss()
-                }
-            }
-        }
-    }
-}
-
-/// 태그 칩 컴포넌트 (재사용)
-struct TagChips: View {
-    let tags: [String]
-    var color: Color = .blue
-    let onRemove: (Int) -> Void
-
-    var body: some View {
-        FlowLayout(spacing: 8) {
-            ForEach(Array(tags.enumerated()), id: \.offset) { index, tag in
-                HStack(spacing: 4) {
-                    Text(tag)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(color.opacity(0.2))
-                        .foregroundColor(color)
-                        .cornerRadius(8)
-
-                    Button {
-                        onRemove(index)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.caption2)
-                            .foregroundColor(color)
-                    }
-                }
-            }
-        }
-    }
-}
-```
-
-### 8.3 TermDraft 확장
-
-```swift
-struct TermDraft {
-    var key: String
-    var target: String
-    var variants: [String]
-    var sources: [SourceDraft]
-    var isAppellation: Bool
-    var preMask: Bool
-    var activators: [SDTerm]
-    var activates: [SDTerm]
-
-    // 신규: deactivation (단순화: source별이 아닌 Term 전체에 적용)
-    var deactivatingPrefixes: [String] = []
-    var deactivatingSuffixes: [String] = []
-}
-
-struct SourceDraft {
-    var text: String
-    var prohibitStandalone: Bool
-}
-```
-
-**주의:** 실제로는 source별로 deactivation 조건이 다를 수 있으므로,
-더 정교한 UI가 필요하면 `SourceDraft`에 deactivation 필드를 추가해야 합니다.
-
----
-
-## 9. 구현 우선순위
-
-### Phase 1: 핵심 기능 (2일)
-
-1. **데이터 모델** (0.5일)
-   - SDSource에 `deactivatingPrefixes`, `deactivatingSuffixes` 추가
-   - GlossaryEntry에 deactivation 필드 추가
-   - ComponentTerm.Source에 deactivation 필드 추가
-
-2. **GlossaryComposer** (0.5일)
-   - `buildStandaloneEntries`에서 deactivation 정보 포함
-   - `ComponentTerm.make` 수정
-
-3. **TermMasker** (1일)
-   - `filterByContextDeactivation` 구현
-   - `checkDeactivationCondition` 구현
-   - `buildSegmentPieces`에 통합
-
-**합계: 2일**
-
-### Phase 2: Import & UI (1.5일)
-
-4. **Google Sheets Import** (0.5일)
-   - `parseTermRow`에서 deactivation 컬럼 파싱
-   - `validateDeactivationRules` 구현
-   - `upsertTermsFromSheet`에서 SDSource에 저장
-
-5. **UI 구현** (0.5일)
-   - TermEditorSheet에 deactivation 섹션 추가
-   - TagChips 컴포넌트
-   - TermDraft 확장
-
-6. **Import Preview** (0.5일)
-   - SheetsImportPreviewView에 deactivation 정보 표시
-
-**합계: 1.5일**
-
-### Phase 3: 테스트 & 문서 (1일)
+### Phase 3: 테스트 (1.5일)
 
 7. **단위 테스트** (0.5일)
-   - `filterByContextDeactivation` 테스트
-   - `checkDeactivationCondition` 테스트
-   - Import 파싱 테스트
+8. **통합 테스트** (0.5일)
+9. **End-to-End** (0.5일)
 
-8. **통합 테스트** (0.25일)
-   - End-to-end 테스트 (세그먼트 → 번역)
+### Phase 4: 레거시 코드 정리 (1일)
 
-9. **문서 업데이트** (0.25일)
-   - `PROJECT_OVERVIEW.md` 업데이트
-   - `TODO.md` 업데이트
+**완전 제거:**
 
-**합계: 1일**
+1. **GlossaryComposer.swift 전체 파일**
+   - 위치: `MyTranslation/Services/Translation/Glossary/GlossaryComposer.swift`
+   - 이유: `buildEntriesForSegment`, `buildEntries` 로직이 TermMasker로 통합됨
+   - 일부 헬퍼 메서드(matchedPairs, buildEntriesFromPairs 등)는 TermMasker로 이동
 
----
+2. **TermMasker 보조 메서드 3개**
+   - `collectUsedTermKeys`: 더 이상 필요 없음 (buildSegmentPieces에서 직접 반환)
+   - `collectActivatedTermKeys`: GlossaryEntry.activatorKeys 제거로 불필요
+   - `promoteActivatedEntries`: Term-to-Term Activation이 Phase 2로 통합
 
-## 10. 테스트 케이스
+3. **promoteProhibitedEntries 메서드**
+   - 위치: `MyTranslation/Services/Translation/Masking/Masker.swift`
+   - 이유: Pattern Proximity Activation 제거
+   - 관련 테스트 2개도 함께 제거
 
-### 10.1 단위 테스트
+4. **makeNameGlossaries 메서드**
+   - 위치: TermMasker
+   - 이유: `makeNameGlossariesFromPieces`로 대체됨
 
-**Test 1: Prefix Deactivation**
-```swift
-func testContextDeactivation_Prefix() {
-    let masker = TermMasker()
-    let text = "宇宙人は地球人だ"
-    let entries = [
-        GlossaryEntry(
-            source: "宙人",
-            target: "소라토",
-            variants: [],
-            preMask: false,
-            isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "sorato"),
-            deactivatingPrefixes: ["宇"]
-        )
-    ]
+5. **DefaultTranslationRouter 의존성 및 메서드**
+   - `glossaryComposer: GlossaryComposer` 의존성 제거
+   - `buildEntriesForSegment` 메서드 제거
 
-    let filtered = masker.filterByContextDeactivation(entries: entries, in: text)
+**필드 제거:**
 
-    XCTAssertTrue(filtered.isEmpty, "Entry should be deactivated due to prefix '宇'")
-}
-```
+6. **GlossaryEntry 필드**
+   - `activatorKeys: Set<String>` - Phase 2에서 SDTerm.activators 직접 사용
+   - `activatesKeys: Set<String>` - 아무도 읽지 않음 (Entry는 최종 결과물)
+   - `deactivatedIn: Set<String>` - Phase 0 필터링으로 불필요
+   - `prohibitStandalone` - 항상 false, 사용하지 않음
 
-**Test 2: Suffix Deactivation**
-```swift
-func testContextDeactivation_Suffix() {
-    let masker = TermMasker()
-    let text = "光波が来た"
-    let entries = [
-        GlossaryEntry(
-            source: "光",
-            target: "히카루",
-            variants: [],
-            preMask: false,
-            isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "hikaru"),
-            deactivatingSuffixes: ["波", "線"]
-        )
-    ]
+7. **ComponentTerm 필드**
+  - `variants: [String]` - 사용하지 않음
+   - `sources: [Source]` - 사용하지 않음
+   - `matchedSources: Set<String>` - 사용하지 않음
+   - `preMask: Bool` - 사용하지 않음
+   - `isAppellation: Bool` - 사용하지 않음
+   - `activatorKeys: Set<String>` - 사용하지 않음
+   - `activatesKeys: Set<String>` - 사용하지 않음
+   - `Source` 중첩 구조체 - 사용하지 않음
 
-    let filtered = masker.filterByContextDeactivation(entries: entries, in: text)
+**수정:**
 
-    XCTAssertTrue(filtered.isEmpty, "Entry should be deactivated due to suffix '波'")
-}
-```
+8. **DefaultTranslationRouter.prepareMaskingContext**
+   - TermMasker.buildSegmentPieces에 원시 데이터 직접 전달
+   - GlossaryComposer 호출 제거
 
-**Test 3: No Deactivation (Valid Context)**
-```swift
-func testContextDeactivation_NoMatch() {
-    let masker = TermMasker()
-    let text = "光が来た"
-    let entries = [
-        GlossaryEntry(
-            source: "光",
-            target: "히카루",
-            variants: [],
-            preMask: false,
-            isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "hikaru"),
-            deactivatingSuffixes: ["波", "線"]
-        )
-    ]
+**유지 (제거하지 않음):**
 
-    let filtered = masker.filterByContextDeactivation(entries: entries, in: text)
+- **GlossaryEntry.componentTerms**: Composer 구성 Term 정보, UI/디버깅 필수
+- **NameGlossary 타입**: 번역 엔진 인터페이스
 
-    XCTAssertEqual(filtered.count, 1, "Entry should remain active")
-    XCTAssertEqual(filtered.first?.source, "光")
-}
-```
-
-**Test 4: Multiple Occurrences (Partial Deactivation)**
-```swift
-func testContextDeactivation_MultipleOccurrences() {
-    let masker = TermMasker()
-    let text = "光は光波を使う"
-    let entries = [
-        GlossaryEntry(
-            source: "光",
-            target: "히카루",
-            variants: [],
-            preMask: false,
-            isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "hikaru"),
-            deactivatingSuffixes: ["波"]
-        )
-    ]
-
-    // 첫 번째 "光" (offset 0): 뒤에 "は" → 유효
-    // 두 번째 "光" (offset 2): 뒤에 "波" → 비활성화
-    // 하나라도 유효하면 entry 포함
-
-    let filtered = masker.filterByContextDeactivation(entries: entries, in: text)
-
-    XCTAssertEqual(filtered.count, 1, "Entry should remain active due to first occurrence")
-}
-```
-
-**Test 5: No Deactivation Rules**
-```swift
-func testContextDeactivation_NoRules() {
-    let masker = TermMasker()
-    let text = "宇宙人は地球人だ"
-    let entries = [
-        GlossaryEntry(
-            source: "宙人",
-            target: "소라토",
-            variants: [],
-            preMask: false,
-            isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "sorato")
-            // deactivation 규칙 없음
-        )
-    ]
-
-    let filtered = masker.filterByContextDeactivation(entries: entries, in: text)
-
-    XCTAssertEqual(filtered.count, 1, "Entry without deactivation rules should always be included")
-}
-```
-
-**Test 6: Prefix and Suffix Combined**
-```swift
-func testContextDeactivation_Combined() {
-    let masker = TermMasker()
-    let text = "大光線"
-    let entries = [
-        GlossaryEntry(
-            source: "光",
-            target: "히카루",
-            variants: [],
-            preMask: false,
-            isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "hikaru"),
-            deactivatingPrefixes: ["大"],
-            deactivatingSuffixes: ["線"]
-        )
-    ]
-
-    // "光" 앞에 "大", 뒤에 "線" → 둘 중 하나만 맞아도 비활성화
-
-    let filtered = masker.filterByContextDeactivation(entries: entries, in: text)
-
-    XCTAssertTrue(filtered.isEmpty, "Entry should be deactivated due to both prefix and suffix")
-}
-```
-
-### 10.2 통합 테스트
-
-**Test 7: End-to-End with Deactivation**
-```swift
-func testEndToEnd_ContextDeactivation() async throws {
-    // Setup
-    let context = ModelContext(/* test container */)
-    let composer = GlossaryComposer()
-    let masker = TermMasker()
-
-    // Insert Term with deactivation
-    let term = SDTerm(key: "sorato", target: "소라토")
-    let source = SDSource(
-        text: "宙人",
-        prohibitStandalone: false,
-        term: term,
-        deactivatingPrefixes: ["宇"]
-    )
-    term.sources.append(source)
-    context.insert(term)
-    try context.save()
-
-    // Fetch and build entries
-    let dataProvider = GlossaryDataProvider(context: context)
-    let data = await dataProvider.fetch(text: "宇宙人は地球人だ")
-    let entries = composer.buildEntriesForSegment(from: data, segmentText: "宇宙人は地球人だ")
-
-    // Build SegmentPieces
-    let segment = Segment(id: "1", originalText: "宇宙人は地球人だ")
-    let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: entries)
-
-    // Verify
-    let termPieces = pieces.pieces.filter {
-        if case .term = $0 { return true }
-        return false
-    }
-
-    XCTAssertTrue(termPieces.isEmpty, "宙人 should be deactivated due to prefix 宇")
-}
-```
-
-**Test 8: End-to-End with Valid Context**
-```swift
-func testEndToEnd_ValidContext() async throws {
-    // Setup (동일)
-
-    // Fetch with different segment
-    let data = await dataProvider.fetch(text: "宙人が現れた")
-    let entries = composer.buildEntriesForSegment(from: data, segmentText: "宙人が現れた")
-
-    let segment = Segment(id: "2", originalText: "宙人が現れた")
-    let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: entries)
-
-    let termPieces = pieces.pieces.filter {
-        if case .term(let entry, _) = $0 {
-            return entry.source == "宙人"
-        }
-        return false
-    }
-
-    XCTAssertEqual(termPieces.count, 1, "宙人 should be active")
-}
-```
-
-### 10.3 Import 테스트
-
-**Test 9: Google Sheets Parsing**
-```swift
-func testSheetsImport_DeactivationParsing() {
-    // 단일 prefix
-    let row1 = ["sorato", "소라토", "宙人", "宇", ""]
-    let headers = ["key", "target", "sources", "deactivating_prefixes", "deactivating_suffixes"]
-    let parsed1 = Glossary.Sheet.parseTermRow(row1, headers: headers)
-
-    XCTAssertEqual(parsed1?.sources.first?.deactivatingPrefixes, ["宇"])
-    XCTAssertEqual(parsed1?.sources.first?.deactivatingSuffixes, [])
-
-    // 복수 prefix/suffix (쉼표 구분)
-    let row2 = ["hikaru", "히카루", "光", "小,大", "波,線"]
-    let parsed2 = Glossary.Sheet.parseTermRow(row2, headers: headers)
-
-    XCTAssertEqual(Set(parsed2?.sources.first?.deactivatingPrefixes ?? []), Set(["小", "大"]))
-    XCTAssertEqual(Set(parsed2?.sources.first?.deactivatingSuffixes ?? []), Set(["波", "線"]))
-
-    // 빈 값
-    let row3 = ["ginga", "긴가", "银河", "", ""]
-    let parsed3 = Glossary.Sheet.parseTermRow(row3, headers: headers)
-
-    XCTAssertEqual(parsed3?.sources.first?.deactivatingPrefixes, [])
-    XCTAssertEqual(parsed3?.sources.first?.deactivatingSuffixes, [])
-}
-```
-
-**Test 10: Validation**
-```swift
-func testSheetsImport_Validation() {
-    let parsedTerms = [
-        Glossary.Sheet.ParsedTerm(
-            key: "test",
-            target: "테스트",
-            variants: [],
-            sources: [
-                Glossary.Sheet.ParsedSource(
-                    text: "光",
-                    prohibitStandalone: false,
-                    deactivatingPrefixes: ["宇宙"],  // 너무 긴 prefix
-                    deactivatingSuffixes: []
-                )
-            ],
-            isAppellation: false,
-            preMask: false,
-            activatedByKeys: []
-        )
-    ]
-
-    let warnings = Glossary.Sheet.validateDeactivationRules(parsedTerms)
-
-    XCTAssertFalse(warnings.isEmpty, "Should warn about prefix longer than source")
-    XCTAssertTrue(warnings.first?.contains("longer than or equal to source") ?? false)
-}
-```
+**총 소요 시간: 7일**
 
 ---
 
-## 11. 요약
-
-### 핵심 변경사항
-
-1. **SDSource**: `deactivatingPrefixes`, `deactivatingSuffixes` 추가
-2. **GlossaryEntry**: deactivation 필드 추가
-3. **GlossaryComposer**: deactivation 정보를 Entry에 포함
-4. **Google Sheets**: `deactivating_prefixes`, `deactivating_suffixes` 컬럼 지원
-5. **TermMasker**: `filterByContextDeactivation()` 구현
-   - 각 entry의 모든 출현 위치 체크
-   - prefix/suffix 조건 매칭 여부 판단
-   - 하나라도 유효한 출현이 있으면 entry 포함
-
-### 장점
-
-✅ **직관적**: prefix/suffix 규칙으로 명확하게 정의
-✅ **유연함**: 복수 prefix/suffix 지정 가능
-✅ **대칭적**: `activated_by`와 반대 방향의 대칭적 기능
-✅ **확장 가능**: 향후 정규식 등으로 확장 가능
-✅ **안전함**: 기존 activation 로직과 독립적으로 동작
-
-### 제약사항
-
-⚠️ **출현 위치별 비활성화 불가**: 현재 구현은 "하나라도 유효한 출현이 있으면 전체 포함"
-⚠️ **성능**: 각 entry의 모든 출현 위치를 체크해야 함 (대부분 케이스에서는 무시 가능)
-⚠️ **복잡한 패턴 미지원**: 정규식 등은 Phase 2 이후 고려
-
-### 구현 난이도 및 기간
-
-**난이도**: 중
-**예상 기간**: 4-5일 (MVP)
-
-### 기술적 고려사항
-
-1. **중복 처리**: activation 후 deactivation을 적용하므로 순서 중요
-2. **성능 최적화**: 출현 위치 캐싱으로 개선 가능
-3. **확장성**: 향후 정규식, 위치별 비활성화 등으로 확장 가능
-4. **디버깅**: entry가 제외된 이유를 로깅하면 디버깅 용이
-
-### 다음 단계
-
-1. SDSource 모델에 deactivation 필드 추가
-2. GlossaryEntry 구조체 확장
-3. GlossaryComposer 수정
-4. TermMasker에 `filterByContextDeactivation` 구현
-5. Google Sheets import 파싱 로직
-6. TermEditorSheet UI 구현
-7. 테스트 작성
-8. 문서 업데이트
-
----
-
-**문서 버전**: 1.0
-**작성일**: 2025-11-24
-**상태**: 승인 대기
+**END OF SPEC**
