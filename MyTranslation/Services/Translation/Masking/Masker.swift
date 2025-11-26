@@ -52,6 +52,62 @@ public final class TermMasker {
         self.extraNegativeBigrams = extraNegativeBigrams
         self.contextWindow = contextWindow
     }
+
+    // MARK: - Appeared Term 모델
+
+    struct AppearedTerm {
+        let sdTerm: Glossary.SDModel.SDTerm
+        let appearedSources: [Glossary.SDModel.SDSource]
+
+        var key: String { sdTerm.key }
+        var target: String { sdTerm.target }
+        var variants: [String] { sdTerm.variants }
+        var components: [Glossary.SDModel.SDComponent] { sdTerm.components }
+        var preMask: Bool { sdTerm.preMask }
+        var isAppellation: Bool { sdTerm.isAppellation }
+        var activators: [Glossary.SDModel.SDTerm] { sdTerm.activators }
+        var activates: [Glossary.SDModel.SDTerm] { sdTerm.activates }
+    }
+
+    struct AppearedComponent {
+        let component: Glossary.SDModel.SDComponent
+        let appearedTerm: AppearedTerm
+
+        var pattern: String { component.pattern }
+        var role: String? { component.role }
+        var srcTplIdx: Int? { component.srcTplIdx }
+        var tgtTplIdx: Int? { component.tgtTplIdx }
+        var groupLinks: [Glossary.SDModel.SDComponentGroup] { component.groupLinks }
+    }
+
+    private func deactivatedContexts(of term: Glossary.SDModel.SDTerm) -> [String] {
+        for child in Mirror(reflecting: term).children {
+            if child.label == "deactivatedIn", let arr = child.value as? [String] {
+                return arr
+            }
+        }
+        return []
+    }
+
+    private func makeComponentTerm(
+        from appearedTerm: AppearedTerm,
+        matchedSources: Set<String>
+    ) -> GlossaryEntry.ComponentTerm {
+        let sources = appearedTerm.sdTerm.sources.map {
+            GlossaryEntry.ComponentTerm.Source(text: $0.text, prohibitStandalone: $0.prohibitStandalone)
+        }
+        return GlossaryEntry.ComponentTerm(
+            key: appearedTerm.key,
+            target: appearedTerm.target,
+            variants: Set(appearedTerm.variants),
+            sources: sources,
+            matchedSources: matchedSources.isEmpty ? Set(appearedTerm.sdTerm.sources.map { $0.text }) : matchedSources,
+            preMask: appearedTerm.preMask,
+            isAppellation: appearedTerm.isAppellation,
+            activatorKeys: Set(appearedTerm.activators.map { $0.key }),
+            activatesKeys: Set(appearedTerm.activates.map { $0.key })
+        )
+    }
     
     // ---- 유틸
     func allOccurrences(of needle: String, in hay: String) -> [Int] {
@@ -200,6 +256,414 @@ public final class TermMasker {
             guard case let .termStandalone(termId) = $0.origin else { return false }
             return activatedKeys.contains(termId)
         }
+    }
+
+    // MARK: - V2 SegmentPieces 생성 (raw matched terms)
+
+    func buildSegmentPieces(
+        segment: Segment,
+        matchedTerms: [Glossary.SDModel.SDTerm],
+        patterns: [Glossary.SDModel.SDPattern],
+        matchedSources: [String: Set<String>],
+        termActivationFilter: TermActivationFilter
+    ) -> (pieces: SegmentPieces, glossaryEntries: [GlossaryEntry]) {
+        let text = segment.originalText
+
+        guard text.isEmpty == false, matchedTerms.isEmpty == false else {
+            return (
+                pieces: SegmentPieces(
+                    segmentID: segment.id,
+                    originalText: text,
+                    pieces: [.text(text, range: text.startIndex..<text.endIndex)]
+                ),
+                glossaryEntries: []
+            )
+        }
+
+        var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
+        var usedTermKeys: Set<String> = []
+        var sourceToEntry: [String: GlossaryEntry] = [:]
+
+        // Phase 0: 등장 + 비활성화 필터링
+        let appearedTerms: [AppearedTerm] = matchedTerms.compactMap { term in
+            let matchedSourceTexts = matchedSources[term.key] ?? []
+            let filteredSources = term.sources.filter { source in
+                guard matchedSourceTexts.contains(source.text), text.contains(source.text) else { return false }
+                return !termActivationFilter.shouldDeactivate(
+                    source: source.text,
+                    deactivatedIn: deactivatedContexts(of: term),
+                    segmentText: text
+                )
+            }
+            guard filteredSources.isEmpty == false else { return nil }
+            return AppearedTerm(sdTerm: term, appearedSources: filteredSources)
+        }
+
+        // Phase 1: Standalone Activation
+        for appearedTerm in appearedTerms {
+            let matchedSet = matchedSources[appearedTerm.key] ?? []
+            for source in appearedTerm.appearedSources where source.prohibitStandalone == false {
+                sourceToEntry[source.text] = GlossaryEntry(
+                    source: source.text,
+                    target: appearedTerm.target,
+                    variants: Set(appearedTerm.variants),
+                    preMask: appearedTerm.preMask,
+                    isAppellation: appearedTerm.isAppellation,
+                    prohibitStandalone: source.prohibitStandalone,
+                    origin: .termStandalone(termKey: appearedTerm.key),
+                    componentTerms: [
+                        makeComponentTerm(
+                            from: appearedTerm,
+                            matchedSources: Set(matchedSet)
+                        )
+                    ],
+                    activatorKeys: Set(appearedTerm.activators.map { $0.key }),
+                    activatesKeys: Set(appearedTerm.activates.map { $0.key })
+                )
+                usedTermKeys.insert(appearedTerm.key)
+            }
+        }
+
+        // Phase 2: Term-to-Term Activation
+        for appearedTerm in appearedTerms where !usedTermKeys.contains(appearedTerm.key) {
+            let activatorKeys = Set(appearedTerm.activators.map { $0.key })
+            guard activatorKeys.isDisjoint(with: usedTermKeys) == false else { continue }
+
+            let matchedSet = matchedSources[appearedTerm.key] ?? []
+            for source in appearedTerm.appearedSources where source.prohibitStandalone {
+                sourceToEntry[source.text] = GlossaryEntry(
+                    source: source.text,
+                    target: appearedTerm.target,
+                    variants: Set(appearedTerm.variants),
+                    preMask: appearedTerm.preMask,
+                    isAppellation: appearedTerm.isAppellation,
+                    prohibitStandalone: source.prohibitStandalone,
+                    origin: .termStandalone(termKey: appearedTerm.key),
+                    componentTerms: [
+                        makeComponentTerm(
+                            from: appearedTerm,
+                            matchedSources: Set(matchedSet)
+                        )
+                    ],
+                    activatorKeys: activatorKeys,
+                    activatesKeys: Set(appearedTerm.activates.map { $0.key })
+                )
+            }
+
+            usedTermKeys.insert(appearedTerm.key)
+        }
+
+        // Phase 3: Composer Entries
+        let composerEntries = buildComposerEntries(
+            patterns: patterns,
+            appearedTerms: appearedTerms,
+            matchedSources: matchedSources,
+            segmentText: text
+        )
+        for entry in composerEntries where sourceToEntry[entry.source] == nil {
+            sourceToEntry[entry.source] = entry
+        }
+
+        // Phase 4: Longest-first Segmentation
+        let sortedSources = sourceToEntry.keys.sorted { $0.count > $1.count }
+
+        for source in sortedSources {
+            guard let entry = sourceToEntry[source] else { continue }
+            var newPieces: [SegmentPieces.Piece] = []
+
+            for piece in pieces {
+                switch piece {
+                case .text(let str, let pieceRange):
+                    guard str.contains(source) else {
+                        newPieces.append(.text(str, range: pieceRange))
+                        continue
+                    }
+
+                    var searchStart = str.startIndex
+                    while let foundRange = str.range(of: source, range: searchStart..<str.endIndex) {
+                        if foundRange.lowerBound > searchStart {
+                            let prefixLower = text.index(
+                                pieceRange.lowerBound,
+                                offsetBy: str.distance(from: str.startIndex, to: searchStart)
+                            )
+                            let prefixUpper = text.index(
+                                pieceRange.lowerBound,
+                                offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
+                            )
+                            let prefix = String(str[searchStart..<foundRange.lowerBound])
+                            newPieces.append(.text(prefix, range: prefixLower..<prefixUpper))
+                        }
+
+                        let originalLower = text.index(
+                            pieceRange.lowerBound,
+                            offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
+                        )
+                        let originalUpper = text.index(originalLower, offsetBy: source.count)
+                        newPieces.append(.term(entry, range: originalLower..<originalUpper))
+
+                        searchStart = foundRange.upperBound
+                    }
+
+                    if searchStart < str.endIndex {
+                        let suffixLower = text.index(
+                            pieceRange.lowerBound,
+                            offsetBy: str.distance(from: str.startIndex, to: searchStart)
+                        )
+                        let suffix = String(str[searchStart...])
+                        newPieces.append(.text(suffix, range: suffixLower..<pieceRange.upperBound))
+                    }
+                case .term:
+                    newPieces.append(piece)
+                }
+            }
+
+            pieces = newPieces
+        }
+
+        let segmentPieces = SegmentPieces(
+            segmentID: segment.id,
+            originalText: text,
+            pieces: pieces
+        )
+
+        return (pieces: segmentPieces, glossaryEntries: Array(sourceToEntry.values))
+    }
+
+    private func buildComposerEntries(
+        patterns: [Glossary.SDModel.SDPattern],
+        appearedTerms: [AppearedTerm],
+        matchedSources: [String: Set<String>],
+        segmentText: String
+    ) -> [GlossaryEntry] {
+        var allEntries: [GlossaryEntry] = []
+
+        for pattern in patterns {
+            let usesR = pattern.sourceTemplates.contains { $0.contains("{R}") }
+                || pattern.targetTemplates.contains { $0.contains("{R}") }
+
+            if usesR {
+                let pairs = matchedPairs(for: pattern, appearedTerms: appearedTerms)
+                allEntries.append(contentsOf: buildEntriesFromPairs(
+                    pairs: pairs,
+                    pattern: pattern,
+                    matchedSources: matchedSources,
+                    segmentText: segmentText
+                ))
+            } else {
+                let lefts = matchedLeftComponents(for: pattern, appearedTerms: appearedTerms)
+                allEntries.append(contentsOf: buildEntriesFromLefts(
+                    lefts: lefts,
+                    pattern: pattern,
+                    matchedSources: matchedSources,
+                    segmentText: segmentText
+                ))
+            }
+        }
+
+        return allEntries
+    }
+
+    private func matchedPairs(
+        for pattern: Glossary.SDModel.SDPattern,
+        appearedTerms: [AppearedTerm]
+    ) -> [(AppearedComponent, AppearedComponent)] {
+        var lefts: [AppearedComponent] = []
+        var rights: [AppearedComponent] = []
+        var hasAnyGroup = false
+
+        for appearedTerm in appearedTerms {
+            for component in appearedTerm.components where component.pattern == pattern.name {
+                let isLeft = matchesRole(component.role, required: pattern.leftRole)
+                let isRight = matchesRole(component.role, required: pattern.rightRole)
+
+                if component.groupLinks.isEmpty == false { hasAnyGroup = true }
+
+                let appearedComponent = AppearedComponent(component: component, appearedTerm: appearedTerm)
+                if isLeft { lefts.append(appearedComponent) }
+                if isRight { rights.append(appearedComponent) }
+            }
+        }
+
+        if hasAnyGroup == false {
+            var pairs: [(AppearedComponent, AppearedComponent)] = []
+            for l in lefts {
+                for r in rights where (!pattern.skipPairsIfSameTerm || l.appearedTerm.key != r.appearedTerm.key) {
+                    pairs.append((l, r))
+                }
+            }
+            return pairs
+        }
+
+        var leftByGroup: [String: [AppearedComponent]] = [:]
+        var rightByGroup: [String: [AppearedComponent]] = [:]
+
+        for component in lefts {
+            for g in component.groupLinks.map({ $0.group.uid }) {
+                leftByGroup[g, default: []].append(component)
+            }
+        }
+        for component in rights {
+            for g in component.groupLinks.map({ $0.group.uid }) {
+                rightByGroup[g, default: []].append(component)
+            }
+        }
+
+        var pairs: [(AppearedComponent, AppearedComponent)] = []
+        for g in leftByGroup.keys {
+            guard let ls = leftByGroup[g], let rs = rightByGroup[g] else { continue }
+            for l in ls {
+                for r in rs where (!pattern.skipPairsIfSameTerm || l.appearedTerm.key != r.appearedTerm.key) {
+                    pairs.append((l, r))
+                }
+            }
+        }
+
+        return pairs
+    }
+
+    private func matchedLeftComponents(
+        for pattern: Glossary.SDModel.SDPattern,
+        appearedTerms: [AppearedTerm]
+    ) -> [AppearedComponent] {
+        var out: [AppearedComponent] = []
+        for appearedTerm in appearedTerms {
+            for component in appearedTerm.components where component.pattern == pattern.name {
+                if matchesRole(component.role, required: pattern.leftRole) {
+                    out.append(AppearedComponent(component: component, appearedTerm: appearedTerm))
+                }
+            }
+        }
+        return out
+    }
+
+    private func buildEntriesFromPairs(
+        pairs: [(AppearedComponent, AppearedComponent)],
+        pattern: Glossary.SDModel.SDPattern,
+        matchedSources: [String: Set<String>],
+        segmentText: String
+    ) -> [GlossaryEntry] {
+        var entries: [GlossaryEntry] = []
+        let joiners = Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+
+        for (lComp, rComp) in pairs {
+            let leftTerm = lComp.appearedTerm
+            let rightTerm = rComp.appearedTerm
+
+            let srcTplIdx = lComp.srcTplIdx ?? rComp.srcTplIdx ?? 0
+            let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
+            let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}{J}{R}"
+            let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L} {R}"
+            let variants: [String] = Glossary.Util.renderVariants(srcTpl, joiners: pattern.sourceJoiners, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+
+            for joiner in joiners {
+                let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+                let tgt = Glossary.Util.renderTarget(tgtTpl, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+
+                for src in srcs {
+                    entries.append(
+                        GlossaryEntry(
+                            source: src,
+                            target: tgt,
+                            variants: Set(variants),
+                            preMask: pattern.preMask,
+                            isAppellation: pattern.isAppellation,
+                            prohibitStandalone: false,
+                            origin: .composer(
+                                composerId: pattern.name,
+                                leftKey: leftTerm.key,
+                                rightKey: rightTerm.key,
+                                needPairCheck: pattern.needPairCheck
+                            ),
+                            componentTerms: [
+                                makeComponentTerm(
+                                    from: leftTerm,
+                                    matchedSources: matchedSources[leftTerm.key] ?? []
+                                ),
+                                makeComponentTerm(
+                                    from: rightTerm,
+                                    matchedSources: matchedSources[rightTerm.key] ?? []
+                                )
+                            ],
+                            activatorKeys: [],
+                            activatesKeys: Set(leftTerm.activates.map { $0.key })
+                                .union(rightTerm.activates.map { $0.key })
+                        )
+                    )
+                }
+            }
+        }
+
+        return entries
+    }
+
+    private func buildEntriesFromLefts(
+        lefts: [AppearedComponent],
+        pattern: Glossary.SDModel.SDPattern,
+        matchedSources: [String: Set<String>],
+        segmentText: String
+    ) -> [GlossaryEntry] {
+        var entries: [GlossaryEntry] = []
+        let joiners = Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+
+        for lComp in lefts {
+            let term = lComp.appearedTerm
+
+            let srcTplIdx = lComp.srcTplIdx ?? 0
+            let tgtTplIdx = lComp.tgtTplIdx ?? 0
+            let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}"
+            let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L}"
+            let tgt = Glossary.Util.renderTarget(tgtTpl, L: term.sdTerm, R: nil)
+            let variants = Glossary.Util.renderVariants(srcTpl, joiners: joiners, L: term.sdTerm, R: nil)
+
+            for joiner in joiners {
+                let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: term.sdTerm, R: nil)
+
+                for src in srcs {
+                    entries.append(
+                        GlossaryEntry(
+                            source: src,
+                            target: tgt,
+                            variants: Set(variants),
+                            preMask: pattern.preMask,
+                            isAppellation: pattern.isAppellation,
+                            prohibitStandalone: false,
+                            origin: .composer(
+                                composerId: pattern.name,
+                                leftKey: term.key,
+                                rightKey: nil,
+                                needPairCheck: false
+                            ),
+                            componentTerms: [
+                                makeComponentTerm(
+                                    from: term,
+                                    matchedSources: matchedSources[term.key] ?? []
+                                )
+                            ],
+                            activatorKeys: [],
+                            activatesKeys: Set(term.activates.map { $0.key })
+                        )
+                    )
+                }
+            }
+        }
+
+        return entries
+    }
+
+    private func matchesRole(_ componentRole: String?, required: String?) -> Bool {
+        guard
+            let requiredRole = required?.trimmingCharacters(in: .whitespacesAndNewlines),
+            requiredRole.isEmpty == false
+        else {
+            return true
+        }
+        guard
+            let role = componentRole?.trimmingCharacters(in: .whitespacesAndNewlines),
+            role.isEmpty == false
+        else {
+            return false
+        }
+        return role == requiredRole
     }
 
     // MARK: - SegmentPieces 생성
