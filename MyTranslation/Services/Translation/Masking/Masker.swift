@@ -1341,7 +1341,8 @@ public final class TermMasker {
         }
 
         var normalizedOffsets: [OffsetRange] = ranges.compactMap { termRange in
-            guard let nsRange = NSRange(termRange.range, in: out) else { return nil }
+            let nsRange = NSRange(termRange.range, in: out)
+            guard nsRange.location != NSNotFound else { return nil }
             return OffsetRange(entry: termRange.entry, nsRange: nsRange, type: termRange.type)
         }
         var protectedRanges: [NSRange] = normalizedOffsets.map { $0.nsRange }
@@ -1400,10 +1401,13 @@ public final class TermMasker {
                         let threshold = nsRange.location + nsRange.length
                         shiftRanges(after: threshold, delta: delta)
                     }
-                    if let replacedRange = result.replacedRange,
-                       let nsReplaced = NSRange(replacedRange, in: out) {
-                        normalizedOffsets.append(.init(entry: entry, nsRange: nsReplaced, type: .normalized))
-                        protectedRanges.append(nsReplaced)
+                    
+                    if let replacedRange = result.replacedRange {
+                        let nsReplaced = NSRange(replacedRange, in: out)
+                        if nsReplaced.location != NSNotFound {
+                            normalizedOffsets.append(.init(entry: entry, nsRange: nsReplaced, type: .normalized))
+                            protectedRanges.append(nsReplaced)
+                        }
                     }
                 }
             }
