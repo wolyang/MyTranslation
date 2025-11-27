@@ -34,6 +34,9 @@ final class BrowserViewModel: ObservableObject {
     @Published var translateRunID: String = ""
     @Published var translationProgress: Double = 0
     @Published var failedSegmentIDs: Set<String> = []
+    @Published var canGoBack: Bool = false
+    @Published var canGoForward: Bool = false
+    @Published var isDesktopMode: Bool
     @Published private(set) var favoriteLinks: [UserSettings.FavoriteLink]
     /// 현재 페이지에 적용 중인 출발/도착 언어 설정.
     @Published var languagePreference: PageLanguagePreference
@@ -64,8 +67,10 @@ final class BrowserViewModel: ObservableObject {
     let cache: CacheStore
     let replacer: InlineReplacer
     let settings: UserSettings
+    let historyStore: HistoryStore
 //    let overlay: OverlayRenderer
 //    let fmQuery: FMQueryService
+    private let desktopUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
     init(
         extractor: ContentExtractor = WKContentExtractor(),
@@ -74,6 +79,7 @@ final class BrowserViewModel: ObservableObject {
         replacer: InlineReplacer,
 //        fmQuery: FMQueryService,
         settings: UserSettings,
+        historyStore: HistoryStore,
         initialURL: String? = nil,
         favoriteLinks: [UserSettings.FavoriteLink]? = nil
     ) {
@@ -83,6 +89,7 @@ final class BrowserViewModel: ObservableObject {
         self.replacer = replacer
 //        self.fmQuery = fmQuery
         self.settings = settings
+        self.historyStore = historyStore
 
         let restoredURL = initialURL ?? settings.lastVisitedURL
         // 개발 중 하드코딩된 URL을 사용하려면 위 restoredURL 대입을 주석 처리하고 직접 초기 URL을 입력하세요.
@@ -97,6 +104,8 @@ final class BrowserViewModel: ObservableObject {
             target: LanguageCatalog.defaultTargetLanguage()
         )
 
+        self._isDesktopMode = Published(initialValue: settings.prefersDesktopMode)
+
         if let initialURLString = initialURL, let url = URL(string: initialURLString) {
             languagePreferenceByURL[url] = defaultPreference
             self._languagePreference = Published(initialValue: defaultPreference)
@@ -106,9 +115,19 @@ final class BrowserViewModel: ObservableObject {
     }
 
     func normalizedURL(from string: String) -> URL? {
-        guard string.isEmpty == false else { return nil }
-        if let url = URL(string: string), url.scheme != nil { return url }
-        return URL(string: "https://" + string)
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        if let url = URL(string: trimmed), let scheme = url.scheme, scheme.isEmpty == false {
+            return url
+        }
+
+        if isLikelyDomain(trimmed) {
+            return URL(string: "https://" + trimmed)
+        }
+
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
+        return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
 
     /// 전달된 URL에 저장된 언어 선호를 반환하고, 없으면 기본값을 생성해 저장한다.
@@ -197,6 +216,37 @@ final class BrowserViewModel: ObservableObject {
 
     func attachWebView(_ webView: WKWebView) {
         attachedWebView = webView
+        applyUserAgent(to: webView)
+        updateNavigationState(from: webView)
+    }
+
+    func navigateBack() {
+        attachedWebView?.goBack()
+    }
+
+    func navigateForward() {
+        attachedWebView?.goForward()
+    }
+
+    func updateNavigationState(from webView: WKWebView) {
+        canGoBack = webView.canGoBack
+        canGoForward = webView.canGoForward
+    }
+
+    func showFindInPage() {
+        guard let webView = attachedWebView else { return }
+        if #available(iOS 16.0, *) {
+            webView.findInteraction?.presentFindNavigator(showingReplace: false)
+        }
+    }
+
+    func setDesktopMode(_ enabled: Bool) {
+        isDesktopMode = enabled
+        settings.prefersDesktopMode = enabled
+        if let webView = attachedWebView {
+            applyUserAgent(to: webView)
+            reloadForUserAgentChange(using: webView)
+        }
     }
 }
 
@@ -267,5 +317,37 @@ extension BrowserViewModel {
 
     private func persistFavorites() {
         settings.favoriteLinks = favoriteLinks
+    }
+}
+
+// MARK: - 헬퍼
+private extension BrowserViewModel {
+    func isLikelyDomain(_ text: String) -> Bool {
+        guard text.contains(" ") == false else { return false }
+        let hasDot = text.contains(".")
+        let hasPort = text.contains(":")
+        if let url = URL(string: "https://" + text),
+           let host = url.host,
+           host.isEmpty == false,
+           (hasDot || hasPort) {
+            return true
+        }
+        return false
+    }
+
+    func applyUserAgent(to webView: WKWebView) {
+        if isDesktopMode {
+            if webView.customUserAgent != desktopUserAgent {
+                webView.customUserAgent = desktopUserAgent
+            }
+        } else if webView.customUserAgent != nil {
+            webView.customUserAgent = nil
+        }
+    }
+
+    func reloadForUserAgentChange(using webView: WKWebView) {
+        let targetURL = webView.url?.absoluteString ?? urlString
+        guard targetURL.isEmpty == false else { return }
+        refreshAndReload(urlString: targetURL)
     }
 }

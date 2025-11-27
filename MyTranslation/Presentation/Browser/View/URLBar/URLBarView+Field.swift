@@ -42,6 +42,13 @@ extension URLBarView {
         }
     }
 
+    /// 입력 필드가 비활성화된 상태에서 새로고침 버튼을 눌렀을 때 호출한다.
+    func refreshCurrentInput() {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return }
+        onRefresh(trimmed)
+    }
+
     /// 추천 목록에서 선택한 URL을 즉시 입력에 반영합니다.
     func applySuggestion(_ url: String) {
         urlString = url
@@ -89,6 +96,7 @@ struct URLBarField: View {
     var onCommit: () -> Void
     var onClear: () -> Void
     var onPasteAndGo: () -> Void
+    var onRefresh: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -120,8 +128,8 @@ struct URLBarField: View {
                 .buttonStyle(.plain)
             }
 
+            let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
             if isFocused.wrappedValue {
-                let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
                 Button(action: onCommit) {
                     Image(systemName: goButtonSymbolName)
                         .font(.title3)
@@ -130,6 +138,14 @@ struct URLBarField: View {
                 .buttonStyle(.plain)
                 .disabled(trimmed.isEmpty)
                 .opacity(trimmed.isEmpty ? 0.4 : 1)
+            } else if trimmed.isEmpty == false {
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.title3)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("페이지 새로고침")
             }
         }
         .padding(.horizontal, 14)

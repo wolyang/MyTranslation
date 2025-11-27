@@ -22,6 +22,7 @@ final class AppContainer: ObservableObject {
     let reranker: Reranker?
     
     var settings = UserSettings()
+    let historyStore: HistoryStore
     
 //    let fmManager: FMModelManaging
 //    let fmQuery: FMQueryService
@@ -60,6 +61,7 @@ final class AppContainer: ObservableObject {
 
         self.cache = DefaultCacheStore()
         self.glossaryDataProvider = Glossary.DataProvider(context: context)
+        self.historyStore = HistoryStore()
 
         self.router = DefaultTranslationRouter(
             afm: afmEngine,

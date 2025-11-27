@@ -10,10 +10,14 @@ struct URLBarView: View {
     @Binding var isTranslating: Bool
     @Binding var sourceLanguage: SourceLanguageSelection
     @Binding var targetLanguage: AppLanguage
+    var canGoBack: Bool = false
+    var canGoForward: Bool = false
 
     var currentPageURLString: String
     var onGo: (String) -> Void
     var onRefresh: (String) -> Void = { _ in }
+    var onGoBack: () -> Void = {}
+    var onGoForward: () -> Void = {}
     var onSelectEngine: (EngineTag, Bool) -> Void = { _, _ in }
     var onSelectSourceLanguage: (SourceLanguageSelection) -> Void = { _ in }
     var onSelectTargetLanguage: (AppLanguage) -> Void = { _ in }
@@ -34,6 +38,24 @@ struct URLBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button(action: onGoBack) {
+                        Image(systemName: "chevron.left")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(canGoBack == false)
+                    .opacity(canGoBack ? 1 : 0.3)
+
+                    Button(action: onGoForward) {
+                        Image(systemName: "chevron.right")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(canGoForward == false)
+                    .opacity(canGoForward ? 1 : 0.3)
+                }
+
                 URLBarField(
                     urlString: $urlString,
                     isFocused: $isFocused,
@@ -41,7 +63,8 @@ struct URLBarView: View {
                     pasteboardURLString: pasteboardURLString,
                     onCommit: commitGo,
                     onClear: { urlString = "" },
-                    onPasteAndGo: pasteAndGo
+                    onPasteAndGo: pasteAndGo,
+                    onRefresh: refreshCurrentInput
                 )
                 .background(fieldHeightReader)
                 .overlay(alignment: .topLeading) {

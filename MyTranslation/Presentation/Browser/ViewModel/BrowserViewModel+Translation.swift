@@ -23,6 +23,7 @@ extension BrowserViewModel {
         let curURLString = url.absoluteString
         settings.lastVisitedURL = curURLString
         let isNewPage = (prevEffectiveURL != curURLString)
+        historyStore.recordVisit(url: url, title: webView.title)
 
         print("[T] didFinish url=\(curURLString) isNew=\(isNewPage) curPage(before)=\(prevEffectiveURL) act=\(_id(activeTranslationID))")
 

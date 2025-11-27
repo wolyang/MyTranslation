@@ -20,6 +20,8 @@ struct BrowserRootView: View {
     @State private var isGlossaryPresented: Bool = false
     /// 설정 화면 노출 여부입니다.
     @State private var isSettingsPresented: Bool = false
+    /// 방문 기록 화면 노출 여부입니다.
+    @State private var isHistoryPresented: Bool = false
     /// 즐겨찾기 관리 화면 노출 여부입니다.
     @State private var isFavoritesManagerPresented: Bool = false
     /// 오버레이 패널의 화면 내 위치입니다.
@@ -45,7 +47,8 @@ struct BrowserRootView: View {
                 cache: container.cache,
                 replacer: WebViewInlineReplacer(),
 //                fmQuery: container.fmQuery,
-                settings: container.settings
+                settings: container.settings,
+                historyStore: container.historyStore
             )
         )
     }
@@ -58,6 +61,15 @@ struct BrowserRootView: View {
             }
             .sheet(isPresented: $isSettingsPresented) {
                 SettingsView()
+            }
+            .sheet(isPresented: $isHistoryPresented) {
+                NavigationStack {
+                    HistoryView(historyStore: vm.historyStore) { entry in
+                        isHistoryPresented = false
+                        vm.load(urlString: entry.url)
+                        triggerTranslationSession()
+                    }
+                }
             }
             .sheet(isPresented: $isFavoritesManagerPresented) {
                 NavigationStack {
@@ -146,7 +158,14 @@ struct BrowserRootView: View {
                     onAddFavorite: { vm.addCurrentPageToFavorites() },
                     onManageFavorites: { isFavoritesManagerPresented = true },
                     onOpenGlossary: { isGlossaryPresented = true },
-                    onOpenSettings: { isSettingsPresented = true }
+                    onOpenSettings: { isSettingsPresented = true },
+                    onOpenHistory: { isHistoryPresented = true },
+                    onFindInPage: { vm.showFindInPage() },
+                    isDesktopMode: vm.isDesktopMode,
+                    onToggleDesktopMode: { enabled in
+                        vm.setDesktopMode(enabled)
+                        triggerTranslationSession()
+                    }
                 )
             } detail: {
                 NavigationStack {
@@ -184,6 +203,19 @@ struct BrowserRootView: View {
                     onOpenSettings: {
                         isMorePresented = false
                         isSettingsPresented = true
+                    },
+                    onOpenHistory: {
+                        isMorePresented = false
+                        isHistoryPresented = true
+                    },
+                    onFindInPage: {
+                        isMorePresented = false
+                        vm.showFindInPage()
+                    },
+                    isDesktopMode: vm.isDesktopMode,
+                    onToggleDesktopMode: { enabled in
+                        vm.setDesktopMode(enabled)
+                        triggerTranslationSession()
                     }
                 )
                 .presentationDetents([.medium, .large])
@@ -210,6 +242,8 @@ struct BrowserRootView: View {
                 isTranslating: $vm.isTranslating,
                 sourceLanguage: .init(get: { vm.languagePreference.source }, set: { _ in }),
                 targetLanguage: .init(get: { vm.languagePreference.target }, set: { _ in }),
+                canGoBack: vm.canGoBack,
+                canGoForward: vm.canGoForward,
                 currentPageURLString: vm.currentPageURLString,
                 onGo: { url in
                     vm.load(urlString: url)
@@ -219,6 +253,8 @@ struct BrowserRootView: View {
                     vm.refreshAndReload(urlString: url)
                     triggerTranslationSession()
                 },
+                onGoBack: { vm.navigateBack() },
+                onGoForward: { vm.navigateForward() },
                 onSelectEngine: { engine, wasShowingOriginal in
                     vm.onEngineSelected(engine, wasShowingOriginal: wasShowingOriginal)
                 },
@@ -250,7 +286,8 @@ struct BrowserRootView: View {
                         if vm.overlayState != nil {
                             vm.closeOverlay()
                         }
-                    }
+                    },
+                    onUpdateNavigationState: { vm.updateNavigationState(from: $0) }
                 )
                 if let overlayState = vm.overlayState {
                     OverlayPanelContainer(

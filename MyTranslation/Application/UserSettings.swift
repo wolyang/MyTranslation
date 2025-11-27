@@ -25,6 +25,7 @@ public final class UserSettings: ObservableObject {
     @AppStorage("favoriteLinks") private var favoriteLinksData: Data = Data()
     @AppStorage("lastVisitedURL") public var lastVisitedURL: String = ""
     @AppStorage("recentURLLimit") public var recentURLLimit: Int = 8
+    @AppStorage("prefersDesktopMode") public var prefersDesktopMode: Bool = false
 
     public var preferredEngine: EngineTag {
         get { EngineTag(rawValue: preferredEngineRawValue) ?? .afm }
