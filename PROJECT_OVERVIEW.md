@@ -162,6 +162,13 @@ WKWebView 번역 결과 반영.
 * UserSettings: 번역/엔진/스타일 설정
 * API Keys: `Info.plist` 기반 (Google/DeepL)
 
+### 10. Shared (공통 모델/유틸)
+
+* **Models**: `Segment`, `SegmentPieces`, `BrowsingHistory`, `TranslationOptions`, `TranslationStyle`, `AppLanguage`, `TranslationStreamingContract`, `TermHighlightMetadata`, `GlossaryAddModels`
+* **Persistence**: `CacheStore`, `SwiftDataModel`, `Migrations`, `APIKeys` 등 공통 설정/저장소 정의
+* **Utils**: `Logging`, `URLTools`, `String+Extension`, `Array+Extension`, `TextNormalize`, `LanguageCatalog`
+* **Services**: `HistoryStore` (방문 기록 저장/조회)
+
 ---
 
 ## 프로젝트 구조
@@ -170,6 +177,11 @@ WKWebView 번역 결과 반영.
 
 ```
 MyTranslation/
+├── Shared/
+│   ├── Models/
+│   ├── Persistence/
+│   ├── Services/
+│   └── Utils/
 ├── Application/
 ├── Domain/
 │   ├── Cache/
