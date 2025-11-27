@@ -395,7 +395,7 @@ public final class TermMasker {
             let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
             let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}{J}{R}"
             let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L} {R}"
-            let variants: [String] = Glossary.Util.renderVariants(srcTpl, joiners: pattern.sourceJoiners, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+            let variants: [String] = Glossary.Util.renderVariants(tgtTpl, joiners: pattern.sourceJoiners, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
 
             for joiner in joiners {
                 let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
@@ -450,7 +450,7 @@ public final class TermMasker {
             let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}"
             let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L}"
             let tgt = Glossary.Util.renderTarget(tgtTpl, L: term.sdTerm, R: nil)
-            let variants = Glossary.Util.renderVariants(srcTpl, joiners: joiners, L: term.sdTerm, R: nil)
+            let variants = Glossary.Util.renderVariants(tgtTpl, joiners: joiners, L: term.sdTerm, R: nil)
 
             for joiner in joiners {
                 let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: term.sdTerm, R: nil)

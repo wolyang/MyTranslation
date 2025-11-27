@@ -1111,9 +1111,821 @@ await Task.detached {
 
 ### Phase 3: 테스트 (1.5일)
 
-7. **단위 테스트** (0.5일)
-8. **통합 테스트** (0.5일)
-9. **End-to-End** (0.5일)
+> 공통 헬퍼: `buildSegmentPieces(segment:matchedTerms:patterns:matchedSources:termActivationFilter:)` 시그니처에 맞춰 호출한다.
+> - `matchedSources`: `term.key → Set<source.text>`
+> - `TermActivationFilter()`를 그대로 주입
+> - GlossaryEntry/ComponentTerm은 `variants: [String]`, `ComponentTerm.source: String` 기준으로 검증
+> - Composer 소스 생성은 `Glossary.Util.renderSources`의 `(composed,left,right)` 튜플 사용을 확인한다.
+
+#### 7. 단위 테스트 (0.5일)
+
+##### 7.1 Phase 0: Appearance & Deactivation 필터링
+
+**Test 1: 기본 등장 체크**
+```swift
+let term = makeTerm(key: "sorato", sources: ["宙人", "ソラト"])
+let matchedSources = ["sorato": Set(["宙人"])]
+let segment = makeSegment(text: "宙人是地球人.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.contains { $0.source == "宙人" })
+#expect(result.glossaryEntries.allSatisfy { $0.source != "ソラト" })
+```
+
+**Test 2: deactivatedIn 필터링 (단일 문맥)**
+```swift
+let term = makeTerm(
+    key: "sorato",
+    sources: [makeSource("宙人", prohibitStandalone: false)],
+    deactivatedIn: ["宇宙人"]
+)
+let matchedSources = ["sorato": Set(["宙人"])]
+let segment = makeSegment(text: "宇宙人宙人来了.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+#expect(result.pieces.allSatisfy { if case .term = $0 { return false }; return true })
+```
+
+**Test 3: deactivatedIn 복수 문맥**
+```swift
+let term = makeTerm(
+    key: "sorato",
+    sources: [makeSource("宙人", prohibitStandalone: false)],
+    deactivatedIn: ["宇宙人", "外星人"]
+)
+let segment = makeSegment(text: "外星人宙人来了.")
+let matchedSources = ["sorato": Set(["宙人"])]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+```
+
+**Test 4: deactivatedIn 비어있음**
+```swift
+let term = makeTerm(
+    key: "sorato",
+    sources: [makeSource("宙人", prohibitStandalone: false)],
+    deactivatedIn: []
+)
+let matchedSources = ["sorato": Set(["宙人"])]
+let segment = makeSegment(text: "宇宙人宙人来了.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.count == 1)
+#expect(result.glossaryEntries.first?.source == "宙人")
+```
+
+**Test 5: 비활성화 문맥 불일치 시 활성화**
+```swift
+let term = makeTerm(
+    key: "sorato",
+    sources: [makeSource("宙人", prohibitStandalone: false)],
+    deactivatedIn: ["宇宙人"]
+)
+let matchedSources = ["sorato": Set(["宙人"])]
+let segment = makeSegment(text: "宙人来了.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.count == 1)
+```
+
+##### 7.2 Phase 1: Standalone Activation
+
+**Test 6: prohibitStandalone=false 즉시 활성화**
+```swift
+let term = makeTerm(
+    key: "ultraman",
+    sources: [makeSource("ウルトラマン", prohibitStandalone: false)]
+)
+let matchedSources = ["ultraman": Set(["ウルトラマン"])]
+let segment = makeSegment(text: "ウルトラマン登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.count == 1)
+#expect(result.glossaryEntries.first?.origin == .termStandalone(termKey: "ultraman"))
+#expect(result.glossaryEntries.first?.source == "ウルトラマン")
+```
+
+**Test 7: prohibitStandalone=true는 Phase 1에서 스킵**
+```swift
+let term = makeTerm(
+    key: "taro",
+    sources: [makeSource("太郎", prohibitStandalone: true)],
+    activators: []
+)
+let matchedSources = ["taro": Set(["太郎"])]
+let segment = makeSegment(text: "太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+```
+
+**Test 8: 복수 소스 중 permit만 활성화**
+```swift
+let term = makeTerm(
+    key: "ultraman",
+    sources: [
+        makeSource("ウルトラマン", prohibitStandalone: false),
+        makeSource("超人", prohibitStandalone: true)
+    ],
+    activators: []
+)
+let matchedSources = ["ultraman": Set(["ウルトラマン", "超人"])]
+let segment = makeSegment(text: "ウルトラマン和超人.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.count == 1)
+#expect(result.glossaryEntries.first?.source == "ウルトラマン")
+```
+
+**Test 9: usedTermKeys 추적**
+```swift
+let term1 = makeTerm(
+    key: "ultraman",
+    sources: [makeSource("ウルトラマン", prohibitStandalone: false)]
+)
+let term2 = makeTerm(
+    key: "taro",
+    sources: [makeSource("太郎", prohibitStandalone: true)],
+    activators: [term1]
+)
+let matchedSources = [
+    "ultraman": Set(["ウルトラマン"]),
+    "taro": Set(["太郎"])
+]
+let segment = makeSegment(text: "ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.count == 2)
+```
+
+##### 7.3 Phase 2: Term-to-Term Activation
+
+**Test 10: Activator 없음 → 스킵**
+```swift
+let term = makeTerm(
+    key: "taro",
+    sources: [makeSource("太郎", prohibitStandalone: true)],
+    activators: []
+)
+let matchedSources = ["taro": Set(["太郎"])]
+let segment = makeSegment(text: "太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+```
+
+**Test 11: Activator가 비활성화되어 있으면 스킵**
+```swift
+let term1 = makeTerm(
+    key: "ultraman",
+    sources: [makeSource("ウルトラマン", prohibitStandalone: false)],
+    deactivatedIn: ["宇宙人"]
+)
+let term2 = makeTerm(
+    key: "taro",
+    sources: [makeSource("太郎", prohibitStandalone: true)],
+    activators: [term1]
+)
+let matchedSources = [
+    "ultraman": Set(["ウルトラマン"]),
+    "taro": Set(["太郎"])
+]
+let segment = makeSegment(text: "宇宙人ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+```
+
+**Test 12: Activator가 usedTermKeys에 있으면 활성화**
+```swift
+let term1 = makeTerm(
+    key: "ultraman",
+    sources: [makeSource("ウルトラマン", prohibitStandalone: false)]
+)
+let term2 = makeTerm(
+    key: "taro",
+    sources: [makeSource("太郎", prohibitStandalone: true)],
+    activators: [term1]
+)
+let matchedSources = [
+    "ultraman": Set(["ウルトラマン"]),
+    "taro": Set(["太郎"])
+]
+let segment = makeSegment(text: "ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.count == 2)
+#expect(result.glossaryEntries.contains { $0.source == "太郎" })
+```
+
+**Test 13: 복수 activators OR 조건**
+```swift
+let term1 = makeTerm(key: "ultraman", sources: [makeSource("ウルトラマン", prohibitStandalone: false)])
+let term2 = makeTerm(key: "zero", sources: [makeSource("ゼロ", prohibitStandalone: false)])
+let term3 = makeTerm(
+    key: "taro",
+    sources: [makeSource("太郎", prohibitStandalone: true)],
+    activators: [term1, term2]
+)
+let matchedSources = [
+    "ultraman": Set(["ウルトラマン"]),
+    "taro": Set(["太郎"])
+]
+let segment = makeSegment(text: "ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2, term3],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.contains { $0.source == "太郎" })
+```
+
+**Test 14: 자기 자신을 activator로 지정한 경우 스킵**
+```swift
+let term1 = makeTerm(
+    key: "ultraman",
+    sources: [makeSource("ウルトラマン", prohibitStandalone: true)]
+)
+term1.activators.append(term1)
+let matchedSources = ["ultraman": Set(["ウルトラマン"])]
+let segment = makeSegment(text: "ウルトラマン登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+```
+
+##### 7.4 Phase 3: Composer Entries
+
+**Test 15: Pair pattern + ComponentTerm.source(left/right)**
+```swift
+let family = makeTerm(key: "hong", sources: [makeSource("홍", prohibitStandalone: false)])
+let given = makeTerm(key: "gildong", sources: [makeSource("길동", prohibitStandalone: false)])
+addComponent(family, pattern: "person", role: "family")
+addComponent(given, pattern: "person", role: "given")
+
+let pattern = makePattern(
+    name: "person",
+    sourceTemplates: ["{L}{R}"],
+    targetTemplates: ["{L} {R}"],
+    leftRole: "family",
+    rightRole: "given"
+)
+let segment = makeSegment(text: "홍길동은 위인이다.")
+let matchedSources = ["hong": Set(["홍"]), "gildong": Set(["길동"])]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [family, given],
+    patterns: [pattern],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true }; return false }
+#expect(composer?.source == "홍길동")
+#expect(composer?.componentTerms.map(\.source) == ["홍", "길동"])
+```
+
+**Test 16: Left-only pattern (실제 접미사 패턴)**
+```swift
+let taro = makeTerm(
+    key: "taro",
+    target: "타로",
+    variants: ["태랑", "태로"],
+    sources: [makeSource("太郎", prohibitStandalone: false)]
+)
+addComponent(taro, pattern: "suffix", role: nil)
+
+let pattern = makePattern(
+    name: "suffix",
+    sourceTemplates: ["{L}さん"],
+    targetTemplates: ["{L}씨"],
+    leftRole: nil,
+    rightRole: nil
+)
+let segment = makeSegment(text: "太郎さん登場!")
+let matchedSources = ["taro": Set(["太郎"])]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [taro],
+    patterns: [pattern],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true }; return false }
+#expect(composer?.source == "太郎さん")
+#expect(composer?.target == "타로씨")
+#expect(composer?.variants == ["태랑씨", "태로씨"])
+#expect(composer?.componentTerms.count == 1)
+#expect(composer?.componentTerms[0].source == "太郎")
+#expect(composer?.componentTerms[0].key == "taro")
+if case .composer(_, let leftKey, let rightKey, _) = composer?.origin {
+    #expect(leftKey == "taro")
+    #expect(rightKey == nil)
+}
+```
+
+**Test 17: skipPairsIfSameTerm=true**
+```swift
+let term1 = makeTerm(key: "hong", sources: [makeSource("홍", prohibitStandalone: false)])
+addComponent(term1, pattern: "person", role: "family")
+addComponent(term1, pattern: "person", role: "given")
+
+let pattern = makePattern(
+    name: "person",
+    skipPairsIfSameTerm: true,
+    leftRole: "family",
+    rightRole: "given"
+)
+let segment = makeSegment(text: "홍홍은 누구?")
+let matchedSources = ["hong": Set(["홍"])]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1],
+    patterns: [pattern],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.allSatisfy {
+    if case .composer(_, let lKey, let rKey, _) = $0.origin { return lKey != rKey }
+    return true
+})
+```
+
+**Test 18: 그룹 매칭**
+```swift
+let l1 = makeTerm(key: "hong", sources: [makeSource("홍", prohibitStandalone: false)])
+let l2 = makeTerm(key: "kim", sources: [makeSource("김", prohibitStandalone: false)])
+let r1 = makeTerm(key: "gildong", sources: [makeSource("길동", prohibitStandalone: false)])
+let r2 = makeTerm(key: "철수", sources: [makeSource("철수", prohibitStandalone: false)])
+
+let groupA = makeGroup(pattern: "person", name: "A")
+[l1, l2].forEach { addComponent($0, pattern: "person", role: "family", groups: [groupA]) }
+[r1, r2].forEach { addComponent($0, pattern: "person", role: "given", groups: [groupA]) }
+
+let segment = makeSegment(text: "홍길동김철수.")
+let matchedSources = [
+    "hong": Set(["홍"]),
+    "kim": Set(["김"]),
+    "gildong": Set(["길동"]),
+    "철수": Set(["철수"])
+]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [l1, l2, r1, r2],
+    patterns: [makePersonPattern()],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let composerEntries = result.glossaryEntries.filter { if case .composer = $0.origin { return true }; return false }
+#expect(composerEntries.count == 4)
+```
+
+**Test 19: Composer보다 standalone 우선**
+```swift
+let fullName = makeTerm(key: "hong-gildong", sources: [makeSource("홍길동", prohibitStandalone: false)])
+let family = makeTerm(key: "hong", sources: [makeSource("홍", prohibitStandalone: false)])
+let given = makeTerm(key: "gildong", sources: [makeSource("길동", prohibitStandalone: false)])
+[family, given].forEach { addComponent($0, pattern: "person", role: $0.key == "hong" ? "family" : "given") }
+
+let pattern = makePattern(name: "person", sourceTemplates: ["{L}{R}"])
+let matchedSources = [
+    "hong-gildong": Set(["홍길동"]),
+    "hong": Set(["홍"]),
+    "gildong": Set(["길동"])
+]
+let segment = makeSegment(text: "홍길동은 위인.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [fullName, family, given],
+    patterns: [pattern],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let entry = result.glossaryEntries.first { $0.source == "홍길동" }
+#expect(entry?.origin == .termStandalone(termKey: "hong-gildong"))
+```
+
+**Test 20: Composer 생성 시 deactivated source 필터**
+```swift
+let family = makeTerm(
+    key: "hong",
+    sources: [makeSource("홍", prohibitStandalone: false), makeSource("洪", prohibitStandalone: false)],
+    deactivatedIn: ["宇宙"]
+)
+let given = makeTerm(key: "gildong", sources: [makeSource("길동", prohibitStandalone: false)])
+addComponent(family, pattern: "person", role: "family")
+addComponent(given, pattern: "person", role: "given")
+
+let segment = makeSegment(text: "宇宙洪길동.")
+let matchedSources = [
+    "hong": Set(["홍", "洪"]),
+    "gildong": Set(["길동"])
+]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [family, given],
+    patterns: [makePersonPattern()],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.allSatisfy { $0.source != "洪길동" })
+```
+
+##### 7.5 Phase 4: Longest-First Segmentation
+
+**Test 21: 더 긴 source 우선 분할**
+```swift
+let fullName = makeTerm(key: "ultraman-taro", sources: [makeSource("ウルトラマン太郎", prohibitStandalone: false)])
+let ultraman = makeTerm(key: "ultraman", sources: [makeSource("ウルトラマン", prohibitStandalone: false)])
+let taro = makeTerm(key: "taro", sources: [makeSource("太郎", prohibitStandalone: false)])
+let matchedSources = [
+    "ultraman-taro": Set(["ウルトラマン太郎"]),
+    "ultraman": Set(["ウルトラマン"]),
+    "taro": Set(["太郎"])
+]
+let segment = makeSegment(text: "ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [fullName, ultraman, taro],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let termPieces = result.pieces.compactMap { if case .term(let entry, _) = $0 { return entry } else { return nil } }
+#expect(termPieces.count == 1)
+#expect(termPieces.first?.source == "ウルトラマン太郎")
+```
+
+**Test 22: 동일 길이 source의 비결정적 순서**
+```swift
+let term1 = makeTerm(key: "key1", sources: [makeSource("AAA", prohibitStandalone: false)])
+let term2 = makeTerm(key: "key2", sources: [makeSource("AAA", prohibitStandalone: false)])
+let matchedSources = ["key1": Set(["AAA"]), "key2": Set(["AAA"])]
+let segment = makeSegment(text: "AAA登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let termPieces = result.pieces.compactMap { if case .term(let entry, _) = $0 { return entry } else { return nil } }
+#expect(termPieces.count == 1)
+#expect(termPieces.first?.source == "AAA")
+```
+
+**Test 23: range 계산**
+```swift
+let term = makeTerm(key: "ultraman-taro", sources: [makeSource("ウルトラマン太郎", prohibitStandalone: false)])
+let matchedSources = ["ultraman-taro": Set(["ウルトラマン太郎"])]
+let segment = makeSegment(text: "前置詞ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let termPiece = result.pieces.first { if case .term = $0 { return true } else { return false } }
+if case .term(_, let range) = termPiece {
+    let extracted = String(segment.originalText[range])
+    #expect(extracted == "ウルトラマン太郎")
+    #expect(segment.originalText.distance(from: segment.originalText.startIndex, to: range.lowerBound) == 3)
+}
+```
+
+**Test 24: 동일 source 다회 등장**
+```swift
+let term = makeTerm(key: "taro", sources: [makeSource("太郎", prohibitStandalone: false)])
+let matchedSources = ["taro": Set(["太郎"])]
+let segment = makeSegment(text: "太郎和太郎是兄弟.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let termPieces = result.pieces.filter { if case .term = $0 { return true }; return false }
+#expect(termPieces.count == 2)
+```
+
+#### 8. 통합 테스트 (0.5일)
+
+**Test 25: Phase 0-4 종합 시나리오**
+```swift
+let term1 = makeTerm(key: "ultraman", sources: [makeSource("ウルトラマン", prohibitStandalone: false)], deactivatedIn: ["宇宙人"])
+let term2 = makeTerm(key: "taro", sources: [makeSource("太郎", prohibitStandalone: true)], activators: [term1])
+addComponent(term1, pattern: "person", role: "family")
+addComponent(term2, pattern: "person", role: "given")
+
+let pattern = makePattern(
+    name: "person",
+    sourceTemplates: ["{L}{R}"],
+    targetTemplates: ["{L} {R}"],
+    leftRole: "family",
+    rightRole: "given"
+)
+let matchedSources = [
+    "ultraman": Set(["ウルトラマン"]),
+    "taro": Set(["太郎"])
+]
+let segment = makeSegment(text: "ウルトラマン太郎登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2],
+    patterns: [pattern],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true }; return false }
+#expect(result.glossaryEntries.count == 3)  // ultraman standalone, taro standalone, composer
+#expect(composer?.source == "ウルトラマン太郎")
+#expect(composer?.componentTerms.map(\.source) == ["ウルトラマン", "太郎"])
+let termPieces = result.pieces.filter { if case .term = $0 { return true }; return false }
+#expect(termPieces.count == 1)  // longest-first로 composer만 사용됨
+```
+
+**Test 26: Deduplicator 통합**
+```swift
+let term1 = makeTerm(
+    key: "key1",
+    target: "TARGET",
+    sources: [
+        makeSource("AAA", prohibitStandalone: false),
+        makeSource("AAA", prohibitStandalone: false)
+    ]
+)
+let matchedSources = ["key1": Set(["AAA"])]
+let segment = makeSegment(text: "AAA登場!")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+let deduplicated = Deduplicator.deduplicate(result.glossaryEntries)
+
+#expect(result.glossaryEntries.count == 1)
+#expect(deduplicated.count == 1)
+```
+
+**Test 27: DefaultTranslationRouter.prepareMaskingContext**
+```swift
+let segment = makeSegment(text: "ウルトラマン太郎登場!")
+let matchedTerms = [term1, term2]
+let patterns = [pattern]
+let matchedSources = ["ultraman": Set(["ウルトラマン"]), "taro": Set(["太郎"])]
+
+let context = await router.prepareMaskingContext(
+    for: [segment],
+    matchedTerms: matchedTerms,
+    patterns: patterns
+)
+
+#expect(context.segmentPieces.count == 1)
+#expect(context.segmentPieces.first?.pieces.contains { if case .term = $0 { return true }; return false })
+#expect(context.glossaryEntries.isEmpty == false)
+```
+
+#### 9. Edge Case 및 Import 테스트 (0.5일)
+
+**Test 28: 빈 세그먼트**
+```swift
+let segment = makeSegment(text: "")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [],
+    patterns: [],
+    matchedSources: [:],
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.pieces.count == 1)
+if case .text(let str, _) = result.pieces.first { #expect(str.isEmpty) }
+#expect(result.glossaryEntries.isEmpty)
+```
+
+**Test 29: matchedTerms 빈 배열**
+```swift
+let segment = makeSegment(text: "ウルトラマン太郎")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [],
+    patterns: [],
+    matchedSources: [:],
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.pieces.count == 1)
+if case .text(let str, _) = result.pieces.first { #expect(str == "ウルトラマン太郎") }
+#expect(result.glossaryEntries.isEmpty)
+```
+
+**Test 30: 모든 term이 deactivatedIn으로 필터링**
+```swift
+let term1 = makeTerm(key: "t1", sources: [makeSource("A", prohibitStandalone: false)], deactivatedIn: ["CTX"])
+let term2 = makeTerm(key: "t2", sources: [makeSource("B", prohibitStandalone: false)], deactivatedIn: ["CTX"])
+let matchedSources = ["t1": Set(["A"]), "t2": Set(["B"])]
+let segment = makeSegment(text: "CTXAB")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term1, term2],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+#expect(result.glossaryEntries.isEmpty)
+#expect(result.pieces.count == 1)
+```
+
+**Test 31: Glossary.Util.renderSources 튜플(left/right/composed)**
+```swift
+let family = makeTerm(key: "hong", sources: [makeSource("홍", prohibitStandalone: false)])
+let given = makeTerm(key: "gildong", sources: [makeSource("길동", prohibitStandalone: false)])
+addComponent(family, pattern: "person", role: "family")
+addComponent(given, pattern: "person", role: "given")
+let pattern = makePersonPattern()
+let segment = makeSegment(text: "홍길동")
+let matchedSources = ["hong": Set(["홍"]), "gildong": Set(["길동"])]
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [family, given],
+    patterns: [pattern],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true }; return false }
+let sources = composer?.componentTerms.map(\.source)
+#expect(sources == ["홍", "길동"])
+```
+
+**Test 32: Sheets/JSON Import - deactivated_in 파싱**
+```swift
+#expect(parseSheetRow("deactivated_in=宇宙人").terms.first?.deactivatedIn == ["宇宙人"])
+#expect(parseJSONRow(#"{\"deactivated_in\":\"宇宙人;外星人\"}"#).deactivatedIn == ["宇宙人", "外星人"])
+```
+
+**Test 33: 특수문자/이모지 세그먼트**
+```swift
+let term = makeTerm(key: "smile", sources: [makeSource("😊", prohibitStandalone: false)])
+let matchedSources = ["smile": Set(["😊"])]
+let segment = makeSegment(text: "今日は😊いい天気です.")
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+let termPiece = result.pieces.first { if case .term(let entry, _) = $0 { return entry.source == "😊" } else { return false } }
+#expect(termPiece != nil)
+```
+
+**Test 34: Unicode normalization (현행 동작 기록)**
+```swift
+let term = makeTerm(key: "ga", sources: [makeSource("が", prohibitStandalone: false)])
+let matchedSources = ["ga": Set(["が"])]
+let segment = makeSegment(text: "が登場")  // NFD
+
+let result = masker.buildSegmentPieces(
+    segment: segment,
+    matchedTerms: [term],
+    patterns: [],
+    matchedSources: matchedSources,
+    termActivationFilter: TermActivationFilter()
+)
+
+// Swift 기본 비교에 따름(NFD/NFC 매칭 기대). 실패 시 원인 분석 필요.
+```
 
 ### Phase 4: 레거시 코드 정리 (1일)
 
