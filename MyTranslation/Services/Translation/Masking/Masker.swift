@@ -19,39 +19,14 @@ public func hangulFinalJongInfo(_ s: String) -> (hasBatchim: Bool, isRieul: Bool
 // MARK: - Term-only Masker
 
 public final class TermMasker {
-    // PERSON 큐 언락을 위한 타입
-    public typealias PersonQueues = [String: [String]]
 
     private var nextIndex: Int = 1
 
     /// 번역 대상 언어에 맞춰 토큰 주변 공백 삽입 정책을 제어한다.
     public var tokenSpacingBehavior: TokenSpacingBehavior = .disabled
     
-    // ===== configurable guards =====
-    /// pid -> 단독 허용 성(예: ["1": ["红"]])
-    public var soloFamilyAllow: [String: Set<String>] = [:]
-    /// pid -> 단독 허용 이름(예: ["1": ["凯"]])
-    public var soloGivenAllow: [String: Set<String>] = [:]
-    /// pid -> 단독 허용 별칭(예: ["2": ["伽"]])
-    public var soloAliasAllow: [String: Set<String>] = [:]
-    /// 전역 네거티브 빅람/트라이그램(추가)
-    public var extraNegativeBigrams: Set<String> = []
-    /// 문맥 인식 윈도우(최근 동일 인물 언급 인식, 문자 단위)
-    public var contextWindow: Int = 40
 
-    public init(
-        soloFamilyAllow: [String: Set<String>] = [:],
-        soloGivenAllow: [String: Set<String>] = ["1": ["凯"]],
-        soloAliasAllow: [String: Set<String>] = ["2": ["伽"]],
-        extraNegativeBigrams: Set<String> = [],
-        contextWindow: Int = 40
-    ) {
-        self.soloFamilyAllow = soloFamilyAllow
-        self.soloGivenAllow = soloGivenAllow
-        self.soloAliasAllow = soloAliasAllow
-        self.extraNegativeBigrams = extraNegativeBigrams
-        self.contextWindow = contextWindow
-    }
+    public init() { }
 
     // MARK: - Appeared Term 모델
 
@@ -599,24 +574,6 @@ public final class TermMasker {
 
     private static func makeToken(prefix: String, index: Int) -> String {
         return "__\(prefix)#\(index)__"
-    }
-    
-    // - 단일 한자 인물의 오검출 방지 보조들
-    private static let baseNegativeBigrams: Set<String> = [
-        "脸红", "发红", "泛红", "通红", "变红", "红色", "红了", "红的", "绯红",
-    ]
-    private var mergedNegativeBigrams: Set<String> { Self.baseNegativeBigrams.union(extraNegativeBigrams) }
-    private func isNegativeBigram(ns: NSString, matchRange r: NSRange, center: String) -> Bool {
-        let prev1 = Self.substringSafe(ns, r.location - 1, 1)
-        let next1 = Self.substringSafe(ns, r.location + r.length, 1)
-        let prev2 = Self.substringSafe(ns, r.location - 2, 2)
-        let next2 = Self.substringSafe(ns, r.location + r.length, 2)
-        let neg = mergedNegativeBigrams
-        if neg.contains(prev1 + center) { return true }
-        if neg.contains(center + next1) { return true }
-        if neg.contains(prev2) { return true }
-        if neg.contains(next2) { return true }
-        return false
     }
 
     private static func substringSafe(_ ns: NSString, _ loc: Int, _ len: Int) -> String {
