@@ -224,7 +224,7 @@ xcodebuild -scheme MyTranslation -configuration Release build
 ### Test
 
 ```
-xcodebuild test -scheme MyTranslation -destination 'platform=iOS Simulator,name=iPhone 15'
+xcodebuild test -scheme MyTranslation -destination 'platform=iOS Simulator,name=iPhone 17'
 xcodebuild test -scheme MyTranslation -only-testing:MyTranslationTests
 xcodebuild test -scheme MyTranslation -only-testing:MyTranslationTests/MyTranslationTests/testExample
 ```

@@ -204,7 +204,7 @@ struct TranslationRouterTests {
     @Test
     func translateStreamPropagatesCancellation() async throws {
         let engine = MockTranslationEngine(tag: .afm)
-        engine.translationDelay = 1.0
+        engine.translationDelay = 10.0
         engine.resultsToReturn = [
             TestFixtures.makeTranslationResult(segmentID: TestFixtures.sampleSegments[0].id, engine: .afm, text: "slow")
         ]
