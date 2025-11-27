@@ -37,7 +37,6 @@ struct TranslationRouterTests {
             google: google ?? MockTranslationEngine(tag: .google),
             cache: cache,
             glossaryDataProvider: dataProvider,
-            glossaryComposer: GlossaryComposer(),
             postEditor: postEditor,
             comparer: nil,
             reranker: nil
@@ -113,7 +112,6 @@ struct TranslationRouterTests {
             google: google,
             cache: cache,
             glossaryDataProvider: dataProvider,
-            glossaryComposer: GlossaryComposer(),
             postEditor: StubPostEditor(),
             comparer: nil,
             reranker: nil

@@ -31,6 +31,7 @@ extension Glossary.Sheet {
         let isAppellation: Bool
         let preMask: Bool
         let activatedByKeys: [String]  // 신규: activated_by 컬럼에서 파싱된 Term 키들
+        let deactivatedIn: [String]    // 신규: deactivated_in 컬럼
 
         struct SourceData {
             let text: String
@@ -54,4 +55,5 @@ extension Glossary.Sheet {
         let res = try JSONDecoder().decode(ValuesResponse.self, from: data)
         return res.values ?? []
     }
+    
 }

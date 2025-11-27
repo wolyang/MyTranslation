@@ -186,9 +186,13 @@ extension Glossary.SDModel {
                 dst.isAppellation = src.isAppellation
                 dst.preMask = src.preMask
                 dst.variants = orderedUnique(src.variants)
+                dst.deactivatedIn = src.deactivatedIn
             } else {
                 if dst.target.isEmpty { dst.target = src.target }
                 dst.variants = mergeSet(dst.variants, src.variants)
+                if dst.deactivatedIn.isEmpty {
+                    dst.deactivatedIn = src.deactivatedIn
+                }
             }
 
             upsertSources(term: dst, with: src)

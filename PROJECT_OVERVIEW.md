@@ -33,7 +33,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
    * WKWebView에 JS를 주입해 `data-seg-id`를 붙인 세그먼트 단위 텍스트를 추출
 2. **Masking & Normalization 준비**
 
-   * `GlossaryDataProvider`가 페이지 텍스트에서 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
+* `GlossaryDataProvider`가 페이지 텍스트에서 매칭된 Term/패턴을 조회하고, `TermMasker`가 세그먼트별 GlossaryEntry를 직접 생성
    * `TermMasker`가 `SegmentPieces`를 생성해 용어 위치를 식별하고, preMask 용어를 토큰으로 치환할 준비를 함
    * 정규화(variants→target) 및 언마스킹에 필요한 메타데이터(`TermHighlightMetadata`)를 함께 추적
 3. **Translation Routing & Streaming**
@@ -105,7 +105,7 @@ FMConfig(
 * `GlossarySDSourceIndexMaintainer`: Q-gram 인덱스 자동 유지
 
 **서비스 계층 (Services/Translation/Glossary/)**
-* `GlossaryComposer`: 단독/패턴 조합 엔트리 생성, 세그먼트별 조합 최적화
+* (제거) GlossaryComposer: TermMasker V2가 GlossaryEntry 생성을 직접 수행
 * `Deduplicator`: GlossaryEntry 중복 병합
 
 **Import (Domain/Glossary/Services/)**
@@ -125,7 +125,7 @@ WKWebView 번역 결과 반영.
 
 민감한 용어/인명을 보호하기 위한 마스킹 로직.
 
-* `GlossaryDataProvider`가 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
+* `GlossaryDataProvider`가 매칭된 Term/패턴을 조회하고, `TermMasker`가 세그먼트별 GlossaryEntry를 생성
 * `TermMasker`: 마스킹/언마스킹 처리, variants 정규화, 하이라이트 range 추적
   * Phase 4 잔여 일괄 교체: 이미 정규화된 범위는 보호하고, 실제 매칭된 변형만 재사용하며 1글자 변형은 건너뛰어 오정규화를 방지하면서 여분 인스턴스를 일괄 정규화하고 범위를 함께 추적
 * `MaskedPack`: 원문/마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
@@ -139,7 +139,7 @@ WKWebView 번역 결과 반영.
 
   * SwiftData ModelContext
   * 번역 엔진들
-  * Glossary: `GlossaryDataProvider`, `GlossaryComposer`
+  * Glossary: `GlossaryDataProvider`
   * `DefaultTranslationRouter`
   * FM 파이프라인 구성
   * Masking: `SegmentPieces` 기반 마스킹/정규화 컨텍스트 조립

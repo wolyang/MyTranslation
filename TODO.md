@@ -18,6 +18,10 @@
   - [x] Phase 3: 서비스 계층 구현 (GlossaryComposer)
   - [x] Phase 4: TranslationRouter 통합
   - [x] Phase 5: 레거시 코드 제거 및 문서 업데이트
+- [x] (P1) Term 문맥 기반 비활성화 기능 구현(`History/SPEC_TERM_DEACTIVATION.md` 참조):
+  - [x] Phase 1: 핵심 기능 — SDSource/GlossaryEntry 모델 확장, GlossaryComposer 수정, TermMasker에 filterByContextDeactivation 구현
+  - [x] Phase 2: Import & UI — Google Sheets 파싱/Validation, TermEditorSheet UI, Import Preview
+  - [x] Phase 3: 테스트 & 문서 — 단위/통합 테스트, 문서 업데이트
 - [x] (P1) 오버레이 패널에서 용어집 추가 기능 구현(`History/SPEC_OVERLAY_GLOSSARY_ADD.md` 참조):
   - [x] Phase 1: 기본 플로우 (번역문 선택 → variants 추가) — 컨텍스트 메뉴/시트/TermEditor 진입점, 기존 용어/새 용어 추가까지 연결
   - [x] Phase 2: 원문 선택 지원 — 하이라이트 매칭된 기존 용어 편집/새 용어 추가 흐름 완료

@@ -244,7 +244,7 @@ cumulativeDelta += (newLen - oldLen)  // 잘못된 델타!
 ### 원인 분석
 
 **핵심 파일:**
-- [GlossaryComposer.swift](MyTranslation/Services/Translation/Glossary/GlossaryComposer.swift)
+- (제거됨) GlossaryComposer.swift
 - [Masker.swift](MyTranslation/Services/Translation/Masking/Masker.swift)
 
 #### 근본 원인
@@ -255,35 +255,7 @@ GlossaryComposer가 패턴 엔트리를 생성할 때, **패턴의 preMask 설�
 
 #### 버그 발생 흐름
 
-**1. 패턴 조합 (GlossaryComposer.swift)**
-
-**[GlossaryComposer.swift:150-211](MyTranslation/Services/Translation/Glossary/GlossaryComposer.swift#L150-L211)** - `buildEntriesFromPairs()`:
-```swift
-// 183번째 줄
-preMask: pattern.preMask,  // 패턴의 플래그만 사용!
-```
-
-**[GlossaryComposer.swift:213-266](MyTranslation/Services/Translation/Glossary/GlossaryComposer.swift#L213-L266)** - `buildEntriesFromLefts()`:
-```swift
-// 242번째 줄
-preMask: pattern.preMask,  // 패턴의 플래그만 사용!
-```
-
-**문제점:**
-- 조합된 엔트리의 `preMask`는 `pattern.preMask`에서만 결정됨
-- 구성 요소 용어들의 `preMask` 플래그는 `componentTerms` 배열에 저장되지만 마스킹 결정에 사용되지 않음
-
-**2. 독립 용어 필터링 (GlossaryComposer.swift)**
-
-**[GlossaryComposer.swift:29-31](MyTranslation/Services/Translation/Glossary/GlossaryComposer.swift#L29-L31)**:
-```swift
-let standaloneSourceSet = Set(standaloneEntries.map { $0.source })
-let filteredComposed = composedEntries.filter { !standaloneSourceSet.contains($0.source) }
-```
-
-**결과:**
-- "红" 단독 엔트리 (preMask=true)가 조합 엔트리 "红发"와 source가 겹쳐서 필터링됨
-- 결과적으로 "红发" 조합 엔트리 (preMask=false)만 남음
+- (해결) GlossaryComposer 제거로 해당 문제는 더 이상 적용되지 않음. 조합 엔트리는 TermMasker V2에서 직접 생성/마스킹된다.
 
 **3. 마스킹 결정 (Masker.swift)**
 
@@ -310,21 +282,7 @@ if entry.preMask {  // false for composed entry
 
 #### ComponentTerm에서의 preMask 저장
 
-**[GlossaryEntry.swift:6-48](MyTranslation/Domain/Glossary/Models/GlossaryEntry.swift#L6-L48)** - `ComponentTerm` 구조체:
-```swift
-// 22번째 줄
-public let preMask: Bool  // 저장은 되지만 사용되지 않음
-```
-
-**[GlossaryComposer.swift:357-380](MyTranslation/Services/Translation/Glossary/GlossaryComposer.swift#L357-L380)** - `ComponentTerm.make()`:
-```swift
-// 374번째 줄
-preMask: term.preMask,  // 용어의 preMask 복사
-```
-
-**결과:**
-- 각 구성 요소의 preMask 플래그는 `componentTerms` 배열에 보존됨
-- 그러나 이 정보는 참조용으로만 저장되고, 실제 마스킹 결정에는 사용되지 않음
+- (해결) ComponentTerm이 단순 필드만 유지하도록 변경되었고, GlossaryComposer 제거로 preMask 누락 문제는 해소됨. 마스킹은 TermMasker V2에서 엔트리 preMask 기준으로 처리한다.
 
 ### 관련 코드 위치
 
@@ -864,4 +822,3 @@ GeometryReader { geometry in
 **중** - UI/UX 문제이지만 기능 자체는 동작함 (최대 크기로 변경하면 해결). 사용자 불편 해소를 위해 수정 필요
 
 ---
-
