@@ -4,8 +4,9 @@
 
 MyTranslation 코드베이스를 레이어 우선 아키텍처(Domain/Services/Presentation)에서 기능 우선 아키텍처(Features/Core/Shared)로 재구성하며, 각 기능 내부에 적절한 레이어링을 적용합니다.
 
-**현재:** 122개 Swift 파일이 기술 레이어별로 구성됨
-**목표:** ~150개 파일(분할 후)이 기능/도메인별로 구성됨
+**현재:** 125개 Swift 파일이 기술 레이어별로 구성됨 (최근 PR에서 히스토리 기능 추가: BrowsingHistory.swift, HistoryView.swift, HistoryStore.swift)
+**목표:** ~153개 파일(분할 후)이 기능/도메인별로 구성됨
+
 
 ## 목표 구조
 
@@ -25,6 +26,7 @@ MyTranslation/
 │   │   │   ├── GlossaryAddSheet.swift
 │   │   │   ├── FavoritesManagerView.swift
 │   │   │   ├── MoreMenuView.swift
+│   │   │   ├── HistoryView.swift
 │   │   │   ├── HighlightedText.swift
 │   │   │   └── URLBar/
 │   │   │       ├── URLBarView.swift
@@ -176,11 +178,14 @@ MyTranslation/
 │   ├── Models/
 │   │   ├── Segment.swift
 │   │   ├── SegmentPieces.swift
+│   │   ├── BrowsingHistory.swift (신규 추가)
 │   │   ├── AppLanguage.swift
 │   │   ├── TranslationOptions.swift
 │   │   ├── TranslationStyle.swift
 │   │   ├── TranslationStreamingContract.swift
 │   │   └── TermHighlightMetadata.swift
+│   ├── Services/
+│   │   └── HistoryStore.swift (신규 추가)
 │   ├── Persistence/
 │   │   ├── SwiftDataModel.swift
 │   │   ├── Migrations.swift
@@ -290,13 +295,14 @@ MyTranslation/
 ### Phase 1: Shared 기반
 **목표:** 의존성이 없는 기반 코드 이동
 
-**이동할 파일 (18개):**
+**이동할 파일 (21개):**
 - Utils/ (6개 파일) → Shared/Utils/
-- Domain/Models/ (3개 파일) → Shared/Models/
+- Domain/Models/ (4개 파일, **BrowsingHistory.swift 포함**) → Shared/Models/
 - Domain/ValueObjects/ (4개 파일) → Shared/Models/
 - Domain/Translation/ (2개 파일) → Shared/Models/
 - Domain/Cache/ (1개 파일) → Shared/Persistence/
 - Persistence/ (3개 파일) → Shared/Persistence/
+- Services/History/ (1개 파일, **HistoryStore.swift**) → Shared/Services/
 
 **Import 변경:** 0 (기반 레이어)
 
@@ -424,15 +430,21 @@ MyTranslation/
 ### Phase 8: Features/Browser
 **목표:** 분할을 포함한 브라우저 기능 이동
 
-**이동할 파일:** 23개 → 분할 포함 28개
+**이동할 파일:** 24개 → 분할 포함 29개 (**HistoryView.swift 포함**)
 
 **작업:**
 1. UI 파일 이동 → Features/Browser/UI/ + URLBar/ + Overlay/
+   - **HistoryView.swift (신규 파일) 포함**
 2. OverlayPanel.swift → 4개 파일로 분할
 3. ViewModels 이동 → Features/Browser/ViewModels/
 4. BrowserViewModel+Translation.swift → 3개 파일로 분할
 
 **Import 변경:** 50-80개 import
+
+**주의사항:**
+- BrowserViewModel.swift에 히스토리 관련 기능 추가됨 (historyStore 의존성)
+- URLBarView.swift에 뒤로/앞으로 버튼 기능 추가
+- WebContainerView.swift에 Find 인터랙션 및 네비게이션 상태 업데이트 추가
 
 **검증:**
 - 브라우저 탐색 작동
@@ -557,7 +569,8 @@ git mv old/path/File.swift new/path/File.swift
 ## 기대 결과
 
 **변경 전:**
-- 6개 디렉토리의 122개 파일 (Application, Domain, Persistence, Presentation, Services, Utils)
+- 6개 디렉토리의 125개 파일 (Application, Domain, Persistence, Presentation, Services, Utils)
+  - **최근 추가**: BrowsingHistory.swift, HistoryView.swift, HistoryStore.swift
 - 500줄 이상 8개 파일 (최대: 2,153줄)
 - 기능 관련 코드 찾기 어려움
 - 큰 파일에 관심사 혼재
@@ -565,7 +578,7 @@ git mv old/path/File.swift new/path/File.swift
 - 테스트가 모듈별로 정리되지 않음
 
 **변경 후:**
-- 4개 최상위 디렉토리의 ~150개 파일 (App, Features, Core, Shared)
+- 4개 최상위 디렉토리의 ~153개 파일 (App, Features, Core, Shared)
 - 500줄 초과 파일 0개 (최대: ~400줄)
 - 명확한 기능 경계 (Browser, Glossary, Settings)
 - 깨끗한 Core 인프라 (Translation, Masking, GlossaryEngine, WebRendering)
