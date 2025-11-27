@@ -847,7 +847,7 @@ public final class TermMasker {
         return out
     }
     
-    struct NameGlossary {
+    struct NameGlossary: Sendable {
         struct FallbackTerm: Sendable {
             let termKey: String
             let target: String
@@ -1375,6 +1375,12 @@ public final class TermMasker {
         var lastMatchUpperBound: String.Index? = nil
         var phase2LastMatch: String.Index? = nil
         var cumulativeDelta: Int = 0  // 정규화로 길이가 달라진 누적 분량을 추적
+        var matchedVariantsByTarget: [String: Set<String>] = [:]
+
+        func recordMatchedVariant(target: String, variant: String) {
+            guard variant.isEmpty == false else { return }
+            matchedVariantsByTarget[target, default: []].insert(variant)
+        }
 
         let unmaskedTerms: [(index: Int, entry: GlossaryEntry)] = pieces.pieces.enumerated().compactMap { idx, piece in
             if case .term(let entry, _) = piece, entry.preMask == false {
@@ -1392,6 +1398,8 @@ public final class TermMasker {
                 candidates: candidates,
                 startIndex: lastMatchUpperBound ?? out.startIndex
             ) else { continue }
+
+            recordMatchedVariant(target: entry.target, variant: matched.candidate)
 
             let lowerOffset = out.distance(from: out.startIndex, to: matched.range.lowerBound)
             let oldLen = out.distance(from: matched.range.lowerBound, to: matched.range.upperBound)
@@ -1434,6 +1442,8 @@ public final class TermMasker {
                 candidates: candidates,
                 startIndex: phase2LastMatch ?? out.startIndex
             ) else { continue }
+
+                recordMatchedVariant(target: entry.target, variant: matched.candidate)
 
                 let lowerOffset = out.distance(from: out.startIndex, to: matched.range.lowerBound)
                 let oldLen = out.distance(from: matched.range.lowerBound, to: matched.range.upperBound)
@@ -1488,6 +1498,11 @@ public final class TermMasker {
                 out = result.text
                 ranges.append(contentsOf: result.ranges)
                 preNormalizedRanges.append(contentsOf: result.preNormalizedRanges)
+                for (target, variants) in result.matchedVariants {
+                    for variant in variants {
+                        recordMatchedVariant(target: target, variant: variant)
+                    }
+                }
             }
         }
 
@@ -1531,6 +1546,8 @@ public final class TermMasker {
         func handleVariants(_ variants: [String], replacement: String, entry: GlossaryEntry) {
             let sorted = variants.sorted { $0.count > $1.count }
             for variant in sorted where variant.isEmpty == false {
+                // 단문(1글자) 변형은 Phase 4에서 건너뛴다.
+                guard variant.count > 1 else { continue }
                 var matches: [NSRange] = []
                 var searchStart = out.startIndex
 
@@ -1577,9 +1594,14 @@ public final class TermMasker {
 
             handleVariants([name.target] + name.variants, replacement: name.target, entry: entry)
 
-            if let fallbacks = name.fallbackTerms {
+            if let fallbacks = name.fallbackTerms,
+               let matched = matchedVariantsByTarget[targetName] {
                 for fallback in fallbacks {
-                    handleVariants(fallback.variants, replacement: fallback.target, entry: entry)
+                    let fallbackSet = Set([fallback.target] + fallback.variants)
+                    let matchedFallbacks = matched.intersection(fallbackSet)
+                    if matchedFallbacks.isEmpty == false {
+                        handleVariants(Array(matchedFallbacks), replacement: fallback.target, entry: entry)
+                    }
                 }
             }
         }
@@ -1892,7 +1914,7 @@ public final class TermMasker {
         entries: [(NameGlossary, GlossaryEntry)],
         baseText: String,
         cumulativeDelta: Int
-    ) -> (text: String, ranges: [TermRange], preNormalizedRanges: [TermRange]) {
+    ) -> (text: String, ranges: [TermRange], preNormalizedRanges: [TermRange], matchedVariants: [String: Set<String>]) {
         let textNFC = text.precomposedStringWithCompatibilityMapping
         let original = baseText.precomposedStringWithCompatibilityMapping
         func esc(_ s: String) -> String { NSRegularExpression.escapedPattern(for: s) }
@@ -1921,7 +1943,7 @@ public final class TermMasker {
         }
 
         let allVariants = Array(variantMap.keys)
-        if allVariants.isEmpty { return (text, [], []) }
+        if allVariants.isEmpty { return (text, [], [], [:]) }
 
         let alts = allVariants.map(esc).sorted { $0.count > $1.count }.joined(separator: "|")
         let cjkBody = "\\p{L}\\p{N}_"
@@ -1939,6 +1961,7 @@ public final class TermMasker {
 
         var ranges: [TermRange] = []
         var preNormalizedRanges: [TermRange] = []
+        var matchedVariants: [String: Set<String>] = [:]
         var localDelta = cumulativeDelta
 
         for r in matches.reversed() {
@@ -1972,9 +1995,10 @@ public final class TermMasker {
                 ranges.append(.init(entry: entry, range: swiftRange, type: .normalized))
             }
             localDelta += (fixedRange.length - r.length) // 이후 매칭 offset 보정을 위한 누적치
+            matchedVariants[entry.target, default: []].insert(found)
         }
 
-        return (out, ranges, preNormalizedRanges)
+        return (out, ranges, preNormalizedRanges, matchedVariants)
     }
 
     // 언마스킹된 토큰 / 정규화된 용어의 조사 보정
