@@ -254,7 +254,9 @@ struct SheetImportAdapter {
             "premask": .preMask,
             "activated_by": .activatedBy,
             "activatedby": .activatedBy,
-            "activators": .activatedBy
+            "activators": .activatedBy,
+            "deactivated_in": .deactivatedIn,
+            "deactivatedin": .deactivatedIn
         ]
 
         let patternMapping: [String: PatternColumn] = [
@@ -306,7 +308,8 @@ struct SheetImportAdapter {
                     components: header.value(in: row, for: .components) ?? "",
                     isAppellation: parseBool(header.value(in: row, for: .isAppellation)),
                     preMask: parseBool(header.value(in: row, for: .preMask)),
-                    activatedBy: header.value(in: row, for: .activatedBy) ?? ""
+                    activatedBy: header.value(in: row, for: .activatedBy) ?? "",
+                    deactivatedIn: header.value(in: row, for: .deactivatedIn) ?? ""
                 )
             }
             if !entries.isEmpty { termSheets[title] = entries }
@@ -440,6 +443,6 @@ extension SheetImportAdapter {
         }
     }
 
-    enum TermColumn { case key, sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask, activatedBy }
+    enum TermColumn { case key, sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask, activatedBy, deactivatedIn }
     enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
 }

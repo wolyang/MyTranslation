@@ -81,31 +81,18 @@ public final class TermMasker {
     }
 
     private func deactivatedContexts(of term: Glossary.SDModel.SDTerm) -> [String] {
-        for child in Mirror(reflecting: term).children {
-            if child.label == "deactivatedIn", let arr = child.value as? [String] {
-                return arr
-            }
-        }
-        return []
+        term.deactivatedIn
     }
 
     private func makeComponentTerm(
         from appearedTerm: AppearedTerm,
-        matchedSources: Set<String>
+        source: String
     ) -> GlossaryEntry.ComponentTerm {
-        let sources = appearedTerm.sdTerm.sources.map {
-            GlossaryEntry.ComponentTerm.Source(text: $0.text, prohibitStandalone: $0.prohibitStandalone)
-        }
-        return GlossaryEntry.ComponentTerm(
+        GlossaryEntry.ComponentTerm(
             key: appearedTerm.key,
             target: appearedTerm.target,
-            variants: Set(appearedTerm.variants),
-            sources: sources,
-            matchedSources: matchedSources.isEmpty ? Set(appearedTerm.sdTerm.sources.map { $0.text }) : matchedSources,
-            preMask: appearedTerm.preMask,
-            isAppellation: appearedTerm.isAppellation,
-            activatorKeys: Set(appearedTerm.activators.map { $0.key }),
-            activatesKeys: Set(appearedTerm.activates.map { $0.key })
+            variants: appearedTerm.variants,
+            source: source
         )
     }
     
@@ -120,144 +107,9 @@ public final class TermMasker {
         return out
     }
     
-    /// 이번 세그먼트에서 예외적으로 허용해야 하는 GlossaryEntry 배열을 리턴한다.
-    public func promoteProhibitedEntries(
-        in segmentText: String,
-        entries: [GlossaryEntry]
-    ) -> [GlossaryEntry] {
-        func slice(_ s: String, start: Int, len: Int) -> Substring {
-            let st = max(0, min(start, s.count))
-            let en = max(st, min(st + len, s.count))
-            let a = s.index(s.startIndex, offsetBy: st)
-            let b = s.index(s.startIndex, offsetBy: en)
-            return s[a..<b]
-        }
-        
-        // 1) composer 엔트리에서 (leftId,rightId) 쌍 수집
-        struct Pair { let left: String; let right: String }
-            var composerPairs: [Pair] = []
-            for e in entries {
-                if case let .composer(_, leftId, rightId, needPairCheck) = e.origin {
-                    if needPairCheck, let rightId {
-                        composerPairs.append(.init(left: leftId, right: rightId))
-                    }
-                }
-            }
-            guard !composerPairs.isEmpty else { return [] }
-        
-        // 2) termId -> prohibited 단독 GlossaryEntry 목록
-        var prohibTerms: [String: [GlossaryEntry]] = [:]
-        for e in entries where e.prohibitStandalone {
-            if case let .termStandalone(termId) = e.origin {
-                prohibTerms[termId, default: []].append(e)
-            }
-        }
-        
-        var promoted: [GlossaryEntry] = []
-        
-        if !composerPairs.isEmpty && !prohibTerms.isEmpty {
-            // 3) termId -> source 출현 오프셋 목록
-            var occ: [String: [Int]] = [:]
-            for (tid, termEntries) in prohibTerms {
-                var offsets: [Int] = []
-                for e in termEntries {
-                    offsets += allOccurrences(of: e.source, in: segmentText)
-                }
-                if !offsets.isEmpty { occ[tid] = offsets.sorted() }
-            }
-            if occ.isEmpty { return [] }
-            
-            // 4) composer 쌍마다 거리 판정, 짝 성립 시 두 Term 엔트리를 승격 목록에 추가
-            for p in composerPairs {
-                guard let lOcc = occ[p.left], let rOcc = occ[p.right] else { continue }
-                var ok = false
-                for lp in lOcc {
-                    for rp in rOcc where abs(lp - rp) <= contextWindow {
-                        ok = true; break
-                    }
-                    if ok { break }
-                }
-                if ok {
-                    if let lefts = prohibTerms[p.left] { promoted.append(contentsOf: lefts) }
-                    if let rights = prohibTerms[p.right] { promoted.append(contentsOf: rights) }
-                }
-            }
-        }
-
-        return promoted
-    }
-
     /// 주어진 entries에서 사용된 모든 Term 키를 수집한다.
     /// - Parameter entries: GlossaryEntry 배열
     /// - Returns: Entry에 포함된 모든 Term 키의 집합
-    func collectUsedTermKeys(from entries: [GlossaryEntry]) -> Set<String> {
-        var used: Set<String> = []
-        for entry in entries {
-            switch entry.origin {
-            case let .termStandalone(termId):
-                used.insert(termId)
-            case let .composer(composerId, leftId, rightId, _):
-                used.insert(composerId)
-                used.insert(leftId)
-                if let rightId = rightId {
-                    used.insert(rightId)
-                }
-            }
-        }
-        return used
-    }
-
-    /// usedKeys에 의해 활성화되는 Term 키들을 수집한다.
-    /// - Parameters:
-    ///   - entries: 모든 GlossaryEntry 배열
-    ///   - usedKeys: 현재 Segment에서 사용된 Term 키들
-    /// - Returns: 활성화되는 Term 키의 집합
-    func collectActivatedTermKeys(from entries: [GlossaryEntry], usedKeys: Set<String>) -> Set<String> {
-        var activated: Set<String> = []
-        for entry in entries {
-            // entry.activatorKeys와 usedKeys가 교집합이 있으면, 이 entry의 key를 활성화
-            if !entry.activatorKeys.isEmpty, !entry.activatorKeys.isDisjoint(with: usedKeys) {
-                switch entry.origin {
-                case let .termStandalone(termId):
-                    activated.insert(termId)
-                case let .composer(composerId, _, _, _):
-                    activated.insert(composerId)
-                }
-            }
-        }
-        return activated
-    }
-
-    /// Term-to-Term 활성화를 통해 승격되는 entries를 추출한다.
-    /// - Parameters:
-    ///   - allEntries: 모든 GlossaryEntry 배열
-    ///   - standaloneEntries: prohibitStandalone이 아닌 Entry 배열
-    ///   - normalizedOriginal: 정규화된 원문 텍스트
-    /// - Returns: 활성화된 Entry 배열
-    func promoteActivatedEntries(
-        from allEntries: [GlossaryEntry],
-        standaloneEntries: [GlossaryEntry],
-        original: String
-    ) -> [GlossaryEntry] {
-        // 1. 원문에 등장하는 standalone entries만 필터링
-        let standaloneEntriesInText = standaloneEntries.filter { entry in
-            let source = entry.source
-            return original.contains(source)
-        }
-
-        // 2. usedKeys 수집
-        let usedKeys = collectUsedTermKeys(from: standaloneEntriesInText)
-
-        // 3. activatedKeys 수집
-        let activatedKeys = collectActivatedTermKeys(from: allEntries, usedKeys: usedKeys)
-
-        // 4. activatedKeys에 해당하는 termStandalone entries 반환
-        return allEntries.filter {
-            guard case let .termStandalone(termId) = $0.origin else { return false }
-            return activatedKeys.contains(termId)
-        }
-    }
-
     // MARK: - V2 SegmentPieces 생성 (raw matched terms)
 
     func buildSegmentPieces(
@@ -306,19 +158,16 @@ public final class TermMasker {
                 sourceToEntry[source.text] = GlossaryEntry(
                     source: source.text,
                     target: appearedTerm.target,
-                    variants: Set(appearedTerm.variants),
+                    variants: appearedTerm.variants,
                     preMask: appearedTerm.preMask,
                     isAppellation: appearedTerm.isAppellation,
-                    prohibitStandalone: source.prohibitStandalone,
                     origin: .termStandalone(termKey: appearedTerm.key),
                     componentTerms: [
                         makeComponentTerm(
                             from: appearedTerm,
-                            matchedSources: Set(matchedSet)
+                            source: source.text
                         )
-                    ],
-                    activatorKeys: Set(appearedTerm.activators.map { $0.key }),
-                    activatesKeys: Set(appearedTerm.activates.map { $0.key })
+                    ]
                 )
                 usedTermKeys.insert(appearedTerm.key)
             }
@@ -327,26 +176,24 @@ public final class TermMasker {
         // Phase 2: Term-to-Term Activation
         for appearedTerm in appearedTerms where !usedTermKeys.contains(appearedTerm.key) {
             let activatorKeys = Set(appearedTerm.activators.map { $0.key })
-            guard activatorKeys.isDisjoint(with: usedTermKeys) == false else { continue }
-
-            let matchedSet = matchedSources[appearedTerm.key] ?? []
+            guard !activatorKeys.isEmpty && !activatorKeys.isDisjoint(with: usedTermKeys) else {
+                continue
+            }
+            
             for source in appearedTerm.appearedSources where source.prohibitStandalone {
                 sourceToEntry[source.text] = GlossaryEntry(
                     source: source.text,
                     target: appearedTerm.target,
-                    variants: Set(appearedTerm.variants),
+                    variants: appearedTerm.variants,
                     preMask: appearedTerm.preMask,
                     isAppellation: appearedTerm.isAppellation,
-                    prohibitStandalone: source.prohibitStandalone,
                     origin: .termStandalone(termKey: appearedTerm.key),
                     componentTerms: [
                         makeComponentTerm(
                             from: appearedTerm,
-                            matchedSources: Set(matchedSet)
+                            source: source.text
                         )
-                    ],
-                    activatorKeys: activatorKeys,
-                    activatesKeys: Set(appearedTerm.activates.map { $0.key })
+                    ]
                 )
             }
 
@@ -357,7 +204,6 @@ public final class TermMasker {
         let composerEntries = buildComposerEntries(
             patterns: patterns,
             appearedTerms: appearedTerms,
-            matchedSources: matchedSources,
             segmentText: text
         )
         for entry in composerEntries where sourceToEntry[entry.source] == nil {
@@ -432,7 +278,6 @@ public final class TermMasker {
     private func buildComposerEntries(
         patterns: [Glossary.SDModel.SDPattern],
         appearedTerms: [AppearedTerm],
-        matchedSources: [String: Set<String>],
         segmentText: String
     ) -> [GlossaryEntry] {
         var allEntries: [GlossaryEntry] = []
@@ -446,7 +291,6 @@ public final class TermMasker {
                 allEntries.append(contentsOf: buildEntriesFromPairs(
                     pairs: pairs,
                     pattern: pattern,
-                    matchedSources: matchedSources,
                     segmentText: segmentText
                 ))
             } else {
@@ -454,7 +298,6 @@ public final class TermMasker {
                 allEntries.append(contentsOf: buildEntriesFromLefts(
                     lefts: lefts,
                     pattern: pattern,
-                    matchedSources: matchedSources,
                     segmentText: segmentText
                 ))
             }
@@ -539,7 +382,6 @@ public final class TermMasker {
     private func buildEntriesFromPairs(
         pairs: [(AppearedComponent, AppearedComponent)],
         pattern: Glossary.SDModel.SDPattern,
-        matchedSources: [String: Set<String>],
         segmentText: String
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
@@ -562,12 +404,11 @@ public final class TermMasker {
                 for src in srcs {
                     entries.append(
                         GlossaryEntry(
-                            source: src,
+                            source: src.composed,
                             target: tgt,
-                            variants: Set(variants),
+                            variants: variants,
                             preMask: pattern.preMask,
                             isAppellation: pattern.isAppellation,
-                            prohibitStandalone: false,
                             origin: .composer(
                                 composerId: pattern.name,
                                 leftKey: leftTerm.key,
@@ -577,16 +418,13 @@ public final class TermMasker {
                             componentTerms: [
                                 makeComponentTerm(
                                     from: leftTerm,
-                                    matchedSources: matchedSources[leftTerm.key] ?? []
+                                    source: src.left
                                 ),
                                 makeComponentTerm(
                                     from: rightTerm,
-                                    matchedSources: matchedSources[rightTerm.key] ?? []
+                                    source: src.right
                                 )
-                            ],
-                            activatorKeys: [],
-                            activatesKeys: Set(leftTerm.activates.map { $0.key })
-                                .union(rightTerm.activates.map { $0.key })
+                            ]
                         )
                     )
                 }
@@ -599,7 +437,6 @@ public final class TermMasker {
     private func buildEntriesFromLefts(
         lefts: [AppearedComponent],
         pattern: Glossary.SDModel.SDPattern,
-        matchedSources: [String: Set<String>],
         segmentText: String
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
@@ -621,12 +458,11 @@ public final class TermMasker {
                 for src in srcs {
                     entries.append(
                         GlossaryEntry(
-                            source: src,
+                            source: src.composed,
                             target: tgt,
-                            variants: Set(variants),
+                            variants: variants,
                             preMask: pattern.preMask,
                             isAppellation: pattern.isAppellation,
-                            prohibitStandalone: false,
                             origin: .composer(
                                 composerId: pattern.name,
                                 leftKey: term.key,
@@ -636,11 +472,9 @@ public final class TermMasker {
                             componentTerms: [
                                 makeComponentTerm(
                                     from: term,
-                                    matchedSources: matchedSources[term.key] ?? []
+                                    source: src.left
                                 )
-                            ],
-                            activatorKeys: [],
-                            activatesKeys: Set(term.activates.map { $0.key })
+                            ]
                         )
                     )
                 }
@@ -664,119 +498,6 @@ public final class TermMasker {
             return false
         }
         return role == requiredRole
-    }
-
-    // MARK: - SegmentPieces 생성
-
-    func buildSegmentPieces(
-        segment: Segment,
-        glossary allEntries: [GlossaryEntry]
-    ) -> (pieces: SegmentPieces, activatedEntries: [GlossaryEntry]) {
-        let text = segment.originalText
-        guard !text.isEmpty, !allEntries.isEmpty else {
-            return (
-                pieces: SegmentPieces(
-                    segmentID: segment.id,
-                    originalText: text,
-                    pieces: [.text(text, range: text.startIndex..<text.endIndex)]
-                ),
-                activatedEntries: []
-            )
-        }
-
-        // 1) 기본 활성화 (단독 허용)
-        let standaloneEntries = allEntries.filter { !$0.prohibitStandalone }
-
-        // 2) Pattern 기반 활성화
-        let patternPromoted = promoteProhibitedEntries(in: text, entries: allEntries)
-
-        // 3) Term-to-Term 활성화
-        let termPromoted = promoteActivatedEntries(
-            from: allEntries,
-            standaloneEntries: standaloneEntries,
-            original: text
-        )
-
-        // 4) 활성화 엔트리 합치기 (source 기준 중복 제거)
-        var combined = standaloneEntries
-        combined.append(contentsOf: patternPromoted)
-        combined.append(contentsOf: termPromoted)
-
-        var seenSource: Set<String> = []
-        var allowedEntries: [GlossaryEntry] = []
-        for entry in combined {
-            if seenSource.insert(entry.source).inserted {
-                allowedEntries.append(entry)
-            }
-        }
-
-        // 5) 긴 용어가 덮는 짧은 용어 제외
-        allowedEntries = filterBySourceOcc(segment, allowedEntries)
-
-        // 6) Longest-first 분할
-        let sorted = allowedEntries.sorted { $0.source.count > $1.source.count }
-        var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
-
-        for entry in sorted {
-            guard !entry.source.isEmpty else { continue }
-            var newPieces: [SegmentPieces.Piece] = []
-
-            for piece in pieces {
-                switch piece {
-                case .text(let str, let pieceRange):
-                    guard str.contains(entry.source) else {
-                        newPieces.append(.text(str, range: pieceRange))
-                        continue
-                    }
-
-                    var searchStart = str.startIndex
-                    while let foundRange = str.range(of: entry.source, range: searchStart..<str.endIndex) {
-                        // 앞쪽 텍스트 조각 보존
-                        if foundRange.lowerBound > searchStart {
-                            let prefixLower = text.index(
-                                pieceRange.lowerBound,
-                                offsetBy: str.distance(from: str.startIndex, to: searchStart)
-                            )
-                            let prefixUpper = text.index(
-                                pieceRange.lowerBound,
-                                offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
-                            )
-                            let prefix = String(str[searchStart..<foundRange.lowerBound])
-                            newPieces.append(.text(prefix, range: prefixLower..<prefixUpper))
-                        }
-
-                        // 용어 range 기록
-                        let originalLower = text.index(
-                            pieceRange.lowerBound,
-                            offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
-                        )
-                        let originalUpper = text.index(originalLower, offsetBy: entry.source.count)
-                        newPieces.append(.term(entry, range: originalLower..<originalUpper))
-
-                        searchStart = foundRange.upperBound
-                    }
-
-                    // 남은 텍스트 조각 추가
-                    if searchStart < str.endIndex {
-                        let suffixLower = text.index(
-                            pieceRange.lowerBound,
-                            offsetBy: str.distance(from: str.startIndex, to: searchStart)
-                        )
-                        let suffix = String(str[searchStart..<str.endIndex])
-                        newPieces.append(.text(suffix, range: suffixLower..<pieceRange.upperBound))
-                    }
-                case .term:
-                    newPieces.append(piece)
-                }
-            }
-
-            pieces = newPieces
-        }
-
-        return (
-            pieces: SegmentPieces(segmentID: segment.id, originalText: text, pieces: pieces),
-            activatedEntries: allowedEntries
-        )
     }
 
     // SegmentPieces 기반 마스킹
@@ -1148,35 +869,8 @@ public final class TermMasker {
         let original = seg.originalText
         guard !original.isEmpty else { return [] }
 
-        // 1) 기본: prohibitStandalone이 아닌 엔트리
-        let standaloneEntries = entries.filter { !$0.prohibitStandalone }
-
-        // 2) Pattern 기반 활성화: promoteProhibitedEntries 통합
-        let patternPromoted = promoteProhibitedEntries(in: original, entries: entries)
-
-        // 3) Term-to-Term 활성화
-        let termPromoted = promoteActivatedEntries(
-            from: entries,
-            standaloneEntries: standaloneEntries,
-            original: original
-        )
-
-        // 4) 모든 허용 엔트리 합치기 (중복 제거)
-        var combined = standaloneEntries
-        combined.append(contentsOf: patternPromoted)
-        combined.append(contentsOf: termPromoted)
-
-        // 중복 제거
-        var seenSource: Set<String> = []
-        var allowedEntries: [GlossaryEntry] = []
-        for entry in combined {
-            let source = entry.source
-            if seenSource.insert(source).inserted {
-                allowedEntries.append(entry)
-            }
-        }
-
-        allowedEntries = filterBySourceOcc(seg, allowedEntries)
+        // 단순화: 이미 활성화된 엔트리 목록을 그대로 사용
+        let allowedEntries = filterBySourceOcc(seg, entries)
         
         var variantsByTarget: [String: [String]] = [:]
         var seenVariantKeysByTarget: [String: Set<String>] = [:]
@@ -1881,7 +1575,7 @@ public final class TermMasker {
             guard let name = nameByTarget[targetName],
                   let entry = entryByTarget[targetName] else { continue }
 
-            handleVariants(name.variants, replacement: name.target, entry: entry)
+            handleVariants([name.target] + name.variants, replacement: name.target, entry: entry)
 
             if let fallbacks = name.fallbackTerms {
                 for fallback in fallbacks {

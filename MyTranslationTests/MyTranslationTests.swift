@@ -171,121 +171,6 @@ struct MyTranslationTests {
     }
 
     @Test
-    func promoteProhibitedEntriesActivatesPairWithinContext() {
-        let masker = TermMasker()
-        let left = GlossaryEntry(
-            source: "알파",
-            target: "Alpha",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: true,
-            origin: .termStandalone(termKey: "left")
-        )
-        let right = GlossaryEntry(
-            source: "베타",
-            target: "Beta",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: true,
-            origin: .termStandalone(termKey: "right")
-        )
-        let composer = GlossaryEntry(
-            source: "알파-베타",
-            target: "Alpha-Beta",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: false,
-            origin: .composer(composerId: "pair", leftKey: "left", rightKey: "right", needPairCheck: true)
-        )
-
-        let text = "이 문장에는 알파와 베타가 같이 등장한다."
-        let promoted = masker.promoteProhibitedEntries(in: text, entries: [left, right, composer])
-
-        #expect(promoted.count == 2)
-        #expect(promoted.contains(left))
-        #expect(promoted.contains(right))
-    }
-
-    @Test
-    func promoteProhibitedEntriesIgnoresDistantPairs() {
-        let masker = TermMasker()
-        masker.contextWindow = 5
-        let left = GlossaryEntry(
-            source: "왼쪽",
-            target: "Left",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: true,
-            origin: .termStandalone(termKey: "L")
-        )
-        let right = GlossaryEntry(
-            source: "오른쪽",
-            target: "Right",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: true,
-            origin: .termStandalone(termKey: "R")
-        )
-        let composer = GlossaryEntry(
-            source: "양쪽",
-            target: "Both",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: false,
-            origin: .composer(composerId: "pair2", leftKey: "L", rightKey: "R", needPairCheck: true)
-        )
-
-        let gap = String(repeating: "가", count: 120)
-        let text = "왼쪽이라는 단어가 나오고 \(gap) 문장 끝부분에 오른쪽이라는 단어가 있다."
-        let promoted = masker.promoteProhibitedEntries(in: text, entries: [left, right, composer])
-
-        #expect(promoted.isEmpty)
-    }
-
-    @Test
-    func promoteActivatedEntriesReturnsOnlyTriggeredTerms() {
-        let masker = TermMasker()
-        let hero = GlossaryEntry(
-            source: "주인공",
-            target: "Hero",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "hero"),
-            activatorKeys: [],
-            activatesKeys: ["sidekick"]
-        )
-        let sidekick = GlossaryEntry(
-            source: "조력자",
-            target: "Sidekick",
-            variants: [],
-            preMask: false,
-            isAppellation: false,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "sidekick"),
-            activatorKeys: ["hero"],
-            activatesKeys: []
-        )
-
-        let text = "이야기 속 주인공이 등장했다."
-        let activated = masker.promoteActivatedEntries(
-            from: [hero, sidekick],
-            standaloneEntries: [hero, sidekick],
-            original: text
-        )
-
-        #expect(activated.count == 1)
-        #expect(activated.first == sidekick)
-    }
-
-    @Test
     func normalizeDamagedETokensRestoresCorruptedPlaceholders() {
         let masker = TermMasker()
         let locks: [String: LockInfo] = [
@@ -381,52 +266,6 @@ struct MyTranslationTests {
     }
 
     @Test
-    func buildSegmentPiecesHandlesEmptyInput() {
-        let masker = TermMasker()
-        let segment = Segment(
-            id: "empty",
-            url: URL(string: "https://example.com")!,
-            indexInPage: 0,
-            originalText: "",
-            normalizedText: "",
-            domRange: nil
-        )
-
-        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [])
-        #expect(pieces.originalText.isEmpty)
-        #expect(pieces.pieces.count == 1)
-        if case let .text(content, range) = pieces.pieces.first {
-            #expect(content.isEmpty)
-            #expect(range.isEmpty)
-        } else {
-            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
-        }
-    }
-
-    @Test
-    func buildSegmentPiecesWithoutGlossaryReturnsSingleTextPiece() {
-        let masker = TermMasker()
-        let text = "Plain text without glossary."
-        let segment = Segment(
-            id: "plain",
-            url: URL(string: "https://example.com")!,
-            indexInPage: 0,
-            originalText: text,
-            normalizedText: text,
-            domRange: nil
-        )
-
-        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [])
-        #expect(pieces.pieces.count == 1)
-        if case let .text(content, range) = pieces.pieces.first {
-            #expect(content == text)
-            #expect(String(text[range]) == text)
-        } else {
-            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
-        }
-    }
-
-    @Test
     func insertSpacesAroundTokensAddsSpaceNearPunctuation() {
         let masker = TermMasker()
         masker.tokenSpacingBehavior = .isolatedSegments
@@ -448,18 +287,24 @@ struct MyTranslationTests {
             normalizedText: text,
             domRange: nil
         )
-        let entry = GlossaryEntry(
-            source: "최강자",
+        let term = Glossary.SDModel.SDTerm(
+            key: "t1",
             target: "Choigangja",
             variants: [],
-            preMask: true,
             isAppellation: false,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "t1")
+            preMask: true
         )
+        let source = Glossary.SDModel.SDSource(text: "최강자", prohibitStandalone: false, term: term)
+        term.sources.append(source)
 
         let masker = TermMasker()
-        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [entry])
+        let (pieces, _) = masker.buildSegmentPieces(
+            segment: segment,
+            matchedTerms: [term],
+            patterns: [],
+            matchedSources: [term.key: Set([source.text])],
+            termActivationFilter: TermActivationFilter()
+        )
 
         #expect(pieces.originalText == text)
         #expect(pieces.pieces.count == 3)
@@ -497,18 +342,24 @@ struct MyTranslationTests {
             normalizedText: text,
             domRange: nil
         )
-        let entry = GlossaryEntry(
-            source: "최강자",
+        let term = Glossary.SDModel.SDTerm(
+            key: "t2",
             target: "Choigangja",
             variants: [],
-            preMask: true,
             isAppellation: true,
-            prohibitStandalone: false,
-            origin: .termStandalone(termKey: "t2")
+            preMask: true
         )
+        let source = Glossary.SDModel.SDSource(text: "최강자", prohibitStandalone: false, term: term)
+        term.sources.append(source)
 
         let masker = TermMasker()
-        let (pieces, _) = masker.buildSegmentPieces(segment: segment, glossary: [entry])
+        let (pieces, _) = masker.buildSegmentPieces(
+            segment: segment,
+            matchedTerms: [term],
+            patterns: [],
+            matchedSources: [term.key: Set([source.text])],
+            termActivationFilter: TermActivationFilter()
+        )
         let pack = masker.maskFromPieces(pieces: pieces, segment: segment)
 
         #expect(pack.tokenEntries.count == 1)
@@ -531,7 +382,6 @@ struct MyTranslationTests {
             variants: ["grey"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "grey")
         )
 
@@ -583,7 +433,6 @@ struct MyTranslationTests {
             variants: ["케이빈", "Kevin"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "c1")
         )
 
@@ -632,7 +481,6 @@ struct MyTranslationTests {
             variants: ["카이", "케이"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "kai")
         )
         let kEntry = GlossaryEntry(
@@ -641,7 +489,6 @@ struct MyTranslationTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "k")
         )
 
@@ -700,7 +547,6 @@ struct MyTranslationTests {
             variants: ["카이"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "kai")
         )
         let kEntry = GlossaryEntry(
@@ -709,7 +555,6 @@ struct MyTranslationTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "k")
         )
 
@@ -766,7 +611,6 @@ struct MyTranslationTests {
             variants: ["케이빈", "Kevin"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "c2")
         )
 
@@ -810,7 +654,6 @@ struct MyTranslationTests {
             variants: [""],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "c3")
         )
 
@@ -849,7 +692,6 @@ struct MyTranslationTests {
             variants: [],
             preMask: true,
             isAppellation: true,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "e1")
         )
         let entry2 = GlossaryEntry(
@@ -858,7 +700,6 @@ struct MyTranslationTests {
             variants: [],
             preMask: true,
             isAppellation: true,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "e2")
         )
 
@@ -916,7 +757,6 @@ struct MyTranslationTests {
             variants: [],
             preMask: true,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "e3")
         )
         let start = text.index(text.startIndex, offsetBy: 6)
@@ -944,7 +784,6 @@ struct MyTranslationTests {
             variants: [],
             preMask: true,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "k1")
         )
         let range = text.startIndex..<text.index(text.startIndex, offsetBy: 1)
@@ -979,7 +818,6 @@ struct MyTranslationTests {
             variants: ["grey"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "tGrey")
         )
 
@@ -1016,7 +854,6 @@ struct MyTranslationTests {
                 variants: ["가구라", "가굴라", "가고라"],
                 preMask: false,
                 isAppellation: false,
-                prohibitStandalone: false,
                 origin: .termStandalone(termKey: "name1")
             ),
             .init(
@@ -1025,7 +862,6 @@ struct MyTranslationTests {
                 variants: ["홍카이"],
                 preMask: false,
                 isAppellation: false,
-                prohibitStandalone: false,
                 origin: .termStandalone(termKey: "name2")
             )
         ]
@@ -1050,7 +886,6 @@ struct MyTranslationTests {
             variants: ["카이", "케이"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "termperson_6b5084f18cbb")
         )
         let entryB = GlossaryEntry(
@@ -1059,7 +894,6 @@ struct MyTranslationTests {
             variants: ["가고라", "가구라"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "termperson_5dd6e5c5e67f")
         )
 
@@ -1152,7 +986,8 @@ struct GlossaryImportTests {
         target: String,
         variants: [String],
         tags: [String],
-        activatedBy: [String]? = nil
+        activatedBy: [String]? = nil,
+        deactivatedIn: [String] = []
     ) -> JSTerm {
         JSTerm(
             key: key,
@@ -1163,6 +998,7 @@ struct GlossaryImportTests {
             components: [JSComponent(pattern: "person", role: "name", groups: nil, srcTplIdx: nil, tgtTplIdx: nil)],
             isAppellation: false,
             preMask: false,
+            deactivatedIn: deactivatedIn,
             activatedByKeys: activatedBy
         )
     }
@@ -1219,7 +1055,7 @@ struct GlossaryImportTests {
 
         let bundle = JSBundle(
             terms: [
-                sampleTerm(key: "alpha", target: "new", variants: ["v1"], tags: []),
+                sampleTerm(key: "alpha", target: "new", variants: ["v1"], tags: [], deactivatedIn: ["ctx"]),
                 sampleTerm(key: "beta", target: "beta-target", variants: [], tags: [])
             ],
             patterns: []
@@ -1240,7 +1076,8 @@ struct GlossaryImportTests {
                     key: "hero",
                     target: "신규",
                     variants: ["new"],
-                    tags: ["modern"]
+                    tags: ["modern"],
+                    deactivatedIn: ["宇宙人"]
                 )
             ],
             patterns: []
@@ -1254,6 +1091,7 @@ struct GlossaryImportTests {
         #expect(keepTerm.target == "기존")
         #expect(Set(keepTerm.variants) == Set(["old", "new"]))
         #expect(Set(keepTerm.termTagLinks.map { $0.tag.name }) == Set(["legacy", "modern"]))
+        #expect(keepTerm.deactivatedIn == ["宇宙人"])
 
         let (overwriteUpserter, overwriteContext) = try makeUpserter(merge: .overwrite)
         _ = seedExistingTerm(in: overwriteContext)
@@ -1263,6 +1101,7 @@ struct GlossaryImportTests {
         #expect(overwriteTerm.target == "신규")
         #expect(overwriteTerm.variants == ["new"])
         #expect(Set(overwriteTerm.termTagLinks.map { $0.tag.name }) == Set(["modern"]))
+        #expect(overwriteTerm.deactivatedIn == ["宇宙人"])
     }
 
     // MARK: - GlossaryAdd candidate tests
@@ -1275,7 +1114,6 @@ struct GlossaryImportTests {
             variants: ["A-alt"],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "A")
         )
         let entryB = GlossaryEntry(
@@ -1284,7 +1122,6 @@ struct GlossaryImportTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "B")
         )
 
@@ -1341,7 +1178,6 @@ struct GlossaryImportTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "X")
         )
         let originalText = (0..<20).map { _ in "X" }.joined(separator: " ")
@@ -1375,7 +1211,6 @@ struct GlossaryImportTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "A")
         )
         let entryB = GlossaryEntry(
@@ -1384,7 +1219,6 @@ struct GlossaryImportTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .termStandalone(termKey: "B")
         )
 
@@ -1410,28 +1244,8 @@ struct GlossaryImportTests {
     @Test
     func composerCandidateProducesMultipleKeys() {
         let componentTerms: [GlossaryEntry.ComponentTerm] = [
-            .init(
-                key: "L",
-                target: "L-tgt",
-                variants: [],
-                sources: [.init(text: "A", prohibitStandalone: false)],
-                matchedSources: ["A"],
-                preMask: false,
-                isAppellation: false,
-                activatorKeys: [],
-                activatesKeys: []
-            ),
-            .init(
-                key: "R",
-                target: "R-tgt",
-                variants: [],
-                sources: [.init(text: "B", prohibitStandalone: false)],
-                matchedSources: ["B"],
-                preMask: false,
-                isAppellation: false,
-                activatorKeys: [],
-                activatesKeys: []
-            )
+            .init(key: "L", target: "L-tgt", variants: [], source: "A"),
+            .init(key: "R", target: "R-tgt", variants: [], source: "B")
         ]
         let entry = GlossaryEntry(
             source: "AB",
@@ -1439,7 +1253,6 @@ struct GlossaryImportTests {
             variants: [],
             preMask: false,
             isAppellation: false,
-            prohibitStandalone: false,
             origin: .composer(composerId: "comp", leftKey: "L", rightKey: "R", needPairCheck: false),
             componentTerms: componentTerms
         )

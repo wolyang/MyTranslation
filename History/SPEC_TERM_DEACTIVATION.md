@@ -1151,14 +1151,12 @@ await Task.detached {
    - `prohibitStandalone` - 항상 false, 사용하지 않음
 
 7. **ComponentTerm 필드**
-  - `variants: [String]` - 사용하지 않음
    - `sources: [Source]` - 사용하지 않음
    - `matchedSources: Set<String>` - 사용하지 않음
    - `preMask: Bool` - 사용하지 않음
    - `isAppellation: Bool` - 사용하지 않음
    - `activatorKeys: Set<String>` - 사용하지 않음
    - `activatesKeys: Set<String>` - 사용하지 않음
-   - `Source` 중첩 구조체 - 사용하지 않음
 
 **수정:**
 

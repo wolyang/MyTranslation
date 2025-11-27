@@ -221,40 +221,25 @@ enum GlossaryAddCandidateUtil {
         selection: String
     ) -> GlossaryEntry? {
         guard let source = bestSource(for: term, selection: selection) else { return nil }
-        let prohibit = term.sources.first(where: { $0.text == source })?.prohibitStandalone ?? false
         return GlossaryEntry(
             source: source,
             target: term.target,
             variants: term.variants,
-            preMask: term.preMask,
-            isAppellation: term.isAppellation,
-            prohibitStandalone: prohibit,
+            preMask: false,
+            isAppellation: false,
             origin: .termStandalone(termKey: term.key),
-            componentTerms: [term],
-            activatorKeys: term.activatorKeys,
-            activatesKeys: term.activatesKeys
+            componentTerms: [term]
         )
     }
 
-    /// 매칭된 소스가 있으면 우선 사용하고, 없으면 등록된 소스 중 최적 유사도 소스를 반환한다.
+    /// ComponentTerm에 기록된 단일 source를 반환한다.
     private static func bestSource(
         for term: GlossaryEntry.ComponentTerm,
-        selection: String
+        selection _: String
     ) -> String? {
-        let candidates = prioritizedSources(for: term)
-        guard candidates.isEmpty == false else { return nil }
-        guard selection.isEmpty == false else { return candidates.first }
-
-        return candidates.max { lhs, rhs in
-            similarityScore(lhs.lowercased(), selection) < similarityScore(rhs.lowercased(), selection)
-        }
-    }
-
-    /// matchedSources를 우선 반환하고, 없으면 모든 등록 소스를 반환한다.
-    private static func prioritizedSources(for term: GlossaryEntry.ComponentTerm) -> [String] {
-        let matched = term.sources.filter { term.matchedSources.contains($0.text) }.map { $0.text }
-        if matched.isEmpty == false { return matched }
-        return term.sources.map { $0.text }
+        let trimmed = term.source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+        return trimmed
     }
 
     /// 타겟/variants 중 선택 텍스트와 가장 유사한 점수를 계산한다.

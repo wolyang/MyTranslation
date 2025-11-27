@@ -20,7 +20,6 @@ final class DefaultTranslationRouter: TranslationRouter {
     private let google: TranslationEngine
     private let cache: CacheStore
     private let glossaryDataProvider: Glossary.DataProvider
-    private let glossaryComposer: GlossaryComposer
     private let postEditor: PostEditor // 유지(호출 제거)
     private let comparer: ResultComparer? // 유지(호출 제거)
     private let reranker: Reranker? // 유지(호출 제거)
@@ -34,7 +33,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         google: TranslationEngine,
         cache: CacheStore,
         glossaryDataProvider: Glossary.DataProvider,
-        glossaryComposer: GlossaryComposer,
         postEditor: PostEditor,
         comparer: ResultComparer?,
         reranker: Reranker?
@@ -44,7 +42,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.google = google
         self.cache = cache
         self.glossaryDataProvider = glossaryDataProvider
-        self.glossaryComposer = glossaryComposer
         self.postEditor = postEditor
         self.comparer = comparer
         self.reranker = reranker

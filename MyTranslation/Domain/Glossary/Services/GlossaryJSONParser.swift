@@ -77,6 +77,7 @@ struct TermRow {
     let isAppellation: Bool
     let preMask: Bool
     let activatedBy: String
+    let deactivatedIn: String
 }
 
 struct PatternRow {
@@ -117,6 +118,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
 
     let variants = splitSemi(row.variants)
     let tags = splitSemi(row.tags)
+    let deactivatedIn = splitSemi(row.deactivatedIn)
 
     // activatedBy 파싱: 쉼표 또는 세미콜론으로 분리, 공백 trim
     let activatedByKeys = row.activatedBy
@@ -196,6 +198,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
         components: components,
         isAppellation: row.isAppellation,
         preMask: row.preMask,
+        deactivatedIn: deactivatedIn,
         activatedByKeys: activatedByKeys.isEmpty ? nil : activatedByKeys
     )
 }
