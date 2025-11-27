@@ -72,19 +72,19 @@ extension Glossary {
             return result
         }
 
-        static func renderSources(_ tpl: String, joiner J: String?, L: SDTerm, R: SDTerm?) -> [String] {
+        static func renderSources(_ tpl: String, joiner J: String?, L: SDTerm, R: SDTerm?) -> [(composed: String, left: String, right: String)] {
             var s = tpl
             if let J { s = s.replacingOccurrences(of: "{J}", with: J) }
-            var sources: [String] = []
+            var sources: [(String, String, String)] = []
             for ls in L.sources {
                 let replacedL = s.replacingOccurrences(of: "{L}", with: ls.text)
                 if let R {
                     for rs in R.sources {
                         let replacedR = replacedL.replacingOccurrences(of: "{R}", with: rs.text)
-                        sources.append(replacedR)
+                        sources.append((replacedR, ls.text, rs.text))
                     }
                 } else {
-                    sources.append(replacedL)
+                    sources.append((replacedL, ls.text, ""))
                 }
             }
             return sources

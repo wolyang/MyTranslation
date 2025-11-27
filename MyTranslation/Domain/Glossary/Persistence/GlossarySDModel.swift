@@ -24,6 +24,9 @@ extension Glossary.SDModel {
         // 태그(M:N) - 조인 테이블 경유
         @Relationship(deleteRule: .cascade) var termTagLinks: [SDTermTagLink] = []
 
+        // 문맥 기반 비활성화
+        var deactivatedIn: [String] = []
+
         // 조건부 활성화 관계 (Term 간 상호 참조)
         @Relationship(deleteRule: .nullify, inverse: \SDTerm.activates) var activators: [SDTerm] = []  // 이 Term을 활성화하는 Term 목록
         var activates: [SDTerm] = []  // 이 Term이 활성화하는 Term 목록 (inverse에 의해 자동 관리)
@@ -36,7 +39,8 @@ extension Glossary.SDModel {
             preMask: Bool = true,
             sources: [SDSource] = [],
             components: [SDComponent] = [],
-            termTagLinks: [SDTermTagLink] = []
+            termTagLinks: [SDTermTagLink] = [],
+            deactivatedIn: [String] = []
         ) {
             self.key = key
             self.target = target
@@ -46,6 +50,7 @@ extension Glossary.SDModel {
             self.sources = sources
             self.components = components
             self.termTagLinks = termTagLinks
+            self.deactivatedIn = deactivatedIn
         }
     }
 

@@ -20,7 +20,6 @@ final class DefaultTranslationRouter: TranslationRouter {
     private let google: TranslationEngine
     private let cache: CacheStore
     private let glossaryDataProvider: Glossary.DataProvider
-    private let glossaryComposer: GlossaryComposer
     private let postEditor: PostEditor // 유지(호출 제거)
     private let comparer: ResultComparer? // 유지(호출 제거)
     private let reranker: Reranker? // 유지(호출 제거)
@@ -34,7 +33,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         google: TranslationEngine,
         cache: CacheStore,
         glossaryDataProvider: Glossary.DataProvider,
-        glossaryComposer: GlossaryComposer,
         postEditor: PostEditor,
         comparer: ResultComparer?,
         reranker: Reranker?
@@ -44,7 +42,6 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.google = google
         self.cache = cache
         self.glossaryDataProvider = glossaryDataProvider
-        self.glossaryComposer = glossaryComposer
         self.postEditor = postEditor
         self.comparer = comparer
         self.reranker = reranker
@@ -143,6 +140,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             // 페이지 언어에 맞춰 토큰 주변 공백 삽입 정책을 적용한다.
             termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
 
+            let termActivationFilter = TermActivationFilter()
             let maskingContext: MaskingContext
             if let preparedContext {
                 maskingContext = preparedContext
@@ -150,7 +148,8 @@ final class DefaultTranslationRouter: TranslationRouter {
                 maskingContext = await prepareMaskingContextInternal(
                     from: pendingSegments,
                     glossaryData: glossaryData,
-                    termMasker: termMasker
+                    termMasker: termMasker,
+                    termActivationFilter: termActivationFilter
                 )
             }
             
@@ -302,13 +301,15 @@ final class DefaultTranslationRouter: TranslationRouter {
             shouldApply: options.applyGlossary
         )
 
+        let termActivationFilter = TermActivationFilter()
         let termMasker = TermMasker()
         termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
 
         return await prepareMaskingContextInternal(
             from: segments,
             glossaryData: glossaryData,
-            termMasker: termMasker
+            termMasker: termMasker,
+            termActivationFilter: termActivationFilter
         )
     }
 
@@ -316,20 +317,20 @@ final class DefaultTranslationRouter: TranslationRouter {
     private func prepareMaskingContextInternal(
         from segments: [Segment],
         glossaryData: GlossaryData?,
-        termMasker: TermMasker
+        termMasker: TermMasker,
+        termActivationFilter: TermActivationFilter
     ) async -> MaskingContext {
         var allSegmentPieces: [SegmentPieces] = []
         var maskedPacks: [MaskedPack] = []
         var nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = []
 
         for segment in segments {
-            let glossaryEntries = await buildEntriesForSegment(
-                from: glossaryData,
-                segmentText: segment.originalText
-            )
-            let (pieces, _) = termMasker.buildSegmentPieces(
+            let (pieces, glossaryEntries) = termMasker.buildSegmentPieces(
                 segment: segment,
-                glossary: glossaryEntries
+                matchedTerms: glossaryData?.matchedTerms ?? [],
+                patterns: glossaryData?.patterns ?? [],
+                matchedSources: glossaryData?.matchedSourcesByKey ?? [:],
+                termActivationFilter: termActivationFilter
             )
             allSegmentPieces.append(pieces)
 
@@ -363,20 +364,6 @@ final class DefaultTranslationRouter: TranslationRouter {
             nameGlossariesPerSegment: nameGlossariesPerSegment,
             segmentPieces: allSegmentPieces
         )
-    }
-
-    private func buildEntriesForSegment(
-        from data: GlossaryData?,
-        segmentText: String
-    ) async -> [GlossaryEntry] {
-        guard let data else { return [] }
-        // GlossaryComposer는 문자열/AC 계산이므로 백그라운드에서 수행해 UI 스레드 점유를 피한다.
-        return await Task.detached { [glossaryComposer] in
-            glossaryComposer.buildEntriesForSegment(
-                from: data,
-                segmentText: segmentText
-            )
-        }.value
     }
 
     /// 엔진 스트림을 소비하며 최종 이벤트를 생성한다.
