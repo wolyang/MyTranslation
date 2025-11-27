@@ -5,7 +5,7 @@
 MyTranslation 코드베이스를 레이어 우선 아키텍처(Domain/Services/Presentation)에서 기능 우선 아키텍처(Features/Core/Shared)로 재구성하며, 각 기능 내부에 적절한 레이어링을 적용합니다.
 
 **현재:** 125개 Swift 파일이 기술 레이어별로 구성됨 (최근 PR에서 히스토리 기능 추가: BrowsingHistory.swift, HistoryView.swift, HistoryStore.swift)
-**목표:** ~153개 파일(분할 후)이 기능/도메인별로 구성됨
+**목표:** ~149개 파일(분할 후)이 기능/도메인별로 구성됨
 
 
 ## 목표 구조
@@ -151,11 +151,7 @@ MyTranslation/
 │   │       └── NopPostEditor.swift
 │   │
 │   ├── Masking/
-│   │   ├── TermMasker.swift (Masker.swift에서 이름 변경, 분할)
-│   │   ├── TermMasker+SegmentPieces.swift (분할)
-│   │   ├── TermMasker+PersonProcessing.swift (분할)
-│   │   ├── TermMasker+Normalization.swift (분할)
-│   │   ├── HangulUtils.swift (분할)
+│   │   ├── TermMasker.swift (Masker.swift에서 이름 변경)
 │   │   ├── MaskedPack.swift
 │   │   ├── LockInfo.swift
 │   │   └── TermActivationFilter.swift
@@ -221,12 +217,7 @@ MyTranslation/
 ### 분할할 파일들 (500줄 이상 모든 파일)
 
 **필수 분할 (>700줄):**
-1. **Masker.swift (2,153줄) → 5개 파일**
-   - TermMasker.swift (~400줄): 핵심 API
-   - TermMasker+SegmentPieces.swift (~500줄): 조립 로직
-   - TermMasker+PersonProcessing.swift (~550줄): 인명 마스킹
-   - TermMasker+Normalization.swift (~500줄): 정규화/언마스킹
-   - HangulUtils.swift (~200줄): 한글 유틸리티
+1. **Masker.swift (2,153줄) → 정교한 작업을 위해 별도 PR로 분리, 이번 계획에서 작업하지 않음**
 
 2. **GlossarySDUpserter.swift (902줄) → 5개 파일**
    - GlossarySDUpserter.swift (~200줄): 메인 클래스
@@ -264,7 +255,7 @@ MyTranslation/
 
 **전략**: 먼저 폴더 재구성, 그 다음 Phase 10에서 500줄 이상 모든 파일을 새 위치 컨텍스트에 맞춰 적절한 하위 폴더로 체계적으로 분할.
 
-**결과:** 122개 파일 → ~150개 파일, 500줄 초과 파일 없음
+**결과:** 125개 파일 → ~149개 파일, 500줄 초과 파일 TermMasker.swift 제외하고 없음
 
 ## 마이그레이션 단계
 
@@ -314,14 +305,12 @@ MyTranslation/
 - 모든 테스트 통과
 
 ### Phase 2: Core/Masking
-**목표:** 마스킹 시스템 이름 변경 및 분할
+**목표:** 마스킹 시스템 이름 변경
 
 **작업:**
-1. Masker.swift → TermMasker.swift로 이름 변경
-2. 5개 파일로 분할 (TermMasker + 4개 확장/유틸)
-3. MaskedPack.swift, LockInfo.swift, TermActivationFilter.swift 이동
-4. 10-20개 import 업데이트
-5. 관련 테스트 이동/업데이트
+1. Masker.swift 파일을 이름 변경, 이동
+2. MaskedPack.swift, LockInfo.swift, TermActivationFilter.swift 이동
+3. 관련 테스트 이동/업데이트
 
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: Core/Masking 섹션 추가
@@ -340,8 +329,6 @@ MyTranslation/
 - Services/Translation/FM/ → Core/Translation/FM/
 - Services/Translation/PostEditor/ → Core/Translation/PostEditor/
 
-**Import 변경:** 60-100개 import
-
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: Core/Translation 섹션 추가 (Router, Engines, FM 하위섹션 포함)
 - AGENTS.md 업데이트: Translation 파이프라인 아키텍처 문서화
@@ -355,8 +342,6 @@ MyTranslation/
 
 **이동할 파일 (8개):**
 - Services/WebRendering/ → Core/WebRendering/
-
-**Import 변경:** 15-25개 import
 
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: Core/WebRendering 섹션 추가
@@ -377,8 +362,6 @@ MyTranslation/
 - Domain/Glossary/AhoCorasick.swift → Core/GlossaryEngine/Algorithms/
 - Services/Translation/Glossary/Deduplicator.swift → Core/GlossaryEngine/Algorithms/
 
-**Import 변경:** 80-120개 import (영향 큼 - Translation과 Browser에서 사용됨)
-
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: Core/GlossaryEngine 섹션 추가 (Models, Persistence, Services, Algorithms 하위섹션 포함)
 - AGENTS.md 업데이트: GlossaryEngine을 핵심 도메인 모듈로 문서화
@@ -394,8 +377,6 @@ MyTranslation/
 
 **이동할 파일 (4개):**
 - Application/ → App/
-
-**Import 변경:** 10-20개 import
 
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: App/ 섹션 추가
@@ -413,8 +394,6 @@ MyTranslation/
   - TermEditorViewModel.swift를 이동하면서 4개 파일로 분할
 - Presentation/Glossary/ImportExport/ → Features/Glossary/ImportExport/ (4개 파일: Sheets import UI)
 - Domain/Glossary/GlossaryAddModels.swift → Features/Glossary/Models/ (UI 전용 모델)
-
-**Import 변경:** 60-90개 import
 
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: Features/Glossary 섹션 추가
@@ -439,8 +418,6 @@ MyTranslation/
 3. ViewModels 이동 → Features/Browser/ViewModels/
 4. BrowserViewModel+Translation.swift → 3개 파일로 분할
 
-**Import 변경:** 50-80개 import
-
 **주의사항:**
 - BrowserViewModel.swift에 히스토리 관련 기능 추가됨 (historyStore 의존성)
 - URLBarView.swift에 뒤로/앞으로 버튼 기능 추가
@@ -457,8 +434,6 @@ MyTranslation/
 **이동할 파일:** 1개
 - Presentation/Settings/SettingsView.swift → Features/Settings/UI/
 
-**Import 변경:** 2-5개 import
-
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: Features/Settings 섹션 추가
 
@@ -472,8 +447,6 @@ MyTranslation/
 1. 새 구조의 모든 파일 검토
 2. 500줄 이상 남은 파일을 위치에 따라 적절한 하위 폴더로 분할
 3. 잠재적 후보: DefaultTranslationRouter.swift, WebViewInlineReplacer.swift
-
-**Import 변경:** 20-40개 import
 
 **문서 업데이트:**
 - PROJECT_OVERVIEW.md 업데이트: 중요한 파일 분할 기록
@@ -591,7 +564,7 @@ git mv old/path/File.swift new/path/File.swift
 
 구현 중 세심한 주의가 필요한 파일:
 
-1. [Services/Translation/Masking/Masker.swift](MyTranslation/Services/Translation/Masking/Masker.swift) (2,153줄) - 이름 변경 + 5방향 분할
+1. [Services/Translation/Masking/Masker.swift](MyTranslation/Services/Translation/Masking/Masker.swift) (2,153줄) - 파일 분할
 2. [Domain/Glossary/Persistence/GlossarySDUpserter.swift](MyTranslation/Domain/Glossary/Persistence/GlossarySDUpserter.swift) (902줄) - 5방향 분할
 3. [Presentation/Browser/ViewModel/BrowserViewModel+Translation.swift](MyTranslation/Presentation/Browser/ViewModel/BrowserViewModel+Translation.swift) (747줄) - 3방향 분할
 4. [Presentation/Glossary/ViewModel/TermEditorViewModel.swift](MyTranslation/Presentation/Glossary/ViewModel/TermEditorViewModel.swift) (743줄) - 4방향 분할
