@@ -341,22 +341,45 @@ MyTranslation/
 - Masker 리팩토링 계획은 [REFACTORING_PLAN_MASKER.md](REFACTORING_PLAN_MASKER.md)에 상세 문서화됨
 - 폴더 재구성 완료 후 별도로 작업 예정
 
-### Phase 3: Core/Translation
+### Phase 3: Core/Translation ✅
 **목표:** 번역 인프라 이동
 
-**이동할 파일 (30개):**
-- Services/Orchestration/ → Core/Translation/Router/
+**완료 내역 (31개 파일 이동):**
+
+**Router (7개):**
+- Services/Ochestration/ → Core/Translation/Router/
+  - DefaultTranslationRouter.swift, TranslationRouter.swift, RouterCancellationCenter.swift
+  - Polices/EngineTag.swift, Polices/RouterDecision.swift, Polices/Rules.swift
+  - Types/TranslationResult.swift
+
+**Engines (8개):**
 - Services/Translation/Engines/ → Core/Translation/Engines/
+  - TranslationEngine.swift
+  - AFM/ (2개): AFMEngine.swift, AFMTranslationService.swift
+  - Google/ (3개): GoogleEngine.swift, GoogleTranslateV2Client.swift, GooglePublicModels.swift
+  - DeepL/ (2개): DeepLEngine.swift, DeepLTranslateClient.swift
+
+**FM (14개):**
 - Services/Translation/FM/ → Core/Translation/FM/
+  - Cache/FMCacheKeys.swift
+  - Consistency/CrossEngineComparer.swift, Consistency/Reranker.swift
+  - Core/FMModelManager.swift
+  - Interactive/DefaultFMQueryService.swift, Interactive/FMQueryService.swift
+  - Models/Embeddings.swift
+  - Orchestrator/FMConfig.swift, Orchestrator/FMOrchestrator.swift
+  - PostEdit/FMPostEditor.swift, PostEdit/FMStylePresets.swift
+  - Protocols/FMProtocols.swift
+  - Safety/FMJSON.swift, Safety/Sanitizers.swift
+
+**PostEditor (2개):**
 - Services/Translation/PostEditor/ → Core/Translation/PostEditor/
+  - PostEditor.swift, NopPostEditor.swift
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Core/Translation 섹션 추가 (Router, Engines, FM 하위섹션 포함)
-- AGENTS.md 업데이트: Translation 파이프라인 아키텍처 문서화
+**Import 변경:** 0 (단일 타겟이므로 폴더 이동만으로 충분)
 
-**검증:**
-- 번역 테스트 통과
-- 수동 번역 테스트 (AFM, Google, DeepL)
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: Core/Translation 경로 업데이트
+- AGENTS.md: 번역 파이프라인 위치 안내 추가
 
 ### Phase 4: Core/WebRendering
 **목표:** 웹 렌더링 인프라 이동
