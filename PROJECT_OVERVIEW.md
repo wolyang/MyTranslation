@@ -112,7 +112,7 @@ FMConfig(
 * `GlossarySheetImport`: Google Sheets 연동
 * `GlossaryJSONParser`: JSON 형식 파싱
 
-### 5. Web Rendering (`Services/WebRendering/`)
+### 5. Web Rendering (`Core/WebRendering/`)
 
 WKWebView 번역 결과 반영.
 
@@ -188,6 +188,8 @@ MyTranslation/
 │       ├── Engines/
 │       ├── FM/
 │       └── PostEditor/
+├── Core/
+│   └── WebRendering/
 ├── Application/
 ├── Domain/
 │   ├── Glossary/
@@ -198,8 +200,7 @@ MyTranslation/
 │   └── Settings/
 ├── Services/
 │   ├── Adapters/
-│   ├── Translation/    # Glossary/Masking 등 나머지 Translation 서비스
-│   └── WebRendering/
+│   └── Translation/    # Glossary/Masking 등 나머지 Translation 서비스
 ├── Persistence/       # (Legacy, 정리 예정)
 └── Utils/             # (Legacy, 정리 예정)
 ```

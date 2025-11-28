@@ -11,7 +11,9 @@ MyTranslation 코드베이스를 레이어 우선 아키텍처(Domain/Services/P
 - ✅ Phase 0: 테스트 구조 설정 완료 (`5a60e2a`)
 - ✅ Phase 1: Shared 기반 완료 (`27a3014`)
 - ⏸️ Phase 2: Core/Masking → 별도 계획으로 분리 ([REFACTORING_PLAN_MASKER.md](REFACTORING_PLAN_MASKER.md))
-- ⏳ Phase 3-11: 진행 예정
+- ✅ Phase 3: Core/Translation 완료
+- ✅ Phase 4: Core/WebRendering 완료
+- ⏳ Phase 5-11: 진행 예정
 
 
 ## 목표 구조
@@ -381,18 +383,23 @@ MyTranslation/
 - PROJECT_OVERVIEW.md: Core/Translation 경로 업데이트
 - AGENTS.md: 번역 파이프라인 위치 안내 추가
 
-### Phase 4: Core/WebRendering
+### Phase 4: Core/WebRendering ✅
 **목표:** 웹 렌더링 인프라 이동
 
-**이동할 파일 (8개):**
-- Services/WebRendering/ → Core/WebRendering/
+**완료 내역 (7개 파일 이동):**
+- Services/WebRendering/Extraction/ → Core/WebRendering/Extraction/
+  - ContentExtractor.swift, WKContentExtractor.swift
+- Services/WebRendering/Inline/ → Core/WebRendering/Inline/
+  - InlineReplacer.swift, WebViewInlineReplacer.swift
+- Services/WebRendering/Overlay/ → Core/WebRendering/Overlay/
+  - OverlayRenderer.swift, SelectionBridge.swift
+- Services/WebRendering/Ports/ → Core/WebRendering/Adapters/
+  - WebViewScriptExecutor.swift
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Core/WebRendering 섹션 추가
+**Import 변경:** 0 (단일 타겟, 경로 이동만 수행)
 
-**검증:**
-- 브라우저가 페이지를 올바르게 로드함
-- 콘텐츠 추출이 작동함
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: Core/WebRendering 경로/구조 반영
 
 ### Phase 5: Core/GlossaryEngine
 **목표:** 용어집 도메인 로직과 퍼시스턴스를 Core로 추출
