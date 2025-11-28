@@ -3,12 +3,12 @@ import SwiftData
 
 extension Glossary {
     /// 데이터 조회 인터페이스.
-    public protocol DataProviding {
+    public protocol RepositoryProviding {
         func fetchData(for pageText: String) async throws -> GlossaryData
     }
 
-    /// SwiftData 기반 Glossary 데이터 제공자.
-    public final class DataProvider: DataProviding {
+    /// SwiftData 기반 Glossary 저장소.
+    public final class Repository: RepositoryProviding {
         private let context: ModelContext
         private let recallOpt: RecallOptions
 
@@ -55,6 +55,12 @@ extension Glossary {
             )
         }
     }
+}
+
+// Legacy aliases for compatibility during migration
+extension Glossary {
+    public typealias DataProvider = Repository
+    public typealias DataProviding = RepositoryProviding
 }
 
 // MARK: - Store (SwiftData fetches)

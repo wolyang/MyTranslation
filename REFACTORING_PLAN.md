@@ -401,27 +401,25 @@ MyTranslation/
 **문서 업데이트:** ✅
 - PROJECT_OVERVIEW.md: Core/WebRendering 경로/구조 반영
 
-### Phase 5: Core/GlossaryEngine
+### Phase 5: Core/GlossaryEngine ✅
 **목표:** 용어집 도메인 로직과 퍼시스턴스를 Core로 추출
 
-**이동할 파일 (27개 → 분할 포함 32개):**
-- Domain/Glossary/Models/ → Core/GlossaryEngine/Models/ (6개 파일, GlossaryAddModels는 UI 전용이므로 제외)
-- Domain/Glossary/Persistence/ → Core/GlossaryEngine/Persistence/ (GlossarySDUpserter 분할 포함 10개 파일)
-  - GlossarySDUpserter.swift를 이동하면서 5개 파일로 분할
-  - GlossaryDataProvider → GlossaryRepository로 이름 변경
-- Domain/Glossary/Services/ → Core/GlossaryEngine/Services/ (4개 파일: JSON 파서, Sheets import 오케스트레이션, 키 생성기)
+**완료 내역 (17개 파일 이동 + rename):**
+- Domain/Glossary/Models/ → Core/GlossaryEngine/Models/
+  - Glossary.swift, GlossaryData.swift, GlossaryEntry.swift, GlossaryUtil.swift, RecallOptions.swift
+- Domain/Glossary/Persistence/ → Core/GlossaryEngine/Persistence/
+  - GlossarySDModel.swift, GlossarySDUpserter.swift, GlossarySDSourceIndexMaintainer.swift, AutoVariantRecord.swift, AutoVariantStoreManager.swift
+  - Persistence/Providers/GlossaryDataProvider.swift → GlossaryRepository.swift (클래스명을 Repository로 변경, DataProvider/DataProviding는 호환용 typealias 유지)
+- Domain/Glossary/Services/ → Core/GlossaryEngine/Services/
+  - GlossaryJSON.swift, GlossaryJSONParser.swift, GlossarySheetImport.swift, KeyGenerator.swift
 - Domain/Glossary/AhoCorasick.swift → Core/GlossaryEngine/Algorithms/
 - Services/Translation/Glossary/Deduplicator.swift → Core/GlossaryEngine/Algorithms/
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Core/GlossaryEngine 섹션 추가 (Models, Persistence, Services, Algorithms 하위섹션 포함)
-- AGENTS.md 업데이트: GlossaryEngine을 핵심 도메인 모듈로 문서화
-- TranslationRouter가 Features/Glossary가 아닌 Core/GlossaryEngine에 의존함을 강조
+**Import 변경:** 0 (단일 타겟, 경로 이동 및 클래스 rename만 적용)
 
-**검증:**
-- GlossaryEngine 테스트 통과
-- 용어 마스킹을 포함한 번역 작동
-- 용어 활성화/비활성화 작동
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: Core/GlossaryEngine 섹션 및 Glossary.Repository 명칭 반영
+- AGENTS.md: GlossaryEngine 위치 안내 추가
 
 ### Phase 6: App 레이어
 **목표:** 애플리케이션 부트스트랩 이동
@@ -544,8 +542,8 @@ git commit -m "Phase N: 설명"
 - ✅ Phase 0: 새 아키텍처를 반영하도록 테스트 재구성 (`5a60e2a`)
 - ✅ Phase 1: Shared 기반 이동 (Models, Persistence, Utils) (`27a3014`)
 - ⏸️ Phase 2: Core/Masking 이동 및 분할 → 별도 계획으로 분리
-- Phase 3: Core/Translation 인프라 이동
-- Phase 4: Core/WebRendering 이동
+- ✅ Phase 3: Core/Translation 인프라 이동
+- ✅ Phase 4: Core/WebRendering 이동
 - Phase 5: Domain에서 Core/GlossaryEngine 추출
 - Phase 6: App 부트스트랩 레이어 이동
 - Phase 7: Features/Glossary UI 이동

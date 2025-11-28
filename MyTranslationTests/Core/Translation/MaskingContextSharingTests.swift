@@ -35,7 +35,7 @@ struct MaskingContextSharingTests {
             deepl: deepl,
             google: google,
             cache: cache,
-            glossaryDataProvider: dataProvider,
+            glossaryRepository: dataProvider,
             postEditor: StubPostEditor(),
             comparer: nil,
             reranker: nil

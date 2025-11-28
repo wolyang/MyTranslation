@@ -19,7 +19,7 @@ final class DefaultTranslationRouter: TranslationRouter {
     private let deepl: TranslationEngine
     private let google: TranslationEngine
     private let cache: CacheStore
-    private let glossaryDataProvider: Glossary.DataProvider
+    private let glossaryRepository: Glossary.Repository
     private let postEditor: PostEditor // 유지(호출 제거)
     private let comparer: ResultComparer? // 유지(호출 제거)
     private let reranker: Reranker? // 유지(호출 제거)
@@ -32,7 +32,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         deepl: TranslationEngine,
         google: TranslationEngine,
         cache: CacheStore,
-        glossaryDataProvider: Glossary.DataProvider,
+        glossaryRepository: Glossary.Repository,
         postEditor: PostEditor,
         comparer: ResultComparer?,
         reranker: Reranker?
@@ -41,7 +41,7 @@ final class DefaultTranslationRouter: TranslationRouter {
         self.deepl = deepl
         self.google = google
         self.cache = cache
-        self.glossaryDataProvider = glossaryDataProvider
+        self.glossaryRepository = glossaryRepository
         self.postEditor = postEditor
         self.comparer = comparer
         self.reranker = reranker
@@ -267,7 +267,7 @@ final class DefaultTranslationRouter: TranslationRouter {
     /// 용어집 사용 여부에 따라 최신 용어집 데이터를 가져온다.
     private func fetchGlossaryData(fullText: String, shouldApply: Bool) async -> GlossaryData? {
         guard shouldApply else { return nil }
-        return try? await glossaryDataProvider.fetchData(for: fullText)
+        return try? await glossaryRepository.fetchData(for: fullText)
     }
 
     /// 캐시 적중 시 최종 페이로드를 만들고, 적중하지 않으면 nil을 반환한다.

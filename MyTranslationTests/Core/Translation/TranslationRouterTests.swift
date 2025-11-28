@@ -36,7 +36,7 @@ struct TranslationRouterTests {
             deepl: deepl ?? MockTranslationEngine(tag: .deepl),
             google: google ?? MockTranslationEngine(tag: .google),
             cache: cache,
-            glossaryDataProvider: dataProvider,
+            glossaryRepository: dataProvider,
             postEditor: postEditor,
             comparer: nil,
             reranker: nil
@@ -111,7 +111,7 @@ struct TranslationRouterTests {
             deepl: MockTranslationEngine(tag: .deepl),
             google: google,
             cache: cache,
-            glossaryDataProvider: dataProvider,
+            glossaryRepository: dataProvider,
             postEditor: StubPostEditor(),
             comparer: nil,
             reranker: nil
