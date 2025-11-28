@@ -4,8 +4,8 @@ import Testing
 @testable import MyTranslation
 
 /// SPEC_TERM_DEACTIVATION 7.x 케이스 전용 테스트 모음
-struct MaskerSpecTests {
-    private let masker = TermMasker()
+struct TextEntityProcessorIntegrationTests {
+    private let processor = TextEntityProcessor()
     
     // Test 1 (Phase 0) 기본 등장 체크
     @Test
@@ -15,7 +15,7 @@ struct MaskerSpecTests {
             makeSource("ソラト", prohibitStandalone: false)
         ])
         let matchedSources = ["sorato": Set(["宙人"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("宙人是地球人."),
             matchedTerms: [term],
             patterns: [],
@@ -34,7 +34,7 @@ struct MaskerSpecTests {
             deactivatedIn: ["宇宙人"]
         )
         let matchedSources = ["sorato": Set(["宙人"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("宇宙人宙人来了."),
             matchedTerms: [term],
             patterns: [],
@@ -53,7 +53,7 @@ struct MaskerSpecTests {
             deactivatedIn: ["宇宙人", "外星人"]
         )
         let matchedSources = ["sorato": Set(["宙人"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("外星人宙人来了."),
             matchedTerms: [term],
             patterns: [],
@@ -71,7 +71,7 @@ struct MaskerSpecTests {
             deactivatedIn: []
         )
         let matchedSources = ["sorato": Set(["宙人"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("宇宙人宙人来了."),
             matchedTerms: [term],
             patterns: [],
@@ -90,7 +90,7 @@ struct MaskerSpecTests {
             deactivatedIn: ["宇宙人"]
         )
         let matchedSources = ["sorato": Set(["宙人"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("宙人来了."),
             matchedTerms: [term],
             patterns: [],
@@ -107,7 +107,7 @@ struct MaskerSpecTests {
             sources: [makeSource("ウルトラマン", prohibitStandalone: false)]
         )
         let matchedSources = ["ultraman": Set(["ウルトラマン"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン登場!"),
             matchedTerms: [term],
             patterns: [],
@@ -125,7 +125,7 @@ struct MaskerSpecTests {
             sources: [makeSource("太郎", prohibitStandalone: true)]
         )
         let matchedSources = ["taro": Set(["太郎"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("太郎登場!"),
             matchedTerms: [term],
             patterns: [],
@@ -145,7 +145,7 @@ struct MaskerSpecTests {
             ]
         )
         let matchedSources = ["ultraman": Set(["ウルトラマン", "超人"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン和超人."),
             matchedTerms: [term],
             patterns: [],
@@ -171,7 +171,7 @@ struct MaskerSpecTests {
             "ultraman": Set(["ウルトラマン"]),
             "taro": Set(["太郎"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [term1, term2],
             patterns: [],
@@ -188,7 +188,7 @@ struct MaskerSpecTests {
             sources: [makeSource("太郎", prohibitStandalone: true)]
         )
         let matchedSources = ["taro": Set(["太郎"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("太郎登場!"),
             matchedTerms: [term],
             patterns: [],
@@ -214,7 +214,7 @@ struct MaskerSpecTests {
             "ultraman": Set(["ウルトラマン"]),
             "taro": Set(["太郎"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("宇宙人ウルトラマン太郎登場!"),
             matchedTerms: [activator, prohibited],
             patterns: [],
@@ -239,7 +239,7 @@ struct MaskerSpecTests {
             "ultraman": Set(["ウルトラマン"]),
             "taro": Set(["太郎"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [activator, prohibited],
             patterns: [],
@@ -262,7 +262,7 @@ struct MaskerSpecTests {
             "ultraman": Set(["ウルトラマン"]),
             "taro": Set(["太郎"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [term1, term2, term3],
             patterns: [],
@@ -280,7 +280,7 @@ struct MaskerSpecTests {
         )
         term.activators.append(term)
         let matchedSources = ["ultraman": Set(["ウルトラマン"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン登場!"),
             matchedTerms: [term],
             patterns: [],
@@ -304,7 +304,7 @@ struct MaskerSpecTests {
             targetTemplates: ["{L} {R}"]
         )
         let matchedSources = ["hong": Set(["홍"]), "gildong": Set(["길동"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("홍길동은 위인이다."),
             matchedTerms: [family, given],
             patterns: [pattern],
@@ -333,7 +333,7 @@ struct MaskerSpecTests {
             targetTemplates: ["{L}씨"]
         )
         let matchedSources = ["taro": Set(["太郎"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("太郎さん登場!"),
             matchedTerms: [base],
             patterns: [pattern],
@@ -367,7 +367,7 @@ struct MaskerSpecTests {
             skipPairsIfSameTerm: true
         )
         let matchedSources = ["hong": Set(["홍"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("홍홍은 누구?"),
             matchedTerms: [term],
             patterns: [pattern],
@@ -395,7 +395,7 @@ struct MaskerSpecTests {
             "gildong": Set(["길동"]),
             "chulsoo": Set(["철수"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("홍길동김철수."),
             matchedTerms: [family1, family2, given1, given2],
             patterns: [makePersonPattern()],
@@ -419,7 +419,7 @@ struct MaskerSpecTests {
             "hong": Set(["홍"]),
             "gildong": Set(["길동"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("홍길동은 위인."),
             matchedTerms: [full, family, given],
             patterns: [pattern],
@@ -447,7 +447,7 @@ struct MaskerSpecTests {
             "hong": Set(["홍", "洪"]),
             "gildong": Set(["길동"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("宇宙洪길동."),
             matchedTerms: [family, given],
             patterns: [makePersonPattern()],
@@ -467,7 +467,7 @@ struct MaskerSpecTests {
             "ultraman": Set(["ウルトラマン"]),
             "taro": Set(["太郎"])
         ]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [full, left, right],
             patterns: [],
@@ -484,7 +484,7 @@ struct MaskerSpecTests {
         let t1 = makeTerm(key: "k1", sources: [makeSource("AAA", prohibitStandalone: false)])
         let t2 = makeTerm(key: "k2", sources: [makeSource("AAA", prohibitStandalone: false)])
         let matchedSources: [String: Set<String>] = ["k1": Set(["AAA"]), "k2": Set(["AAA"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("AAA登場!"),
             matchedTerms: [t1, t2],
             patterns: [],
@@ -501,7 +501,7 @@ struct MaskerSpecTests {
         let term = makeTerm(key: "ultraman-taro", sources: [makeSource("ウルトラマン太郎", prohibitStandalone: false)])
         let matchedSources = ["ultraman-taro": Set(["ウルトラマン太郎"])]
         let segment = makeSegment("前置詞ウルトラマン太郎登場!")
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: segment,
             matchedTerms: [term],
             patterns: [],
@@ -521,7 +521,7 @@ struct MaskerSpecTests {
     func test24_matchesRepeatedSources() {
         let term = makeTerm(key: "taro", sources: [makeSource("太郎", prohibitStandalone: false)])
         let matchedSources = ["taro": Set(["太郎"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("太郎和太郎是兄弟."),
             matchedTerms: [term],
             patterns: [],
@@ -562,7 +562,7 @@ struct MaskerSpecTests {
             skipPairsIfSameTerm: false
         )
         
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("难道我就要陪你和凯桑在这片什么都没有的地方呆三天嘛！"),
             matchedTerms: [term1, term2],
             patterns: [pattern],
@@ -593,7 +593,7 @@ struct MaskerSpecTests {
             ]
         )
         let matchedSources = ["key1": Set(["AAA"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("AAA登場!"),
             matchedTerms: [term],
             patterns: [],
@@ -636,7 +636,7 @@ struct MaskerSpecTests {
     // Test 28 (Edge) 빈 세그먼트
     @Test
     func test28_handlesEmptySegment() {
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment(""),
             matchedTerms: [],
             patterns: [],
@@ -650,7 +650,7 @@ struct MaskerSpecTests {
     // Test 29 (Edge) matchedTerms 빈 배열
     @Test
     func test29_handlesEmptyMatchedTerms() {
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("ウルトラマン太郎"),
             matchedTerms: [],
             patterns: [],
@@ -667,7 +667,7 @@ struct MaskerSpecTests {
         let t1 = makeTerm(key: "t1", sources: [makeSource("A", prohibitStandalone: false)], deactivatedIn: ["CTX"])
         let t2 = makeTerm(key: "t2", sources: [makeSource("B", prohibitStandalone: false)], deactivatedIn: ["CTX"])
         let matchedSources = ["t1": Set(["A"]), "t2": Set(["B"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("CTXAB"),
             matchedTerms: [t1, t2],
             patterns: [],
@@ -685,7 +685,7 @@ struct MaskerSpecTests {
         addComponent(family, pattern: "person", role: "family")
         addComponent(given, pattern: "person", role: "given")
         let matchedSources = ["hong": Set(["홍"]), "gildong": Set(["길동"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("홍길동"),
             matchedTerms: [family, given],
             patterns: [makePersonPattern()],
@@ -728,7 +728,7 @@ struct MaskerSpecTests {
     func test33_handlesEmojiSources() {
         let term = makeTerm(key: "smile", sources: [makeSource("😊", prohibitStandalone: false)])
         let matchedSources = ["smile": Set(["😊"])]
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: makeSegment("今日は😊いい天気です."),
             matchedTerms: [term],
             patterns: [],
@@ -747,7 +747,7 @@ struct MaskerSpecTests {
         let term = makeTerm(key: "ga", sources: [makeSource("が", prohibitStandalone: false)])
         let matchedSources = ["ga": Set(["が"])]
         let segment = makeSegment("が登場")
-        let result = masker.buildSegmentPieces(
+        let result = processor.buildSegmentPieces(
             segment: segment,
             matchedTerms: [term],
             patterns: [],
@@ -868,7 +868,7 @@ private func prepareMaskingContextForTest(
     segments: [Segment],
     glossaryData: GlossaryData?
 ) async -> TestMaskingContext {
-    let termMasker = TermMasker()
+    let processor = TextEntityProcessor()
     let maskingEngine = MaskingEngine()
     let normalizationEngine = NormalizationEngine()
 
@@ -877,7 +877,7 @@ private func prepareMaskingContextForTest(
     var glossaryEntries: [[GlossaryEntry]] = []
 
     for segment in segments {
-        let (pieces, entries) = termMasker.buildSegmentPieces(
+        let (pieces, entries) = processor.buildSegmentPieces(
             segment: segment,
             matchedTerms: glossaryData?.matchedTerms ?? [],
             patterns: glossaryData?.patterns ?? [],

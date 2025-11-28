@@ -9,7 +9,7 @@ extension DefaultTranslationRouter {
         maskedSegments: [Segment],
         pendingSegments: [Segment],
         indexByID: [String: Int],
-        termMasker: TermMasker,
+        termMasker: TextEntityProcessor,
         normalizationEngine: NormalizationEngine,
         maskingEngine: MaskingEngine,
         maskingContext: MaskingContext,
@@ -194,7 +194,7 @@ private extension DefaultTranslationRouter {
     func restoreOutput(
         from text: String,
         pack: MaskedPack,
-        termMasker: TermMasker,
+        termMasker: TextEntityProcessor,
         normalizationEngine: NormalizationEngine,
         maskingEngine: MaskingEngine,
         nameGlossaries: [NameGlossary],

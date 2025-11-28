@@ -134,7 +134,7 @@ final class DefaultTranslationRouter: TranslationRouter {
             progress(.init(kind: .requestScheduled, timestamp: Date()))
             await Task.yield()
 
-            let termMasker = TermMasker()
+            let termMasker = TextEntityProcessor()
             let maskingEngine = MaskingEngine()
             let normalizationEngine = NormalizationEngine()
             // 페이지 언어에 맞춰 토큰 주변 공백 삽입 정책을 적용한다.

@@ -11,7 +11,7 @@ extension DefaultTranslationRouter {
             shouldApply: options.applyGlossary
         )
 
-        let termMasker = TermMasker()
+        let termMasker = TextEntityProcessor()
         let maskingEngine = MaskingEngine()
         let normalizationEngine = NormalizationEngine()
         maskingEngine.tokenSpacingBehavior = options.tokenSpacingBehavior
@@ -29,7 +29,7 @@ extension DefaultTranslationRouter {
     func prepareMaskingContextInternal(
         from segments: [Segment],
         glossaryData: GlossaryData?,
-        termMasker: TermMasker,
+        termMasker: TextEntityProcessor,
         maskingEngine: MaskingEngine,
         normalizationEngine: NormalizationEngine
     ) async -> MaskingContext {

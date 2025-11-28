@@ -1,13 +1,13 @@
 //
-//  TermMasker.swift
+//  TextEntityProcessor.swift
 //  MyTranslation
 //
 
 import Foundation
 
-// MARK: - Term-only Masker
+// MARK: - Text Entity Processor
 
-public final class TermMasker {
+public final class TextEntityProcessor {
     private let termMatcher = SegmentTermMatcher()
     private let entriesBuilder = SegmentEntriesBuilder()
     private let piecesBuilder = SegmentPiecesBuilder()
