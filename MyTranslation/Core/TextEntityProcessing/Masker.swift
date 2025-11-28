@@ -11,6 +11,7 @@ public final class TermMasker {
 
     private let termMatcher = SegmentTermMatcher()
     private let entriesBuilder = SegmentEntriesBuilder()
+    private let piecesBuilder = SegmentPiecesBuilder()
     private var nextIndex: Int = 1
 
     /// 번역 대상 언어에 맞춰 토큰 주변 공백 삽입 정책을 제어한다.
@@ -66,7 +67,6 @@ public final class TermMasker {
             )
         }
 
-        var pieces: [SegmentPieces.Piece] = [.text(text, range: text.startIndex..<text.endIndex)]
         var usedTermKeys: Set<String> = []
         var sourceToEntry: [String: GlossaryEntry] = [:]
 
@@ -137,65 +137,10 @@ public final class TermMasker {
         }
 
         // Phase 4: Longest-first Segmentation
-        let sortedSources = sourceToEntry.keys.sorted { $0.count > $1.count }
-
-        for source in sortedSources {
-            guard let entry = sourceToEntry[source] else { continue }
-            var newPieces: [SegmentPieces.Piece] = []
-
-            for piece in pieces {
-                switch piece {
-                case .text(let str, let pieceRange):
-                    guard str.contains(source) else {
-                        newPieces.append(.text(str, range: pieceRange))
-                        continue
-                    }
-
-                    var searchStart = str.startIndex
-                    while let foundRange = str.range(of: source, range: searchStart..<str.endIndex) {
-                        if foundRange.lowerBound > searchStart {
-                            let prefixLower = text.index(
-                                pieceRange.lowerBound,
-                                offsetBy: str.distance(from: str.startIndex, to: searchStart)
-                            )
-                            let prefixUpper = text.index(
-                                pieceRange.lowerBound,
-                                offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
-                            )
-                            let prefix = String(str[searchStart..<foundRange.lowerBound])
-                            newPieces.append(.text(prefix, range: prefixLower..<prefixUpper))
-                        }
-
-                        let originalLower = text.index(
-                            pieceRange.lowerBound,
-                            offsetBy: str.distance(from: str.startIndex, to: foundRange.lowerBound)
-                        )
-                        let originalUpper = text.index(originalLower, offsetBy: source.count)
-                        newPieces.append(.term(entry, range: originalLower..<originalUpper))
-
-                        searchStart = foundRange.upperBound
-                    }
-
-                    if searchStart < str.endIndex {
-                        let suffixLower = text.index(
-                            pieceRange.lowerBound,
-                            offsetBy: str.distance(from: str.startIndex, to: searchStart)
-                        )
-                        let suffix = String(str[searchStart...])
-                        newPieces.append(.text(suffix, range: suffixLower..<pieceRange.upperBound))
-                    }
-                case .term:
-                    newPieces.append(piece)
-                }
-            }
-
-            pieces = newPieces
-        }
-
-        let segmentPieces = SegmentPieces(
+        let segmentPieces = piecesBuilder.buildSegmentPieces(
+            segmentText: text,
             segmentID: segment.id,
-            originalText: text,
-            pieces: pieces
+            sourceToEntry: sourceToEntry
         )
 
         return (pieces: segmentPieces, glossaryEntries: Array(sourceToEntry.values))

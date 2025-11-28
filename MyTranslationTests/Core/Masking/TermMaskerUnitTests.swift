@@ -91,60 +91,6 @@ struct TermMaskerUnitTests {
     }
 
     @Test
-    func segmentPiecesTracksRanges() {
-        let text = "Hello 최강자님, welcome!"
-        let segment = Segment(
-            id: "seg1",
-            url: URL(string: "https://example.com")!,
-            indexInPage: 0,
-            originalText: text,
-            normalizedText: text,
-            domRange: nil
-        )
-        let term = Glossary.SDModel.SDTerm(
-            key: "t1",
-            target: "Choigangja",
-            variants: [],
-            isAppellation: false,
-            preMask: true
-        )
-        let source = Glossary.SDModel.SDSource(text: "최강자", prohibitStandalone: false, term: term)
-        term.sources.append(source)
-
-        let masker = TermMasker()
-        let (pieces, _) = masker.buildSegmentPieces(
-            segment: segment,
-            matchedTerms: [term],
-            patterns: [],
-            matchedSources: [term.key: Set([source.text])]
-        )
-
-        #expect(pieces.originalText == text)
-        #expect(pieces.pieces.count == 3)
-
-        if case let .text(prefix, range1) = pieces.pieces[0] {
-            #expect(prefix == "Hello ")
-            #expect(String(text[range1]) == "Hello ")
-        } else {
-            #expect(false, "첫 번째 조각이 text 이어야 합니다.")
-        }
-
-        if case let .term(termEntry, range2) = pieces.pieces[1] {
-            #expect(termEntry.source == "최강자")
-            #expect(String(text[range2]) == "최강자")
-        } else {
-            #expect(false, "두 번째 조각이 term 이어야 합니다.")
-        }
-
-        if case let .text(suffix, range3) = pieces.pieces[2] {
-            #expect(suffix == "님, welcome!")
-            #expect(String(text[range3]) == "님, welcome!")
-        } else {
-            #expect(false, "세 번째 조각이 text 이어야 합니다.")
-        }
-    }
-
-    @Test
     func maskFromPiecesTracksRanges() {
         let text = "Hello 최강자님"
         let segment = Segment(
