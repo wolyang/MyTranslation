@@ -10,6 +10,7 @@ extension DefaultTranslationRouter {
         pendingSegments: [Segment],
         indexByID: [String: Int],
         termMasker: TermMasker,
+        maskingEngine: MaskingEngine,
         maskingContext: MaskingContext,
         options: TranslationOptions,
         sequence: Int,
@@ -70,6 +71,7 @@ extension DefaultTranslationRouter {
                     from: result.text,
                     pack: pack,
                     termMasker: termMasker,
+                    maskingEngine: maskingEngine,
                     nameGlossaries: maskingContext.nameGlossariesPerSegment[index],
                     pieces: maskingContext.segmentPieces[index],
                     shouldNormalizeNames: true
@@ -157,7 +159,7 @@ private extension DefaultTranslationRouter {
     /// 정규화 range를 언마스킹 후 문자열 기준으로 변환한다.
     func translateNormalizationRanges(
         _ ranges: [TermRange],
-        deltas: [TermMasker.ReplacementDelta],
+        deltas: [MaskingEngine.ReplacementDelta],
         originalText: String,
         finalText: String
     ) -> [TermRange] {
@@ -191,12 +193,13 @@ private extension DefaultTranslationRouter {
         from text: String,
         pack: MaskedPack,
         termMasker: TermMasker,
+        maskingEngine: MaskingEngine,
         nameGlossaries: [NameGlossary],
         pieces: SegmentPieces,
         shouldNormalizeNames: Bool
     ) -> RestoredOutput {
         print("[T] router.processStream [\(pack.seg.id)] TRANSLATED ORITINAL RESULT: \(text)")
-        let cleaned = termMasker.normalizeDamagedETokens(text, locks: pack.locks)
+        let cleaned = maskingEngine.normalizeDamagedETokens(text, locks: pack.locks)
 
         let originalRanges: [TermRange] = pieces.termRanges().map { item in
             TermRange(
@@ -206,7 +209,7 @@ private extension DefaultTranslationRouter {
             )
         }
 
-        let preNormalized = termMasker.unmaskWithOrder(
+        let preNormalized = maskingEngine.unmaskWithOrder(
             in: cleaned,
             pieces: pieces,
             locksByToken: pack.locks,
@@ -230,7 +233,7 @@ private extension DefaultTranslationRouter {
             preNormalizationRanges.append(contentsOf: normalized.preNormalizedRanges)
         }
 
-        let unmasked = termMasker.unmaskWithOrder(
+        let unmasked = maskingEngine.unmaskWithOrder(
             in: normalizedText,
             pieces: pieces,
             locksByToken: pack.locks,

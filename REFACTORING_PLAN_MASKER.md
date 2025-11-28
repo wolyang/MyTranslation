@@ -245,10 +245,6 @@ public final class MaskingEngine {
 }
 ```
 
-**마이그레이션**:
-- TermMasker가 MaskingEngine 인스턴스 보유
-- Facade 메서드로 위임
-
 **테스트 이동**:
 
 새 파일: `MyTranslationTests/Core/TextEntityProcessing/Engines/MaskingEngineTests.swift`
@@ -290,7 +286,27 @@ public struct NormalizationEngine {
 
 **의존성**: KoreanParticleRules 사용
 
-**테스트 이동**: 해당 없음 (normalizeWithOrder 등의 복잡한 로직은 통합 테스트로 검증되며, 별도 단위 테스트 없음)
+**테스트 이동**:
+
+새 파일: `MyTranslationTests/Core/TextEntityProcessing/Engines/NormalizationEngineTests.swift`
+
+TermMaskerUnitTests.swift에서 다음 테스트 이동:
+- `normalizeWithOrderTracksNormalizedRanges()` - normalizeWithOrder() 기본 동작 테스트
+- `normalizeWithOrderHandlesResidualVariantsInPhase4()` - Phase 4 변형 처리 테스트
+- `normalizeWithOrderRespectsProtectedRangesInPhase4()` - 보호 범위 존중 테스트
+- `normalizeWithOrderHandlesMultipleResidualInstances()` - 다중 잔여 인스턴스 처리
+- `normalizeWithOrderIgnoresEmptyVariants()` - 빈 변형 무시 테스트
+- `normalizeWithOrderFiltersSingleCharacterVariantsInPhase4()` - 단일 문자 변형 필터링
+- `normalizeWithOrderReusesOnlyMatchedVariantsInPhase4()` - 매칭된 변형만 재사용 테스트
+- `normalizeWithOrderHandlesMatchedFallbackVariantsInPhase4()` - 폴백 변형 처리 테스트
+- `normalizeVariantsAndParticlesTracksPreNormalizedRanges()` - normalizeVariantsAndParticles() 범위 추적 테스트
+- `normalizeEntitiesHandlesAuxiliarySequences()` - normalizeVariantsAndParticles() 보조사 처리 테스트
+
+테스트 업데이트 사항:
+- `let masker = TermMasker()` → `let engine = NormalizationEngine()`
+- `masker.normalizeWithOrder()` → `engine.normalizeWithOrder()`
+- `masker.normalizeVariantsAndParticles()` → `engine.normalizeVariantsAndParticles()`
+- SegmentPieces 및 NameGlossary 모델은 그대로 사용 가능 (독립 타입으로 분리되었으므로)
 
 ### Phase 5: TextEntityProcessor로 변환 (오케스트레이션 레이어)
 

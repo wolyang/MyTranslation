@@ -869,6 +869,7 @@ private func prepareMaskingContextForTest(
     glossaryData: GlossaryData?
 ) async -> TestMaskingContext {
     let termMasker = TermMasker()
+    let maskingEngine = MaskingEngine()
 
     var segmentPieces: [SegmentPieces] = []
     var maskedSegments: [Segment] = []
@@ -884,7 +885,7 @@ private func prepareMaskingContextForTest(
         segmentPieces.append(pieces)
         glossaryEntries.append(entries)
 
-        let pack = termMasker.maskFromPieces(pieces: pieces, segment: segment)
+        let pack = maskingEngine.maskFromPieces(pieces: pieces, segment: segment)
         maskedSegments.append(
             Segment(
                 id: pack.seg.id,
