@@ -7,6 +7,12 @@ MyTranslation 코드베이스를 레이어 우선 아키텍처(Domain/Services/P
 **현재:** 125개 Swift 파일이 기술 레이어별로 구성됨 (최근 PR에서 히스토리 기능 추가: BrowsingHistory.swift, HistoryView.swift, HistoryStore.swift)
 **목표:** ~149개 파일(분할 후)이 기능/도메인별로 구성됨
 
+**진행 상황:**
+- ✅ Phase 0: 테스트 구조 설정 완료 (`5a60e2a`)
+- ✅ Phase 1: Shared 기반 완료 (`27a3014`)
+- ⏸️ Phase 2: Core/Masking → 별도 계획으로 분리 ([REFACTORING_PLAN_MASKER.md](REFACTORING_PLAN_MASKER.md))
+- ⏳ Phase 3-11: 진행 예정
+
 
 ## 목표 구조
 
@@ -151,10 +157,11 @@ MyTranslation/
 │   │       └── NopPostEditor.swift
 │   │
 │   ├── Masking/
-│   │   ├── TermMasker.swift (Masker.swift에서 이름 변경)
+│   │   ├── Masker.swift (현재 위치 유지, 별도 리팩토링 예정)
 │   │   ├── MaskedPack.swift
 │   │   ├── LockInfo.swift
 │   │   └── TermActivationFilter.swift
+│   │   (⚠️ 주의: Masking → TextEntityProcessing 리팩토링은 REFACTORING_PLAN_MASKER.md 참조)
 │   │
 │   └── WebRendering/
 │       ├── Extraction/
@@ -217,7 +224,10 @@ MyTranslation/
 ### 분할할 파일들 (500줄 이상 모든 파일)
 
 **필수 분할 (>700줄):**
-1. **Masker.swift (2,153줄) → 정교한 작업을 위해 별도 PR로 분리, 이번 계획에서 작업하지 않음**
+1. **Masker.swift (2,153줄) → 별도 계획으로 분리**
+   - 상세 계획: [REFACTORING_PLAN_MASKER.md](REFACTORING_PLAN_MASKER.md) 참조
+   - Core/TextEntityProcessing/ 폴더로 이동 및 5개 파일로 분할 예정
+   - 폴더 재구성 완료 후 별도 작업
 
 2. **GlossarySDUpserter.swift (902줄) → 5개 파일**
    - GlossarySDUpserter.swift (~200줄): 메인 클래스
@@ -259,66 +269,77 @@ MyTranslation/
 
 ## 마이그레이션 단계
 
-### Phase 0: 테스트 구조 설정
+### Phase 0: 테스트 구조 설정 ✅
 **목표:** 새 아키텍처에 맞춰 테스트 구조 재정리
 
-**작업:**
-1. MyTranslationTests/ 내 기존 테스트 분석
-   - MyTranslationTests.swift
-   - UnitTests/
-   - Fixtures/
-   - Mocks/
-2. 병렬 테스트 구조 생성:
-   - MyTranslationTests/Core/GlossaryEngine/
-   - MyTranslationTests/Core/Translation/
-   - MyTranslationTests/Core/Masking/
-   - MyTranslationTests/Features/Browser/
-   - MyTranslationTests/Features/Glossary/
-   - MyTranslationTests/Shared/
-3. 기존 테스트를 적절한 위치로 이동
+**완료 내역:**
+1. MyTranslationTests/ 내 기존 테스트 분석 완료
+   - MyTranslationTests.swift (1429줄) 삭제
+   - UnitTests/ → Core/Masking/, Shared/ 분산 이동
+   - Fixtures/ → Shared/Fixtures/
+   - Mocks/ → Shared/Mocks/
+2. 새 테스트 구조 생성 완료:
+   - MyTranslationTests/Core/GlossaryEngine/ (GlossaryImportTests.swift 신규 작성)
+   - MyTranslationTests/Core/Translation/ (MaskingContextSharingTests.swift, TranslationRouterTests.swift)
+   - MyTranslationTests/Core/Masking/ (MaskerSpecTests.swift, TermMaskerUnitTests.swift 신규 작성)
+   - MyTranslationTests/Core/WebRendering/ (WKContentExtractorTests.swift 신규 작성)
+   - MyTranslationTests/Features/Browser/ (BrowserHighlightingTests.swift 신규 작성)
+   - MyTranslationTests/Features/Glossary/ (GlossaryAddCandidateTests.swift 신규 작성)
+   - MyTranslationTests/Shared/ (CacheStoreTests.swift, Fixtures/, Mocks/)
 
-**문서 업데이트:** 아직 없음
+**문서 업데이트:** 없음
 
-**검증:**
-- 모든 테스트가 여전히 실행되고 통과함
+**검증:** ✅
+- 모든 테스트 실행 및 통과 확인
 - 테스트 구조가 메인 코드 구조를 반영함
 
-### Phase 1: Shared 기반
+**커밋:** `5a60e2a Phase 0: 테스트 구조 설정`
+
+---
+
+### Phase 1: Shared 기반 ✅
 **목표:** 의존성이 없는 기반 코드 이동
 
-**이동할 파일 (21개):**
+**완료 내역 (20개 파일 이동):**
 - Utils/ (6개 파일) → Shared/Utils/
+  - Array+Extension.swift, LanguageCatalog.swift, Logging.swift, String+Extension.swift, TextNormalize.swift, URLTools.swift
 - Domain/Models/ (4개 파일, **BrowsingHistory.swift 포함**) → Shared/Models/
+  - BrowsingHistory.swift, GlossaryAddModels.swift, Segment.swift, SegmentPieces.swift
 - Domain/ValueObjects/ (4개 파일) → Shared/Models/
+  - AppLanguage.swift, TranslationOptions.swift, TranslationStyle.swift
 - Domain/Translation/ (2개 파일) → Shared/Models/
+  - TermHighlightMetadata.swift, TranslationStreamingContract.swift
 - Domain/Cache/ (1개 파일) → Shared/Persistence/
+  - CacheStore.swift
 - Persistence/ (3개 파일) → Shared/Persistence/
+  - APIKeys.swift, Migrations.swift, SwiftDataModel.swift
 - Services/History/ (1개 파일, **HistoryStore.swift**) → Shared/Services/
+  - HistoryStore.swift
 
 **Import 변경:** 0 (기반 레이어)
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Shared/ 섹션 추가 (Models, Persistence, Utils 하위섹션 포함)
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md 업데이트: Shared/ 섹션 추가 (Models, Persistence, Services, Utils 하위섹션 포함)
 
-**검증:**
+**검증:** ✅
 - 빌드 성공
 - 모든 테스트 통과
 
-### Phase 2: Core/Masking
-**목표:** 마스킹 시스템 이름 변경
+**커밋:** `27a3014 Phase 1: Shared 기반`
 
-**작업:**
-1. Masker.swift 파일을 이름 변경, 이동
-2. MaskedPack.swift, LockInfo.swift, TermActivationFilter.swift 이동
-3. 관련 테스트 이동/업데이트
+### Phase 2: Core/Masking ⏸️
+**목표:** 마스킹 시스템 이름 변경 및 분할
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Core/Masking 섹션 추가
-- AGENTS.md 업데이트: Core/Masking을 별도 모듈로 추가
+**상태:** **별도 계획으로 분리됨** (REFACTORING_PLAN_MASKER.md 참조)
 
-**검증:**
-- 마스킹 테스트 통과
-- 번역 테스트 통과
+**사유:**
+- Masker.swift (2,153줄)는 매우 복잡하고 정교한 작업이 필요
+- 폴더 재구성 작업과 분리하여 별도 PR로 진행하기로 결정
+- 현재 계획에서는 Phase 2를 건너뛰고 Phase 3부터 진행
+
+**참고:**
+- Masker 리팩토링 계획은 [REFACTORING_PLAN_MASKER.md](REFACTORING_PLAN_MASKER.md)에 상세 문서화됨
+- 폴더 재구성 완료 후 별도로 작업 예정
 
 ### Phase 3: Core/Translation
 **목표:** 번역 인프라 이동
@@ -490,9 +511,9 @@ git commit -m "Phase N: 설명"
 ```
 
 **커밋 메시지 형식:**
-- Phase 0: 새 아키텍처를 반영하도록 테스트 재구성
-- Phase 1: Shared 기반 이동 (Models, Persistence, Utils)
-- Phase 2: Core/Masking 이동 및 분할
+- ✅ Phase 0: 새 아키텍처를 반영하도록 테스트 재구성 (`5a60e2a`)
+- ✅ Phase 1: Shared 기반 이동 (Models, Persistence, Utils) (`27a3014`)
+- ⏸️ Phase 2: Core/Masking 이동 및 분할 → 별도 계획으로 분리
 - Phase 3: Core/Translation 인프라 이동
 - Phase 4: Core/WebRendering 이동
 - Phase 5: Domain에서 Core/GlossaryEngine 추출
