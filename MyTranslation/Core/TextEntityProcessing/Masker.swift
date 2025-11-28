@@ -17,33 +17,6 @@ public final class TermMasker {
 
     public init() { }
 
-    // MARK: - Appeared Term 모델
-
-    struct AppearedTerm {
-        let sdTerm: Glossary.SDModel.SDTerm
-        let appearedSources: [Glossary.SDModel.SDSource]
-
-        var key: String { sdTerm.key }
-        var target: String { sdTerm.target }
-        var variants: [String] { sdTerm.variants }
-        var components: [Glossary.SDModel.SDComponent] { sdTerm.components }
-        var preMask: Bool { sdTerm.preMask }
-        var isAppellation: Bool { sdTerm.isAppellation }
-        var activators: [Glossary.SDModel.SDTerm] { sdTerm.activators }
-        var activates: [Glossary.SDModel.SDTerm] { sdTerm.activates }
-    }
-
-    struct AppearedComponent {
-        let component: Glossary.SDModel.SDComponent
-        let appearedTerm: AppearedTerm
-
-        var pattern: String { component.pattern }
-        var role: String? { component.role }
-        var srcTplIdx: Int? { component.srcTplIdx }
-        var tgtTplIdx: Int? { component.tgtTplIdx }
-        var groupLinks: [Glossary.SDModel.SDComponentGroup] { component.groupLinks }
-    }
-
     private func deactivatedContexts(of term: Glossary.SDModel.SDTerm) -> [String] {
         term.deactivatedIn
     }
