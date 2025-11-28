@@ -249,7 +249,7 @@ private extension DefaultTranslationRouter {
         var finalText = unmasked.text
         if pack.locks.values.count == 1,
            let target = pack.locks.values.first?.target {
-            finalText = termMasker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(finalText, target: target)
+            finalText = KoreanParticleRules.collapseSpaces_PunctOrEdge_whenIsolatedSegment(finalText, target: target)
         }
 
         let metadata = TermHighlightMetadata(

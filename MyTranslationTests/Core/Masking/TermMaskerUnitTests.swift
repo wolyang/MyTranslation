@@ -5,16 +5,6 @@ import Testing
 struct TermMaskerUnitTests {
 
     @Test
-    func chooseJosaResolvesCompositeParticles() {
-        let masker = TermMasker()
-
-        #expect(masker.chooseJosa(for: "만가", baseHasBatchim: false, baseIsRieul: false) == "만이")
-        #expect(masker.chooseJosa(for: "만 는", baseHasBatchim: false, baseIsRieul: false) == "만 는")
-        #expect(masker.chooseJosa(for: "만로", baseHasBatchim: true, baseIsRieul: true) == "만으로")
-        #expect(masker.chooseJosa(for: "에게만", baseHasBatchim: true, baseIsRieul: false) == "에게만")
-    }
-
-    @Test
     func normalizeDamagedETokensRestoresCorruptedPlaceholders() {
         let masker = TermMasker()
         let locks: [String: LockInfo] = [
@@ -72,26 +62,6 @@ struct TermMaskerUnitTests {
         let spaced = masker.insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass(text)
 
         #expect(spaced == text)
-    }
-
-    @Test
-    func collapseSpacesWhenIsolatedSegmentRemovesExtraSpaces() {
-        let masker = TermMasker()
-        let text = ",   Alpha   !"
-
-        let collapsed = masker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(text, target: "Alpha")
-
-        #expect(collapsed == ",Alpha!")
-    }
-
-    @Test
-    func collapseSpacesWhenIsolatedSegmentKeepsParticles() {
-        let masker = TermMasker()
-        let text = ", Alpha의 "
-
-        let collapsed = masker.collapseSpaces_PunctOrEdge_whenIsolatedSegment(text, target: "Alpha")
-
-        #expect(collapsed == text)
     }
 
     @Test
