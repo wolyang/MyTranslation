@@ -13,13 +13,15 @@ extension DefaultTranslationRouter {
 
         let termMasker = TermMasker()
         let maskingEngine = MaskingEngine()
+        let normalizationEngine = NormalizationEngine()
         maskingEngine.tokenSpacingBehavior = options.tokenSpacingBehavior
 
         return await prepareMaskingContextInternal(
             from: segments,
             glossaryData: glossaryData,
             termMasker: termMasker,
-            maskingEngine: maskingEngine
+            maskingEngine: maskingEngine,
+            normalizationEngine: normalizationEngine
         )
     }
 
@@ -28,7 +30,8 @@ extension DefaultTranslationRouter {
         from segments: [Segment],
         glossaryData: GlossaryData?,
         termMasker: TermMasker,
-        maskingEngine: MaskingEngine
+        maskingEngine: MaskingEngine,
+        normalizationEngine: NormalizationEngine
     ) async -> MaskingContext {
         var allSegmentPieces: [SegmentPieces] = []
         var maskedPacks: [MaskedPack] = []
@@ -49,7 +52,7 @@ extension DefaultTranslationRouter {
             )
             maskedPacks.append(pack)
 
-            let nameGlossaries = termMasker.makeNameGlossariesFromPieces(
+            let nameGlossaries = normalizationEngine.makeNameGlossariesFromPieces(
                 pieces: pieces,
                 allEntries: glossaryEntries
             )

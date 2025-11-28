@@ -323,6 +323,31 @@ public enum KoreanParticleRules {
 
         return out
     }
+
+    public static func replaceWithParticleFix(
+        in text: String,
+        range: Range<String.Index>,
+        replacement: String,
+        baseHasBatchim: Bool? = nil,
+        baseIsRieul: Bool? = nil
+    ) -> (text: String, replacedRange: Range<String.Index>?, nextIndex: String.Index) {
+        let nsRange = NSRange(range, in: text)
+        let replaced = (text as NSString).replacingCharacters(in: nsRange, with: replacement)
+
+        let canonicalRange = NSRange(location: nsRange.location, length: (replacement as NSString).length)
+        let jongInfo = hangulFinalJongInfo(replacement)
+        let (fixed, fixedRange) = fixParticles(
+            in: replaced,
+            afterCanonical: canonicalRange,
+            baseHasBatchim: baseHasBatchim ?? jongInfo.hasBatchim,
+            baseIsRieul: baseIsRieul ?? jongInfo.isRieul
+        )
+
+        if let swiftRange = Range(fixedRange, in: fixed) {
+            return (fixed, swiftRange, swiftRange.upperBound)
+        }
+        return (fixed, nil, fixed.endIndex)
+    }
 }
 
 extension String {

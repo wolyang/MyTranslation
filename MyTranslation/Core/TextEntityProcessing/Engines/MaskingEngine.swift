@@ -324,7 +324,7 @@ public final class MaskingEngine {
             let lowerOffset = out.distance(from: out.startIndex, to: tokenRange.lowerBound)
             let oldLen = out.distance(from: tokenRange.lowerBound, to: tokenRange.upperBound)
 
-            let result = replaceWithParticleFix(
+            let result = KoreanParticleRules.replaceWithParticleFix(
                 in: out,
                 range: tokenRange,
                 replacement: lock.target,
@@ -507,28 +507,4 @@ public final class MaskingEngine {
 
     // MARK: - Helpers
 
-    private func replaceWithParticleFix(
-        in text: String,
-        range: Range<String.Index>,
-        replacement: String,
-        baseHasBatchim: Bool? = nil,
-        baseIsRieul: Bool? = nil
-    ) -> (text: String, replacedRange: Range<String.Index>?, nextIndex: String.Index) {
-        let nsRange = NSRange(range, in: text)
-        let replaced = (text as NSString).replacingCharacters(in: nsRange, with: replacement)
-
-        let canonicalRange = NSRange(location: nsRange.location, length: (replacement as NSString).length)
-        let jongInfo = KoreanParticleRules.hangulFinalJongInfo(replacement)
-        let (fixed, fixedRange) = KoreanParticleRules.fixParticles(
-            in: replaced,
-            afterCanonical: canonicalRange,
-            baseHasBatchim: baseHasBatchim ?? jongInfo.hasBatchim,
-            baseIsRieul: baseIsRieul ?? jongInfo.isRieul
-        )
-
-        if let swiftRange = Range(fixedRange, in: fixed) {
-            return (fixed, swiftRange, swiftRange.upperBound)
-        }
-        return (fixed, nil, fixed.endIndex)
-    }
 }

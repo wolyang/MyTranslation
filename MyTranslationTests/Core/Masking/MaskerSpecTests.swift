@@ -870,6 +870,7 @@ private func prepareMaskingContextForTest(
 ) async -> TestMaskingContext {
     let termMasker = TermMasker()
     let maskingEngine = MaskingEngine()
+    let normalizationEngine = NormalizationEngine()
 
     var segmentPieces: [SegmentPieces] = []
     var maskedSegments: [Segment] = []

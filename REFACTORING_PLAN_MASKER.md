@@ -88,6 +88,7 @@ Core/Masking/ → Core/TextEntityProcessing/
 - 조사 규칙: `JosaPair`, `josaPairs`, `chooseJosa()`, `fixParticles()`
 - 공백 규칙: `collapseSpaces_...()`, String 확장
 - 정규식: `particleTokenAlternation`, `particleTokenRegex` 등
+- **문자열 교체 + 조사 보정 헬퍼**: `replaceWithParticleFix()` (Masker.swift와 MaskingEngine.swift 양쪽에 중복 정의되어 있음)
 
 **공개 API**:
 ```swift
@@ -96,6 +97,15 @@ public enum KoreanParticleRules {
     public static func chooseJosa(basedOn: String, pair: JosaPair) -> String
     public static func fixParticles(in text: String, canonical: String, at range: Range<String.Index>) -> String
     public static func collapseSpaces_PunctOrEdge_whenIsolatedSegment(_ text: String) -> String
+
+    // 공통 유틸리티 (MaskingEngine, NormalizationEngine 모두 사용)
+    public static func replaceWithParticleFix(
+        in text: String,
+        range: Range<String.Index>,
+        replacement: String,
+        baseHasBatchim: Bool?,
+        baseIsRieul: Bool?
+    ) -> (text: String, replacedRange: Range<String.Index>?, nextIndex: String.Index)
 }
 ```
 
@@ -234,6 +244,9 @@ TermMaskerUnitTests.swift에서 다음 테스트 이동:
 - 토큰 관리: `nextIndex`, `tokenSpacingBehavior`, `makeToken()`, `extractTokenIDs()`
 - 마스킹: `maskFromPieces()`, `surroundTokenWithNBSP()`, `insertSpacesAroundTokens...()`
 - 언마스킹: `unlockTermsSafely()`, `unmaskWithOrder()`, `normalizeTokensAndParticles()`, `normalizeDamagedETokens()`
+- 헬퍼: `sortedTokensByIndex()` 등
+
+**주의**: `replaceWithParticleFix()`는 Phase 1-1에서 KoreanParticleRules로 이동되었으므로 여기서는 제거하고 KoreanParticleRules 사용
 
 **공개 API**:
 ```swift
@@ -272,7 +285,9 @@ TermMaskerUnitTests.swift에서 다음 테스트 이동:
 - `normalizeWithOrder()`
 - `normalizeVariantsAndParticles()`
 - `makeNameGlossaries()`, `makeNameGlossariesFromPieces()`
-- 변형 검색: `makeCandidates()`, `findNextCandidate()`, `replaceWithParticleFix()`, `canonicalFor()`
+- 변형 검색: `makeCandidates()`, `findNextCandidate()`, `canonicalFor()`
+
+**주의**: `replaceWithParticleFix()`는 Phase 1-1에서 KoreanParticleRules로 이동되었으므로 여기서는 제거하고 KoreanParticleRules 사용
 
 **공개 API**:
 ```swift

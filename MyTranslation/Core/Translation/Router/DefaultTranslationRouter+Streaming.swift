@@ -10,6 +10,7 @@ extension DefaultTranslationRouter {
         pendingSegments: [Segment],
         indexByID: [String: Int],
         termMasker: TermMasker,
+        normalizationEngine: NormalizationEngine,
         maskingEngine: MaskingEngine,
         maskingContext: MaskingContext,
         options: TranslationOptions,
@@ -71,6 +72,7 @@ extension DefaultTranslationRouter {
                     from: result.text,
                     pack: pack,
                     termMasker: termMasker,
+                    normalizationEngine: normalizationEngine,
                     maskingEngine: maskingEngine,
                     nameGlossaries: maskingContext.nameGlossariesPerSegment[index],
                     pieces: maskingContext.segmentPieces[index],
@@ -193,6 +195,7 @@ private extension DefaultTranslationRouter {
         from text: String,
         pack: MaskedPack,
         termMasker: TermMasker,
+        normalizationEngine: NormalizationEngine,
         maskingEngine: MaskingEngine,
         nameGlossaries: [NameGlossary],
         pieces: SegmentPieces,
@@ -223,7 +226,7 @@ private extension DefaultTranslationRouter {
         var preNormalizationRanges: [TermRange] = []
         var normalizedText = preNormalized.text
         if shouldNormalizeNames, nameGlossaries.isEmpty == false {
-            let normalized = termMasker.normalizeWithOrder(
+            let normalized = normalizationEngine.normalizeWithOrder(
                 in: normalizedText,
                 pieces: pieces,
                 nameGlossaries: nameGlossaries
