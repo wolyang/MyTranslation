@@ -19,11 +19,9 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 * **App**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
 * **Features**: Glossary/Browser/Settings UI와 ViewModel 등 사용자 기능
-* **Domain**: GlossaryEngine 외 잔여 도메인 모델과 계약(프로토콜)
-* **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등) — 주소창에서 뒤로/앞으로/새로고침, 페이지 내 검색, 데스크톱 모드 토글, 히스토리 진입점을 제공
-* **Services**: 번역 엔진/라우터, 마스킹, Web 렌더링, FM 파이프라인 등
-* **Persistence**: SwiftData 기반 Glossary 저장소, 설정, 캐시/키 관리
-* **Utils**: 공통 유틸리티
+* **Core**: 번역 라우터/엔진, 마스킹, Web 렌더링, Glossary 엔진, FM 파이프라인 등 핵심 로직
+* **Shared**: 공통 모델/유틸/저장소 정의
+* **Resources**: Info.plist 등 앱 리소스
 
 ### 1. 번역 파이프라인 흐름
 
@@ -122,7 +120,7 @@ WKWebView 번역 결과 반영.
 * `OverlayRenderer`: 세그먼트 선택 및 오버레이 기반 렌더링, 용어 하이라이트 반영
 * `SelectionBridge`: 텍스트 선택 이벤트 Swift 쪽으로 전달
 
-### 6. Masking & Normalization (`Services/Translation/Masking/`)
+### 6. Masking & Normalization (`Core/Masking/`)
 
 민감한 용어/인명을 보호하기 위한 마스킹 로직.
 
@@ -203,22 +201,11 @@ MyTranslation/
 │   │   ├── ViewModels/
 │   │   ├── ImportExport/
 │   │   └── Components/
-│   ├── Browser/
-│   │   ├── UI/
-│   │   └── ViewModels/
 │   └── Settings/
 │       └── UI/
 ├── App/
-├── Domain/             # (GlossaryEngine 외 잔여 도메인 모델)
-├── Presentation/
-│   ├── Browser/
-│   ├── Glossary/
-│   └── Settings/
-├── Services/
-│   ├── Adapters/
-│   └── Translation/    # Glossary/Masking 등 나머지 Translation 서비스
-├── Persistence/       # (Legacy, 정리 예정)
-└── Utils/             # (Legacy, 정리 예정)
+├── Resources/
+└── Assets.xcassets
 ```
 
 ---
@@ -342,64 +329,24 @@ FMConfig(
 
 ## 아키텍처 & 디자인 원칙
 
-이 프로젝트는 전통적인 레이어드 아키텍처에 **클린 아키텍처(Clean Architecture)** 개념을 일부 섞어서 설계하는 것을 지향합니다.
+### 1. 의존성 방향
 
-### 1. 레이어 개념
+* 흐름: **Features → Core → Shared/Resources**. 상위(UI)에서 하위(핵심/공통)로만 의존하도록 유지합니다.
+* Core는 플랫폼 의존성을 최소화하고, Shared는 순수 모델/유틸을 담아 재사용성을 높입니다.
 
-* **Domain 레이어**
+### 2. DI와 결합도
 
-  * 번역, Glossary, 세그먼트, FM 파이프라인 등 "문제 영역 자체"를 표현하는 레이어입니다.
-  * 비즈니스 규칙, 도메인 모델, 값 객체, 인터페이스(프로토콜)를 정의합니다.
-  * 외부 프레임워크(iOS UI, 네트워크 클라이언트, DB 등)에 최대한 의존하지 않도록 합니다.
+* `AppContainer`에서 엔진/라우터/저장소 등을 조립해 Feature 레이어에 주입합니다.
+* ViewModel과 Core 로직은 가능하면 프로토콜에 의존하고, 구체 타입은 조립 단계에만 노출합니다.
 
-* **Application / Services 레이어**
+### 3. 테스트 가능성
 
-  * Domain 레이어의 규칙을 이용해 실제 유스케이스를 수행하는 애플리케이션 서비스 레이어입니다.
-  * `TranslationRouter`, FM 파이프라인 오케스트레이션, Glossary 서비스 등이 여기에 속합니다.
-  * 외부 인프라(네트워크, WebView, 번역 엔진 클라이언트)를 조합해 도메인 규칙을 수행합니다.
+* Shared/Core의 모델/로직은 순수 Swift로 유지하고, WebView/네트워크/엔진은 프로토콜로 추상화해 테스트 대역(Mock)을 쉽게 교체할 수 있게 합니다.
 
-* **Presentation 레이어**
+### 4. 기능 확장 순서
 
-  * SwiftUI View 및 ViewModel로 구성된 레이어입니다.
-  * ViewModel은 가능한 한 UI 상태 관리와 애플리케이션 서비스 호출에만 집중하고,
-    Domain/Services 레이어의 구체 구현에 강하게 결합되지 않도록 합니다.
+1. Shared/Core에 필요한 타입·계약을 정의하고 구현을 추가
+2. AppContainer에서 새 구현을 조립
+3. Features(UI)에서 새 기능을 사용하는 흐름으로 확장
 
-* **Infrastructure 레이어 (Adapters, Persistence, WebRendering 등)**
-
-  * 번역 엔진 API 클라이언트, WKWebView 연동, SwiftData, 로컬 저장소 등
-    "환경 의존적인 것"을 캡슐화하는 레이어입니다.
-  * Domain / Application에서 정의한 인터페이스를 구현하는 어댑터 역할을 합니다.
-
-### 2. 의존성 방향 (Dependency Rule)
-
-* 의존성은 가능한 한 **바깥 → 안쪽**(UI → Services → Domain) 방향으로만 흐르도록 합니다.
-* Domain 레이어는 어떤 상위 레이어(Presentation, Infrastructure)에 대해서도 알지 못해야 합니다.
-* 구체 구현(예: 특정 번역 엔진, 특정 WebView 연동 방식)에 대한 의존성은
-  Domain이 아닌 Services/Infrastructure 레이어에 머무르게 합니다.
-
-### 3. DI(Dependency Injection)와 결합도
-
-* `AppContainer`는 DI 컨테이너로서, 상위 레이어에서 사용할 구체 구현을 조립하는 역할을 합니다.
-* ViewModel / Services는 가능하면 프로토콜(또는 추상 타입)에 의존하게 하고,
-  실제 인스턴스 생성은 `AppContainer`나 팩토리에서 담당하는 것을 권장합니다.
-* 이렇게 하면 번역 엔진 교체, FM 파이프라인 구성을 변경하는 등의 작업을
-  Domain/Presentation 코드를 최소 변경으로 수행할 수 있습니다.
-
-### 4. 테스트 가능성
-
-* Domain 레이어의 타입과 규칙은 **순수 Swift 코드**로 유지해 단위 테스트를 쉽게 합니다.
-* 번역 엔진, WebView, 네트워크 연동 등은 프로토콜로 추상화하고,
-  테스트 환경에서는 인메모리/목(Mock) 구현으로 교체할 수 있게 설계합니다.
-
-### 5. 기능 단위 확장 전략
-
-* 새로운 번역 관련 기능(예: 새로운 후처리 단계, 새로운 Glossary 규칙)을 추가할 때는:
-
-  1. 우선 Domain/Services 레이어에 필요한 타입/인터페이스를 정의하고,
-  2. Infrastructure 레이어에서 실제 구현을 추가한 뒤,
-  3. 마지막으로 Presentation 레이어에서 이를 사용하는 방향으로 확장합니다.
-* 이 순서를 지키면 UI에서 출발해 무작정 아래로 파고드는 것보다
-  구조를 일관되게 유지하기 쉽습니다.
-
-> 위 원칙들은 "완전한 정석 클린 아키텍처" 구현을 강제하기보다는,
-> 현재 코드 구조를 크게 벗어나지 않는 선에서 **의존성 방향과 책임 분리를 의식적으로 유지하기 위한 가이드**입니다.
+이 순서를 따르면 의존성 방향을 깨지 않고 기능을 확장할 수 있습니다.
