@@ -470,14 +470,13 @@ MyTranslation/
 ### Phase 9: Features/Settings
 **목표:** 설정 기능 이동
 
-**이동할 파일:** 1개
-- Presentation/Settings/SettingsView.swift → Features/Settings/UI/
+**완료 내역 (1개 파일 이동):**
+- Presentation/Settings/SettingsView.swift → Features/Settings/UI/SettingsView.swift
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Features/Settings 섹션 추가
+**Import 변경:** 0 (단일 타겟, 경로 이동)
 
-**검증:**
-- 설정 화면 로드됨
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: Features/Settings 경로 반영
 
 ### Phase 10: 파일 분할 패스
 **목표:** 남은 500줄 이상 파일 체계적 분할

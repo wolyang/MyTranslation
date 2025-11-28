@@ -207,6 +207,7 @@ MyTranslation/
 │   │   ├── UI/
 │   │   └── ViewModels/
 │   └── Settings/
+│       └── UI/
 ├── App/
 ├── Domain/             # (GlossaryEngine 외 잔여 도메인 모델)
 ├── Presentation/
