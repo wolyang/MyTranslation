@@ -38,6 +38,8 @@ struct BrowserRootView: View {
     @State private var pendingTermEditorViewModel: TermEditorViewModel? = nil
     /// Glossary 추가 관련 오류 메시지입니다.
     @State private var glossaryErrorMessage: String? = nil
+    /// 변형 추가 성공 토스트 메시지입니다.
+    @State private var variantAddedToastMessage: String? = nil
 
     init(container: AppContainer) {
         _vm = StateObject(
@@ -103,7 +105,7 @@ struct BrowserRootView: View {
                     onAddNew: { source in openTermEditor(from: sheetState, sourceOverride: source) },
                     onAppendToExisting: { prepareTermPicker(for: sheetState) },
                     onAppendCandidate: { key in
-                        openExistingTerm(key: key, variant: sheetState.selectedText)
+                        addVariantToTerm(key: key, variant: sheetState.selectedText)
                     },
                     onEditExisting: { key in openExistingTerm(key: key) },
                     onCancel: {
@@ -140,6 +142,13 @@ struct BrowserRootView: View {
                 Button("확인", role: .cancel) { glossaryErrorMessage = nil }
             } message: {
                 Text(glossaryErrorMessage ?? "")
+            }
+            .overlay(alignment: .top) {
+                if let message = variantAddedToastMessage {
+                    ToastView(message: message)
+                        .padding(.top, 50)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
 //            .task {
 //                // 앱 시작 후 한 번 시드 시도
@@ -461,6 +470,49 @@ struct BrowserRootView: View {
             activeTermEditorViewModel = editor
         } catch {
             glossaryErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func addVariantToTerm(key: String, variant: String) {
+        let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedVariant.isEmpty == false else { return }
+
+        do {
+            let predicate = #Predicate<Glossary.SDModel.SDTerm> { $0.key == key }
+            var descriptor = FetchDescriptor<Glossary.SDModel.SDTerm>(predicate: predicate)
+            descriptor.includePendingChanges = true
+            guard let term = try modelContext.fetch(descriptor).first else {
+                glossaryErrorMessage = "선택한 용어를 찾을 수 없습니다."
+                return
+            }
+
+            var variants = term.variants
+            if variants.contains(trimmedVariant) == false {
+                variants.append(trimmedVariant)
+                term.variants = variants
+                try modelContext.save()
+
+                vm.glossaryAddSheet = nil
+                showToast(message: "변형 '\(trimmedVariant)'이(가) 추가되었습니다")
+            } else {
+                vm.glossaryAddSheet = nil
+                showToast(message: "이미 추가된 변형입니다")
+            }
+        } catch {
+            glossaryErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func showToast(message: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            variantAddedToastMessage = message
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                variantAddedToastMessage = nil
+            }
         }
     }
 }
