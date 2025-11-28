@@ -18,5 +18,6 @@
 - 실제 작업(구현/리팩터링/버그픽스 등)을 하면 **`TODO.md`를 업데이트**합니다.
 - Xcode 빌드/테스트 명령은 **Xcode와 iOS 시뮬레이터가 준비된 환경에서만** 실행합니다.  
   (로컬·CI 환경이 지원하지 않으면, 명령을 실행하지 말고 참고용으로만 사용합니다.)
+- 번역 파이프라인은 `MyTranslation/Core/Translation/` 아래로 이동했습니다. (Router/Engines/FM/PostEditor 하위 디렉터리 구성)
 
 자세한 규칙과 체크리스트는 `AGENT_RULES.md`를 반드시 참고하세요.

@@ -52,7 +52,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 ## 주요 컴포넌트/모듈
 
-### 1. Translation Router (`Services/Ochestration/`)
+### 1. Translation Router (`Core/Translation/Router/`)
 
 * `TranslationRouter` 프로토콜과 기본 구현체 `DefaultTranslationRouter`.
 * 역할:
@@ -66,7 +66,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
   * `cachedHit` → `requestScheduled` → `partial`/`final` → `failed` → `completed`
 
-### 2. Translation Engines (`Services/Translation/Engines/`)
+### 2. Translation Engines (`Core/Translation/Engines/`)
 
 각 엔진은 `TranslationEngine` 프로토콜을 구현합니다.
 
@@ -76,7 +76,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 반환 타입은 공통적으로 `AsyncThrowingStream<[TranslationResult], Error>`.
 
-### 3. FM (Foundation Model) Pipeline (`Services/Translation/FM/`)
+### 3. FM (Foundation Model) Pipeline (`Core/Translation/FM/`)
 
 온디바이스 LLM을 이용한 번역 품질 향상 파이프라인.
 
@@ -182,24 +182,26 @@ MyTranslation/
 │   ├── Persistence/
 │   ├── Services/
 │   └── Utils/
+├── Core/
+│   └── Translation/
+│       ├── Router/
+│       ├── Engines/
+│       ├── FM/
+│       └── PostEditor/
 ├── Application/
 ├── Domain/
-│   ├── Cache/
 │   ├── Glossary/
-│   ├── Models/
-│   ├── Translation/
-│   └── ValueObjects/
+│   └── Models/         # (Glossary 도메인 모델 및 기타 잔여 모델)
 ├── Presentation/
 │   ├── Browser/
 │   ├── Glossary/
 │   └── Settings/
 ├── Services/
 │   ├── Adapters/
-│   ├── Ochestration/
-│   ├── Translation/
+│   ├── Translation/    # Glossary/Masking 등 나머지 Translation 서비스
 │   └── WebRendering/
-├── Persistence/
-└── Utils/
+├── Persistence/       # (Legacy, 정리 예정)
+└── Utils/             # (Legacy, 정리 예정)
 ```
 
 ---
@@ -251,7 +253,7 @@ open MyTranslation.xcodeproj
 
 ### 1. Adding a New Translation Engine
 
-1. `Services/Translation/Engines/<EngineName>/` 경로에 클라이언트 생성
+1. `Core/Translation/Engines/<EngineName>/` 경로에 클라이언트 생성
 2. `TranslationEngine` 프로토콜 구현 (스트리밍 지원 필수)
 3. `EngineTag` enum에 엔진 식별자 추가
 4. `AppContainer` 및 `DefaultTranslationRouter`에 등록
@@ -259,7 +261,7 @@ open MyTranslation.xcodeproj
 
 ### 2. Modifying Translation Stream
 
-스트리밍 계약은 `Domain/Translation/TranslationStreamingContract.swift`에 정의되어 있으며 이벤트 순서는 반드시 유지해야 합니다:
+스트리밍 계약은 `Shared/Models/TranslationStreamingContract.swift`에 정의되어 있으며 이벤트 순서는 반드시 유지해야 합니다:
 
 1. `cachedHit`
 2. `requestScheduled`
@@ -267,7 +269,7 @@ open MyTranslation.xcodeproj
 4. `failed`
 5. `completed`
 
-라우팅 로직 변경 시 `DefaultTranslationRouter.translateStream()`을 수정합니다.
+라우팅 로직 변경 시 `DefaultTranslationRouter.translateStream()`을 수정합니다. (위치: `Core/Translation/Router/DefaultTranslationRouter.swift`)
 
 ### 3. Working with Glossary Models
 
