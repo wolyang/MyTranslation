@@ -560,32 +560,49 @@ struct MaskerSpecTests {
     @Test
     func test25_fullPipelineScenario() {
         let term1 = makeTerm(
-            key: "ultraman",
-            sources: [makeSource("ウルトラマン", prohibitStandalone: false)],
-            deactivatedIn: ["宇宙人"]
+            key: "kai",
+            target: "가이",
+            sources: [makeSource("凯", prohibitStandalone: false)],
+            variants: ["카이"]
         )
         let term2 = makeTerm(
-            key: "taro",
-            sources: [makeSource("太郎", prohibitStandalone: true)],
-            activators: [term1]
+            key: "san",
+            target: "상",
+            sources: [makeSource("桑", prohibitStandalone: true)],
+            variants: ["산"]
         )
-        addComponent(term1, pattern: "person", role: "family")
-        addComponent(term2, pattern: "person", role: "given")
+        addComponent(term1, pattern: "appellation", role: "name")
+        addComponent(term2, pattern: "appellation", role: "marker")
         let matchedSources: [String: Set<String>] = [
-            "ultraman": Set(["ウルトラマン"]),
-            "taro": Set(["太郎"])
+            "kai": Set(["凯"]),
+            "san": Set(["桑"])
         ]
+        let pattern = makePattern(
+            name: "appellation",
+            leftRole: "name",
+            rightRole: "marker",
+            sourceTemplates: ["{L}{R}"],
+            targetTemplates: ["{L} {R}"],
+            sourceJoiners: ["", " "],
+            skipPairsIfSameTerm: false
+        )
+        
         let result = masker.buildSegmentPieces(
-            segment: makeSegment("ウルトラマン太郎登場!"),
+            segment: makeSegment("难道我就要陪你和凯桑在这片什么都没有的地方呆三天嘛！"),
             matchedTerms: [term1, term2],
-            patterns: [makePersonPattern()],
+            patterns: [pattern],
             matchedSources: matchedSources,
             termActivationFilter: activationFilter
         )
-        let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true } else { return false } }
-        #expect(result.glossaryEntries.count == 3)  // ultraman standalone, taro standalone(activator), composer
-        #expect(composer?.source == "ウルトラマン太郎")
-        #expect(composer?.componentTerms.map(\.source) == ["ウルトラマン", "太郎"])
+        guard let composer = result.glossaryEntries.first(where:{ if case .composer = $0.origin { return true } else { return false } }) else {
+            #expect(Bool(false), "조합어가 생성되지 않았습니다.")
+            return
+        }
+        #expect(result.glossaryEntries.count == 2)
+        #expect(composer.source == "凯桑")
+        #expect(composer.target == "가이 상")
+        #expect(composer.variants.contains("카이산"))
+        #expect(composer.componentTerms.map(\.source) == ["凯", "桑"])
         let termPieces = result.pieces.pieces.filter { if case .term = $0 { return true } else { return false } }
         #expect(termPieces.count == 1)  // longest-first로 composer만 사용
     }
