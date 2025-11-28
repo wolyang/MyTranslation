@@ -324,12 +324,21 @@ extension BrowserViewModel {
 private extension BrowserViewModel {
     func isLikelyDomain(_ text: String) -> Bool {
         guard text.contains(" ") == false else { return false }
+
+        // localhost는 도메인으로 처리
+        if text.lowercased() == "localhost" { return true }
+
         let hasDot = text.contains(".")
         let hasPort = text.contains(":")
+
+        // 점이나 포트가 있어야 도메인으로 간주
+        guard hasDot || hasPort else { return false }
+
+        // 기본 유효성 검사
         if let url = URL(string: "https://" + text),
            let host = url.host,
            host.isEmpty == false,
-           (hasDot || hasPort) {
+           host.contains("..") == false { // 연속 점 방지
             return true
         }
         return false
