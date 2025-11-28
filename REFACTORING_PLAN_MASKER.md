@@ -10,6 +10,7 @@ Masker.swift (2,110줄)를 TextEntityProcessing 모듈로 분할하는 리팩토
 - **위치**: `MyTranslation/Core/Masking/Masker.swift`
 - **라인 수**: 2,110줄
 - **주요 클래스**: `TermMasker` (단일 클래스에 모든 로직 집중)
+- **변경 후**: `TextEntityProcessor` (Facade 패턴으로 재구성)
 
 ### 관련 파일
 - `LockInfo.swift` (22줄) - 토큰-용어 매핑 정보
@@ -46,7 +47,7 @@ Core/
       NormalizationEngine.swift
     Rules/
       KoreanParticleRules.swift
-    TermMasker.swift  (Facade)
+    TextEntityProcessor.swift  (Facade)
 ```
 
 ## 실행 계획
@@ -98,6 +99,20 @@ public enum KoreanParticleRules {
 }
 ```
 
+**테스트 이동**:
+
+새 파일: `MyTranslationTests/Core/TextEntityProcessing/Rules/KoreanParticleRulesTests.swift`
+
+TermMaskerUnitTests.swift에서 다음 테스트 이동:
+- `chooseJosaResolvesCompositeParticles()` - chooseJosa() 테스트
+- `collapseSpacesWhenIsolatedSegmentRemovesExtraSpaces()` - collapseSpaces_PunctOrEdge_whenIsolatedSegment() 테스트
+- `collapseSpacesWhenIsolatedSegmentKeepsParticles()` - collapseSpaces_PunctOrEdge_whenIsolatedSegment() 테스트
+
+테스트 업데이트 사항:
+- `let masker = TermMasker()` → 직접 KoreanParticleRules 사용
+- `masker.chooseJosa()` → `KoreanParticleRules.chooseJosa()`
+- `masker.collapseSpaces_...()` → `KoreanParticleRules.collapseSpaces_...()`
+
 #### Phase 1-2: NameGlossary 모델 분리
 
 **파일**: `Core/TextEntityProcessing/Models/NameGlossary.swift`
@@ -125,6 +140,8 @@ public enum KoreanParticleRules {
 - `struct AppearedComponent`
 
 **접근 제어**: `internal` (TermMasker 내부에서만 사용)
+
+**테스트 이동**: 해당 없음 (internal 타입이므로 직접 테스트 없음)
 
 ### Phase 2: 세그먼트 분석 엔진 분리
 
@@ -174,6 +191,8 @@ termMasker.buildSegmentPieces(...)  // termActivationFilter 파라미터 제거
 
 **검증**: MaskerSpecTests.swift의 SPEC_TERM_DEACTIVATION 테스트 통과
 
+**테스트 이동**: 해당 없음 (internal 엔진이며, buildSegmentPieces 통합 테스트로 검증됨)
+
 #### Phase 2-2: SegmentEntriesBuilder 분리
 
 **파일**: `Core/TextEntityProcessing/Engines/SegmentEntriesBuilder.swift`
@@ -198,6 +217,15 @@ termMasker.buildSegmentPieces(...)  // termActivationFilter 파라미터 제거
 - TermMasker에 Facade 메서드 유지
 - 내부에서 Matcher → EntriesBuilder → PiecesBuilder 순서로 호출
 
+**테스트 이동**:
+
+새 파일: `MyTranslationTests/Core/TextEntityProcessing/Engines/SegmentPiecesBuilderTests.swift`
+
+TermMaskerUnitTests.swift에서 다음 테스트 이동:
+- `segmentPiecesTracksRanges()` - buildSegmentPieces() 범위 추적 테스트
+
+참고: 이 테스트는 현재 TermMasker를 통해 호출하고 있으므로, 리팩토링 후에도 TermMasker의 Facade 메서드를 통해 호출 가능 (그대로 유지 가능)
+
 ### Phase 3: MaskingEngine 분리
 
 **파일**: `Core/TextEntityProcessing/Engines/MaskingEngine.swift`
@@ -221,6 +249,25 @@ public final class MaskingEngine {
 - TermMasker가 MaskingEngine 인스턴스 보유
 - Facade 메서드로 위임
 
+**테스트 이동**:
+
+새 파일: `MyTranslationTests/Core/TextEntityProcessing/Engines/MaskingEngineTests.swift`
+
+TermMaskerUnitTests.swift에서 다음 테스트 이동:
+- `normalizeDamagedETokensRestoresCorruptedPlaceholders()` - normalizeDamagedETokens() 테스트
+- `normalizeDamagedETokensIgnoresUnknownIds()` - normalizeDamagedETokens() 테스트
+- `surroundTokenWithNBSPAddsSpacingAroundLatin()` - surroundTokenWithNBSP() 테스트
+- `insertSpacesAroundTokensOnlyForPunctOnlyParagraphs()` - insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass() 테스트
+- `insertSpacesAroundTokensKeepsNormalParagraphsUntouched()` - insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass() 테스트
+- `normalizeTokensAndParticlesReplacesMultipleTokens()` - normalizeTokensAndParticles() 테스트
+- `insertSpacesAroundTokensAddsSpaceNearPunctuation()` - insertSpacesAroundTokensOnlyIfSegmentIsIsolated_PostPass() 테스트
+
+테스트 업데이트 사항:
+- `let masker = TermMasker()` → `let engine = MaskingEngine()`
+- `masker.normalizeDamagedETokens()` → `engine.normalizeDamagedETokens()`
+- `masker.tokenSpacingBehavior` → `engine.tokenSpacingBehavior`
+- 기타 MaskingEngine 메서드 직접 호출
+
 ### Phase 4: NormalizationEngine 분리
 
 **파일**: `Core/TextEntityProcessing/Engines/NormalizationEngine.swift`
@@ -243,52 +290,110 @@ public struct NormalizationEngine {
 
 **의존성**: KoreanParticleRules 사용
 
-### Phase 5: TermMasker를 Facade로 변환
+**테스트 이동**: 해당 없음 (normalizeWithOrder 등의 복잡한 로직은 통합 테스트로 검증되며, 별도 단위 테스트 없음)
 
-**최종 TermMasker 구조**:
+### Phase 5: TextEntityProcessor로 변환 (오케스트레이션 레이어)
+
+**목표**: TermMasker를 TextEntityProcessor로 리네이밍하고, 오케스트레이션 로직만 포함하는 경량 레이어로 전환
+
+**변경 사항**:
+1. 클래스명: `TermMasker` → `TextEntityProcessor`
+2. 파일명: `Masker.swift` → `TextEntityProcessor.swift`
+3. **오케스트레이션 로직만 포함** (단순 위임 메서드 제거)
+
+**설계 원칙 (Option B)**:
+- `buildSegmentPieces()`: 여러 엔진을 순차적으로 조율하는 **실제 오케스트레이션 로직**이므로 TextEntityProcessor에 유지
+- `maskFromPieces()`, `makeNameGlossariesFromPieces()`: 단일 엔진으로의 **단순 위임**이므로 제거
+- 외부 코드는 오케스트레이션이 필요한 경우 TextEntityProcessor를 사용하고, 개별 엔진이 필요한 경우 직접 접근
+
+**최종 TextEntityProcessor 구조**:
 ```swift
-public final class TermMasker {
+public final class TextEntityProcessor {
     private let matcher = SegmentTermMatcher()
     private let entriesBuilder = SegmentEntriesBuilder()
     private let piecesBuilder = SegmentPiecesBuilder()
-    private let maskingEngine = MaskingEngine()
-    private let normalizationEngine = NormalizationEngine()
-
-    public var tokenSpacingBehavior: TokenSpacingBehavior {
-        get { maskingEngine.tokenSpacingBehavior }
-        set { maskingEngine.tokenSpacingBehavior = newValue }
-    }
 
     public init() { }
 
-    // Facade methods
+    // 오케스트레이션 메서드 (여러 엔진을 순차 조율)
     public func buildSegmentPieces(
         segment: Segment,
         matchedTerms: [SDTerm],
         patterns: [SDPattern],
         matchedSources: [String: Set<String>]
     ) -> (pieces: SegmentPieces, glossaryEntries: [GlossaryEntry]) {
+        // Step 1: 세그먼트에서 용어 감지
         let appearedTerms = matcher.findAppearedTerms(...)
+
+        // Step 2: 컴포넌트 감지
         let appearedComponents = matcher.findAppearedComponents(...)
+
+        // Step 3: 패턴 기반 GlossaryEntry 조합
         let entries = entriesBuilder.buildComposerEntries(...)
+
+        // Step 4: SegmentPieces 조립
         let pieces = piecesBuilder.buildSegmentPieces(...)
+
         return (pieces, entries)
-    }
-
-    public func maskFromPieces(pieces: SegmentPieces, segment: Segment) -> MaskedPack {
-        maskingEngine.maskFromPieces(pieces: pieces, segment: segment)
-    }
-
-    public func makeNameGlossariesFromPieces(pieces: SegmentPieces, allEntries: [GlossaryEntry]) -> [NameGlossary] {
-        normalizationEngine.makeNameGlossariesFromPieces(pieces: pieces, allEntries: allEntries)
     }
 }
 ```
 
+**외부 참조 업데이트**:
+
+`DefaultTranslationRouter+Masking.swift`:
+```swift
+// 변경 전
+let termMasker = TermMasker()
+termMasker.tokenSpacingBehavior = options.tokenSpacingBehavior
+
+let (pieces, glossaryEntries) = termMasker.buildSegmentPieces(...)
+let pack = termMasker.maskFromPieces(pieces: pieces, segment: segment)
+let nameGlossaries = termMasker.makeNameGlossariesFromPieces(
+    pieces: pieces,
+    allEntries: glossaryEntries
+)
+
+// 변경 후
+let processor = TextEntityProcessor()
+let maskingEngine = MaskingEngine()
+let normalizationEngine = NormalizationEngine()
+
+maskingEngine.tokenSpacingBehavior = options.tokenSpacingBehavior
+
+// 오케스트레이션 로직은 processor 사용
+let (pieces, glossaryEntries) = processor.buildSegmentPieces(...)
+
+// 개별 엔진은 직접 사용
+let pack = maskingEngine.maskFromPieces(pieces: pieces, segment: segment)
+let nameGlossaries = normalizationEngine.makeNameGlossariesFromPieces(
+    pieces: pieces,
+    allEntries: glossaryEntries
+)
+```
+
+**제거되는 것들**:
+- `maskFromPieces()` 위임 메서드 → MaskingEngine 직접 사용
+- `makeNameGlossariesFromPieces()` 위임 메서드 → NormalizationEngine 직접 사용
+- `tokenSpacingBehavior` 프로퍼티 위임 → MaskingEngine 직접 설정
+- `normalizationEngine` private 필드 (필요 없음)
+- `maskingEngine` private 필드 (필요 없음)
+
+**유지되는 것**:
+- `buildSegmentPieces()` - 4단계 엔진 조율 로직 (Matcher → EntriesBuilder → PiecesBuilder)
+- private 엔진 필드: `matcher`, `entriesBuilder`, `piecesBuilder` (오케스트레이션에 필요)
+
+**테스트 업데이트**:
+- TermMaskerUnitTests.swift → TextEntityProcessorTests.swift (단위 테스트)
+- MaskerSpecTests.swift → TextEntityProcessorIntegrationTests.swift (통합 테스트)
+- `let masker = TermMasker()` → `let processor = TextEntityProcessor()` + 개별 엔진 인스턴스
+
 **이점**:
-- 외부 API 변경 최소화
-- 기존 테스트 대부분 유지
-- 각 엔진 개별 테스트 가능
+- 더 명확한 도메인 이름 (Masker → EntityProcessor)
+- 불필요한 간접화 제거 - 개별 엔진은 직접 사용
+- 실제 가치 있는 오케스트레이션 로직만 유지
+- 각 엔진의 책임이 명확히 드러남
+- 외부 코드가 필요한 엔진을 명시적으로 선택 가능
 
 ### Phase 6: 문서 및 테스트 업데이트
 
@@ -318,18 +423,28 @@ public final class TermMasker {
 **Rules/**
 - `KoreanParticleRules`: 한국어 조사 선택 및 공백 관리
 
-**Facade**
-- `TermMasker`: 외부 API용 조정 레이어
+**Orchestration Layer**
+- `TextEntityProcessor`: 세그먼트 분석 엔진들을 순차 조율 (구 TermMasker)
+  - `buildSegmentPieces()`: Matcher → EntriesBuilder → PiecesBuilder 오케스트레이션
+  - 개별 엔진(MaskingEngine, NormalizationEngine)은 외부에서 직접 사용
 ```
 
 #### 테스트 업데이트
 
 **기존 테스트**: MaskerSpecTests.swift - TermMasker API 유지되므로 대부분 변경 불필요
 
-**새 테스트 파일**:
-- `KoreanParticleRulesTests.swift`
-- `MaskingEngineTests.swift`
-- `NormalizationEngineTests.swift`
+**테스트 파일 재구성**:
+
+기존: `MyTranslationTests/Core/Masking/`
+- TermMaskerUnitTests.swift
+- MaskerSpecTests.swift
+
+새 구조: `MyTranslationTests/Core/TextEntityProcessing/`
+- Rules/KoreanParticleRulesTests.swift (TermMaskerUnitTests에서 이동)
+- Engines/MaskingEngineTests.swift (TermMaskerUnitTests에서 이동)
+- Engines/SegmentPiecesBuilderTests.swift (선택사항)
+- TextEntityProcessorTests.swift (TermMaskerUnitTests 리네이밍)
+- TextEntityProcessorIntegrationTests.swift (MaskerSpecTests 리네이밍 + 통합 테스트)
 
 ## 실행 순서 요약
 
@@ -342,7 +457,7 @@ public final class TermMasker {
 6. **Phase 2-3**: SegmentPiecesBuilder 분리
 7. **Phase 3-1**: MaskingEngine 분리
 8. **Phase 4-1**: NormalizationEngine 분리
-9. **Phase 5-1**: TermMasker를 Facade로 변환
+9. **Phase 5-1**: TextEntityProcessor로 변환 (Facade + 리네이밍)
 10. **Phase 6**: 문서 및 테스트 업데이트
 
 ## 검증 계획
