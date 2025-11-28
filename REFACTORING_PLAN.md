@@ -15,7 +15,8 @@ MyTranslation 코드베이스를 레이어 우선 아키텍처(Domain/Services/P
 - ✅ Phase 4: Core/WebRendering 완료
 - ✅ Phase 5: Core/GlossaryEngine 완료
 - ✅ Phase 6: App 레이어 완료
-- ⏳ Phase 7-11: 진행 예정
+- ✅ Phase 7: Features/Glossary 완료
+- ⏳ Phase 8-11: 진행 예정
 
 
 ## 목표 구조
@@ -435,27 +436,22 @@ MyTranslation/
 **문서 업데이트:** ✅
 - PROJECT_OVERVIEW.md: App/ 섹션 반영
 
-### Phase 7: Features/Glossary
+### Phase 7: Features/Glossary ✅
 **목표:** 용어집 UI 기능 이동 (Core/GlossaryEngine이 이미 제자리에 있은 후)
 
-**이동할 파일 (14개 → 분할 포함 21개):**
-- Presentation/Glossary/Views/ → Features/Glossary/UI/ (14개 파일)
-  - TermEditorView.swift를 이동하면서 3개 파일로 분할
-- Presentation/Glossary/ViewModel/ → Features/Glossary/ViewModels/ (5개 → 8개 파일)
-  - TermEditorViewModel.swift를 이동하면서 4개 파일로 분할
-- Presentation/Glossary/ImportExport/ → Features/Glossary/ImportExport/ (4개 파일: Sheets import UI)
-- Domain/Glossary/GlossaryAddModels.swift → Features/Glossary/Models/ (UI 전용 모델)
+**완료 내역 (20개 파일 이동, 분할 없음):**
+- Presentation/Glossary/View/ → Features/Glossary/UI/
+  - GlossaryHost.swift, GlossaryTabView.swift, GlossaryHomeView.swift, TermEditorSheet.swift, TermEditorView.swift, TermPickerSheet.swift, PatternEditorView.swift, PatternListView.swift, PersonEditorSheet.swift, GlossaryConstants.swift
+- Presentation/Glossary/ViewModel/ → Features/Glossary/ViewModels/
+  - GlossaryViewModel.swift, GlossaryHomeViewModel.swift, TermEditorViewModel.swift, PatternEditorViewModel.swift, SheetsImportViewModel.swift
+- Presentation/Glossary/Components/TagChips.swift → Features/Glossary/Components/
+- Presentation/Glossary/View/SheetsImport/ → Features/Glossary/ImportExport/
+  - SheetsImportCoordinatorView.swift, SheetsURLInputView.swift, SheetsImportPreviewView.swift, SheetsTabPickerView.swift
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: Features/Glossary 섹션 추가
-- AGENTS.md 업데이트: Glossary 기능 구조 문서화
-- 명확화: Features/Glossary는 Core/GlossaryEngine에 의존
+**Import 변경:** 0 (단일 타겟, 경로 이동만 수행)
 
-**검증:**
-- 용어집 UI 로드됨
-- 용어/패턴 CRUD 작동
-- Sheets import UI 플로우 작동
-- 편집기 유효성 검사 작동
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: Features/Glossary UI 경로 반영
 
 ### Phase 8: Features/Browser
 **목표:** 분할을 포함한 브라우저 기능 이동
@@ -541,11 +537,11 @@ git commit -m "Phase N: 설명"
 ```
 
 **커밋 메시지 형식:**
-- ✅ Phase 0: 새 아키텍처를 반영하도록 테스트 재구성 (`5a60e2a`)
-- ✅ Phase 1: Shared 기반 이동 (Models, Persistence, Utils) (`27a3014`)
-- ⏸️ Phase 2: Core/Masking 이동 및 분할 → 별도 계획으로 분리
-- ✅ Phase 3: Core/Translation 인프라 이동
-- ✅ Phase 4: Core/WebRendering 이동
+- Phase 0: 새 아키텍처를 반영하도록 테스트 재구성 (`5a60e2a`)
+- Phase 1: Shared 기반 이동 (Models, Persistence, Utils) (`27a3014`)
+- Phase 2: Core/Masking 이동 및 분할 → 별도 계획으로 분리
+- Phase 3: Core/Translation 인프라 이동
+- Phase 4: Core/WebRendering 이동
 - Phase 5: Domain에서 Core/GlossaryEngine 추출
 - Phase 6: App 부트스트랩 레이어 이동
 - Phase 7: Features/Glossary UI 이동

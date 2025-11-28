@@ -18,7 +18,8 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 이 프로젝트는 대략 아래 레이어로 나뉩니다.
 
 * **App**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
-* **Domain**: 번역/세그먼트/Glossary 등 비즈니스 도메인 모델과 계약(프로토콜)
+* **Features**: Glossary/Browse/Settings UI와 ViewModel 등 사용자 기능
+* **Domain**: GlossaryEngine 외 잔여 도메인 모델과 계약(프로토콜)
 * **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등) — 주소창에서 뒤로/앞으로/새로고침, 페이지 내 검색, 데스크톱 모드 토글, 히스토리 진입점을 제공
 * **Services**: 번역 엔진/라우터, 마스킹, Web 렌더링, FM 파이프라인 등
 * **Persistence**: SwiftData 기반 Glossary 저장소, 설정, 캐시/키 관리
@@ -148,6 +149,7 @@ WKWebView 번역 결과 반영.
 
 * `BrowserViewModel`: 페이지 번역 상태, 언어 설정, `translateStream()`로 스트리밍 제어
 * `GlossaryViewModel`: Glossary CRUD 및 SwiftData 연동
+* `TermEditorViewModel`: Glossary 편집/유효성 검사/Sheets import 연동
 
 ### 9. Persistence & Configuration
 
@@ -194,10 +196,16 @@ MyTranslation/
 │       ├── Persistence/
 │       ├── Services/
 │       └── Algorithms/
-├── App/
-├── Domain/
+├── Features/
+│   ├── Browser/
 │   ├── Glossary/
-│   └── Models/         # (Glossary 도메인 모델 및 기타 잔여 모델)
+│   │   ├── UI/
+│   │   ├── ViewModels/
+│   │   ├── ImportExport/
+│   │   └── Components/
+│   └── Settings/
+├── App/
+├── Domain/             # (GlossaryEngine 외 잔여 도메인 모델)
 ├── Presentation/
 │   ├── Browser/
 │   ├── Glossary/
