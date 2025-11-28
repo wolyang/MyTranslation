@@ -13,7 +13,9 @@ MyTranslation 코드베이스를 레이어 우선 아키텍처(Domain/Services/P
 - ⏸️ Phase 2: Core/Masking → 별도 계획으로 분리 ([REFACTORING_PLAN_MASKER.md](REFACTORING_PLAN_MASKER.md))
 - ✅ Phase 3: Core/Translation 완료
 - ✅ Phase 4: Core/WebRendering 완료
-- ⏳ Phase 5-11: 진행 예정
+- ✅ Phase 5: Core/GlossaryEngine 완료
+- ✅ Phase 6: App 레이어 완료
+- ⏳ Phase 7-11: 진행 예정
 
 
 ## 목표 구조
@@ -421,7 +423,7 @@ MyTranslation/
 - PROJECT_OVERVIEW.md: Core/GlossaryEngine 섹션 및 Glossary.Repository 명칭 반영
 - AGENTS.md: GlossaryEngine 위치 안내 추가
 
-### Phase 6: App 레이어
+### Phase 6: App 레이어 ✅
 **목표:** 애플리케이션 부트스트랩 이동
 
 **완료 내역 (4개 파일 이동):**
