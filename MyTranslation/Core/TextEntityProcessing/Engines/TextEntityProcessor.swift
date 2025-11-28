@@ -27,17 +27,6 @@ public final class TextEntityProcessor {
         )
     }
     
-    // ---- 유틸
-    func allOccurrences(of needle: String, in hay: String) -> [Int] {
-        guard !needle.isEmpty, !hay.isEmpty else { return [] }
-        var out: [Int] = []; var from = hay.startIndex
-        while from < hay.endIndex, let r = hay.range(of: needle, range: from..<hay.endIndex) {
-            out.append(hay.distance(from: hay.startIndex, to: r.lowerBound))
-            from = hay.index(after: r.lowerBound) // 겹치기 허용
-        }
-        return out
-    }
-    
     /// 주어진 entries에서 사용된 모든 Term 키를 수집한다.
     /// - Parameter entries: GlossaryEntry 배열
     /// - Returns: Entry에 포함된 모든 Term 키의 집합

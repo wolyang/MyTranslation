@@ -10,7 +10,6 @@ public final class MaskingEngine {
     private var nextIndex: Int = 1
 
     private static let tokenRegexPattern: String = #"__(?:[^_]|_(?!_))+__"#
-    private var tokenRegex: String { Self.tokenRegexPattern }
     private static let tokenNumberRegex = try? NSRegularExpression(pattern: "(?i)E#(\\d+)")
 
     public init() { }
@@ -262,32 +261,6 @@ public final class MaskingEngine {
         public let delta: Int
     }
 
-    public func unlockTermsSafely(_ text: String, locks: [String: LockInfo]) -> String {
-        guard let rx = try? NSRegularExpression(pattern: tokenRegex, options: []) else { return text }
-        let ns = text as NSString
-        let matches = rx.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
-
-        var out = String()
-        out.reserveCapacity(text.utf16.count)
-        var last = 0
-
-        for m in matches {
-            let full = m.range(at: 0)
-            if last < full.location {
-                out += ns.substring(with: NSRange(location: last, length: full.location - last))
-            }
-            let whole = ns.substring(with: full)
-            out += locks[whole]?.target ?? whole
-            last = full.location + full.length
-        }
-
-        if last < ns.length {
-            out += ns.substring(with: NSRange(location: last, length: ns.length - last))
-        }
-
-        return out
-    }
-
     public func unmaskWithOrder(
         in text: String,
         pieces: SegmentPieces,
@@ -504,7 +477,4 @@ public final class MaskingEngine {
 
         return out
     }
-
-    // MARK: - Helpers
-
 }
