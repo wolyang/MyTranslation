@@ -456,24 +456,16 @@ MyTranslation/
 ### Phase 8: Features/Browser
 **목표:** 분할을 포함한 브라우저 기능 이동
 
-**이동할 파일:** 24개 → 분할 포함 29개 (**HistoryView.swift 포함**)
+**완료 내역 (13개 파일 이동, 분할 미수행):**
+- Presentation/Browser/View/ → Features/Browser/UI/
+  - BrowserRootView.swift, GlossaryAddSheet.swift, HistoryView.swift, HighlightedText.swift, FavoritesManagerView.swift, MoreMenuView.swift, OverlayPanel.swift, WebContainerView.swift
+- Presentation/Browser/ViewModel/ → Features/Browser/ViewModels/
+  - BrowserViewModel.swift, BrowserViewModel+State.swift, BrowserViewModel+Translation.swift, BrowserViewModel+Overlay.swift, BrowserViewModel+GlossaryAdd.swift
 
-**작업:**
-1. UI 파일 이동 → Features/Browser/UI/ + URLBar/ + Overlay/
-   - **HistoryView.swift (신규 파일) 포함**
-2. OverlayPanel.swift → 4개 파일로 분할
-3. ViewModels 이동 → Features/Browser/ViewModels/
-4. BrowserViewModel+Translation.swift → 3개 파일로 분할
+**Import 변경:** 0 (단일 타겟, 경로 이동만 수행)
 
-**주의사항:**
-- BrowserViewModel.swift에 히스토리 관련 기능 추가됨 (historyStore 의존성)
-- URLBarView.swift에 뒤로/앞으로 버튼 기능 추가
-- WebContainerView.swift에 Find 인터랙션 및 네비게이션 상태 업데이트 추가
-
-**검증:**
-- 브라우저 탐색 작동
-- 번역 오버레이 작동
-- 선택에서 용어집 추가 작동
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: Features/Browser 경로 반영
 
 ### Phase 9: Features/Settings
 **목표:** 설정 기능 이동

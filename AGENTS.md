@@ -21,5 +21,6 @@
 - 번역 파이프라인은 `MyTranslation/Core/Translation/` 아래로 이동했습니다. (Router/Engines/FM/PostEditor 하위 디렉터리 구성)
 - Glossary 엔진/저장소는 `MyTranslation/Core/GlossaryEngine/` 아래에 위치합니다. (Models/Persistence/Services/Algorithms 하위 디렉터리)
 - Glossary UI/ViewModel/ImportExport는 `MyTranslation/Features/Glossary/` 아래에 위치합니다.
+- Browser UI/ViewModel은 `MyTranslation/Features/Browser/` 아래에 위치합니다.
 
 자세한 규칙과 체크리스트는 `AGENT_RULES.md`를 반드시 참고하세요.
