@@ -30,10 +30,11 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 1. **Content Extraction**
 
    * WKWebView에 JS를 주입해 `data-seg-id`를 붙인 세그먼트 단위 텍스트를 추출
-2. **Masking & Normalization 준비**
+2. **Text Entity Processing 준비**
 
-* `Glossary.Repository`가 페이지 텍스트에서 매칭된 Term/패턴을 조회하고, `TermMasker`가 세그먼트별 GlossaryEntry를 직접 생성
-   * `TermMasker`가 `SegmentPieces`를 생성해 용어 위치를 식별하고, preMask 용어를 토큰으로 치환할 준비를 함
+   * `Glossary.Repository`가 페이지 텍스트에서 매칭된 Term/패턴을 조회
+   * `TextEntityProcessor`가 `buildSegmentPieces()`로 세그먼트별 GlossaryEntry를 생성하고 `SegmentPieces`를 구성
+   * `MaskingEngine`이 preMask 용어를 `__E#N__` 토큰으로 치환하여 `MaskedPack` 생성
    * 정규화(variants→target) 및 언마스킹에 필요한 메타데이터(`TermHighlightMetadata`)를 함께 추적
 3. **Translation Routing & Streaming**
 
@@ -41,7 +42,9 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
    * `AsyncThrowingStream` 기반으로 partial/final 결과를 스트리밍하며, 스트림 페이로드에 하이라이트 메타데이터를 포함
 4. **Normalization & Unmasking**
 
-   * 번역 결과에서 variant를 target으로 정규화하고, 토큰을 원래 용어로 복원하면서 range를 보정
+   * `NormalizationEngine`이 번역 결과에서 variant를 target으로 정규화 (`normalizeWithOrder()`)
+   * `MaskingEngine`이 토큰을 원래 용어로 복원하면서 한글 조사를 자동 보정 (`unmaskWithOrder()`)
+   * 모든 치환 작업에서 range를 추적하여 하이라이트 메타데이터 구성
 5. **Rendering**
 
    * 인라인 교체(InlineReplacer) 또는 오버레이(OverlayRenderer) 방식으로 결과 반영하며, 하이라이트 메타데이터로 용어 배경색을 표시
@@ -61,6 +64,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
   * AFM, Google, DeepL 등으로 라우팅
   * Glossary 적용을 위한 훅 제공
   * 마스킹 컨텍스트 공유 API(`prepareMaskingContext`, `translateStreamInternal`)로 다중 엔진/오버레이에서 Glossary/SegmentPieces 재사용
+  * `TextEntityProcessor`, `MaskingEngine`, `NormalizationEngine` 활용
 * 스트림 이벤트(`TranslationStreamingContract`) 예:
 
   * `cachedHit` → `requestScheduled` → `partial`/`final` → `failed` → `completed`
@@ -120,17 +124,46 @@ WKWebView 번역 결과 반영.
 * `OverlayRenderer`: 세그먼트 선택 및 오버레이 기반 렌더링, 용어 하이라이트 반영
 * `SelectionBridge`: 텍스트 선택 이벤트 Swift 쪽으로 전달
 
-### 6. Masking & Normalization (`Core/Masking/`)
+### 6. Text Entity Processing (`Core/TextEntityProcessing/`)
 
-민감한 용어/인명을 보호하기 위한 마스킹 로직.
+용어/인명을 보호하고 정규화하기 위한 텍스트 엔티티 처리 시스템.
 
-* `Glossary.Repository`가 매칭된 Term/패턴을 조회하고, `TermMasker`가 세그먼트별 GlossaryEntry를 생성
-* `TermMasker`: 마스킹/언마스킹 처리, variants 정규화, 하이라이트 range 추적
-  * Phase 4 잔여 일괄 교체: 이미 정규화된 범위는 보호하고, 실제 매칭된 변형만 재사용하며 1글자 변형은 건너뛰어 오정규화를 방지하면서 여분 인스턴스를 일괄 정규화하고 범위를 함께 추적
-* `MaskedPack`: 원문/마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
-* `TermHighlightMetadata`: 원문/정규화 전/최종 번역문 하이라이트 정보
-* **Hangul handling**: 한글 조사 선택을 위해 받침(종성) 여부를 판별하는 `hangulFinalJongInfo()` 로직을 포함해,
-  `이/가`, `을/를`, `은/는`, `과/와`, `으로/로` 등 조사 자동 판정 기능을 제공
+**아키텍처**: 모듈화된 엔진 구조로, 각 엔진은 독립적으로 사용 가능하며 TextEntityProcessor가 오케스트레이션 제공
+
+**Engines (`Core/TextEntityProcessing/Engines/`)**
+* `SegmentTermMatcher`: 용어 검출 (Glossary 매칭 결과 활용)
+* `SegmentEntriesBuilder`: 패턴 기반 GlossaryEntry 구성
+* `SegmentPiecesBuilder`: 세그먼트를 텍스트/용어 조각으로 분할
+* `MaskingEngine`: 토큰화(마스킹)/언마스킹 처리
+  * `maskFromPieces()`: preMask 용어를 `__E#N__` 토큰으로 치환
+  * `unmaskWithOrder()`: 순서 기반 토큰 복원 및 조사 자동 보정
+  * `normalizeTokensAndParticles()`: 잔여 토큰 일괄 정규화
+  * `normalizeDamagedETokens()`: LLM 출력에서 손상된 토큰 복구
+* `NormalizationEngine`: variant → target 정규화
+  * `makeNameGlossariesFromPieces()`: 정규화용 NameGlossary 생성
+  * `normalizeWithOrder()`: 순서 기반 variant 정규화 및 조사 보정
+  * `normalizeVariantsAndParticles()`: 잔여 variant 일괄 정규화 (보호 범위 관리)
+* `TextEntityProcessor`: Orchestration layer
+  * `buildSegmentPieces()`: 용어 검출 → Entry 생성 → Pieces 구성 파이프라인
+
+**Rules (`Core/TextEntityProcessing/Rules/`)**
+* `KoreanParticleRules`: 한글 조사 자동 보정 규칙
+  * `hangulFinalJongInfo()`: 받침(종성) 판별
+  * `chooseJosa()`: 받침에 따른 조사 선택 (`이/가`, `을/를`, `은/는`, `과/와`, `으로/로` 등)
+  * `fixParticles()`: 용어 치환 후 뒤따르는 조사 자동 보정
+  * `replaceWithParticleFix()`: 치환 + 조사 보정 통합 헬퍼
+
+**Models (`Core/TextEntityProcessing/Models/`)**
+* `SegmentPieces`: 세그먼트 내 텍스트/용어 조각 시퀀스
+* `MaskedPack`: 마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
+* `LockInfo`: 토큰 메타데이터 (target, 받침 정보, appellation 여부)
+* `TermRange`: 하이라이트 범위 추적 (masked/normalized 타입 구분)
+
+**주요 특징**:
+* 모듈화: 각 엔진은 독립적으로 사용 가능 (Option B 아키텍처)
+* 순서 기반 처리: 용어 출현 순서를 추적하여 정확한 매칭/치환
+* 보호 범위 관리: 이미 정규화된 범위를 보호하고 1글자 variant는 건너뛰어 오정규화 방지
+* 한글 조사 자동 보정: 받침 판별 및 조사 형태 자동 선택
 
 ### 7. Dependency Injection
 
@@ -141,7 +174,7 @@ WKWebView 번역 결과 반영.
   * Glossary: `Glossary.Repository`
   * `DefaultTranslationRouter`
   * FM 파이프라인 구성
-  * Masking: `SegmentPieces` 기반 마스킹/정규화 컨텍스트 조립
+  * Text Entity Processing: `TextEntityProcessor`, `MaskingEngine`, `NormalizationEngine` 조립
 
 ### 8. State Management
 
@@ -188,6 +221,10 @@ MyTranslation/
 │   │   ├── Engines/
 │   │   ├── FM/
 │   │   └── PostEditor/
+│   ├── TextEntityProcessing/
+│   │   ├── Engines/
+│   │   ├── Rules/
+│   │   └── Models/
 │   ├── WebRendering/
 │   └── GlossaryEngine/
 │       ├── Models/
@@ -219,9 +256,10 @@ MyTranslation/
 * `GlossaryViewModel`
 * `TranslationRouter` / `DefaultTranslationRouter`
 * `TranslationEngine` (AFM/Google/DeepL)
-* `TermMasker`
+* `TextEntityProcessor` / `MaskingEngine` / `NormalizationEngine`
+* `KoreanParticleRules`
 * `TermHighlightMetadata`
-* `SegmentPieces`
+* `SegmentPieces` / `MaskedPack` / `TermRange`
 * `ContentExtractor` / `InlineReplacer` / `OverlayRenderer`
 * `FMOrchestrator`, `FMPostEditor`, `CrossEngineComparer`, `Reranker`
 * `HistoryStore` / `HistoryView`
