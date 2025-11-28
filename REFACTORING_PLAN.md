@@ -424,14 +424,14 @@ MyTranslation/
 ### Phase 6: App 레이어
 **목표:** 애플리케이션 부트스트랩 이동
 
-**이동할 파일 (4개):**
+**완료 내역 (4개 파일 이동):**
 - Application/ → App/
+  - AppContainer.swift, MyTranslateApp.swift, UserSettings.swift, DebugConfig.swift
 
-**문서 업데이트:**
-- PROJECT_OVERVIEW.md 업데이트: App/ 섹션 추가
+**Import 변경:** 0 (단일 타겟, 경로 이동)
 
-**검증:**
-- 앱이 성공적으로 실행됨
+**문서 업데이트:** ✅
+- PROJECT_OVERVIEW.md: App/ 섹션 반영
 
 ### Phase 7: Features/Glossary
 **목표:** 용어집 UI 기능 이동 (Core/GlossaryEngine이 이미 제자리에 있은 후)

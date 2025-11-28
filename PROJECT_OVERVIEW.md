@@ -17,7 +17,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 이 프로젝트는 대략 아래 레이어로 나뉩니다.
 
-* **Application**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
+* **App**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
 * **Domain**: 번역/세그먼트/Glossary 등 비즈니스 도메인 모델과 계약(프로토콜)
 * **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등) — 주소창에서 뒤로/앞으로/새로고침, 페이지 내 검색, 데스크톱 모드 토글, 히스토리 진입점을 제공
 * **Services**: 번역 엔진/라우터, 마스킹, Web 렌더링, FM 파이프라인 등
@@ -194,7 +194,7 @@ MyTranslation/
 │       ├── Persistence/
 │       ├── Services/
 │       └── Algorithms/
-├── Application/
+├── App/
 ├── Domain/
 │   ├── Glossary/
 │   └── Models/         # (Glossary 도메인 모델 및 기타 잔여 모델)
