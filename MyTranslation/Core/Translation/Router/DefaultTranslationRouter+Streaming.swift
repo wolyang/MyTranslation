@@ -191,7 +191,7 @@ private extension DefaultTranslationRouter {
         from text: String,
         pack: MaskedPack,
         termMasker: TermMasker,
-        nameGlossaries: [TermMasker.NameGlossary],
+        nameGlossaries: [NameGlossary],
         pieces: SegmentPieces,
         shouldNormalizeNames: Bool
     ) -> RestoredOutput {

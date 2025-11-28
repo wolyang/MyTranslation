@@ -213,7 +213,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let name = TermMasker.NameGlossary(target: "gray", variants: ["grey"], expectedCount: 2, fallbackTerms: nil)
+        let name = NameGlossary(target: "gray", variants: ["grey"], expectedCount: 2, fallbackTerms: nil)
         let masker = TermMasker()
         let result = masker.normalizeWithOrder(
             in: translation,
@@ -260,7 +260,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let glossary = TermMasker.NameGlossary(
+        let glossary = NameGlossary(
             target: "케빈",
             variants: ["케이빈", "Kevin"],
             expectedCount: 1,
@@ -318,13 +318,13 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let kaiGlossary = TermMasker.NameGlossary(
+        let kaiGlossary = NameGlossary(
             target: "가이",
             variants: ["카이", "케이"],
             expectedCount: 2,
             fallbackTerms: nil
         )
-        let kGlossary = TermMasker.NameGlossary(
+        let kGlossary = NameGlossary(
             target: "케이",
             variants: [],
             expectedCount: 1,
@@ -371,7 +371,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let glossary = TermMasker.NameGlossary(
+        let glossary = NameGlossary(
             target: "케빈",
             variants: ["케이빈", "Kevin"],
             expectedCount: 1,
@@ -414,7 +414,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let glossary = TermMasker.NameGlossary(
+        let glossary = NameGlossary(
             target: "케빈",
             variants: [""],
             expectedCount: 1,
@@ -457,7 +457,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let glossary = TermMasker.NameGlossary(
+        let glossary = NameGlossary(
             target: "울트라",
             variants: ["오", "오쿠", "올림픽"],
             expectedCount: 1,
@@ -500,7 +500,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let glossary = TermMasker.NameGlossary(
+        let glossary = NameGlossary(
             target: "쟈그라",
             variants: ["가고라", "가굴라"],
             expectedCount: 1,
@@ -542,7 +542,7 @@ struct TermMaskerUnitTests {
             ]
         )
 
-        let glossary = TermMasker.NameGlossary(
+        let glossary = NameGlossary(
             target: "가이",
             variants: [],
             expectedCount: 1,
@@ -631,7 +631,7 @@ struct TermMaskerUnitTests {
     @Test
     func normalizeVariantsAndParticlesTracksPreNormalizedRanges() {
         let text = "나는 grey와 grey를 좋아함"
-        let name = TermMasker.NameGlossary(target: "gray", variants: ["grey"], expectedCount: 2, fallbackTerms: nil)
+        let name = NameGlossary(target: "gray", variants: ["grey"], expectedCount: 2, fallbackTerms: nil)
         let entry = GlossaryEntry(
             source: "grey",
             target: "gray",
@@ -665,8 +665,8 @@ struct TermMaskerUnitTests {
     func normalizeEntitiesHandlesAuxiliarySequences() {
         let masker = TermMasker()
         let names = [
-            TermMasker.NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"], expectedCount: 1, fallbackTerms: nil),
-            TermMasker.NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"], expectedCount: 1, fallbackTerms: nil)
+            NameGlossary(target: "쟈그라", variants: ["가구라", "가굴라", "가고라"], expectedCount: 1, fallbackTerms: nil),
+            NameGlossary(target: "쿠레나이 가이", variants: ["홍카이"], expectedCount: 1, fallbackTerms: nil)
         ]
         let entries: [GlossaryEntry] = [
             .init(

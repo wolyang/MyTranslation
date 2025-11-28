@@ -749,19 +749,6 @@ public final class TermMasker {
         return out
     }
     
-    struct NameGlossary: Sendable {
-        struct FallbackTerm: Sendable {
-            let termKey: String
-            let target: String
-            let variants: [String]
-        }
-
-        let target: String
-        let variants: [String]
-        let expectedCount: Int   // 원문에서 이 이름이 등장한 횟수
-        let fallbackTerms: [FallbackTerm]?  // Pattern fallback용
-    }
-
     /// 원문에 등장한 인물 용어만 선별하여 정규화용 이름 정보를 생성한다.
     /// - Parameters:
     ///   - original: 용어 검사를 수행할 원문 텍스트

@@ -32,7 +32,7 @@ extension DefaultTranslationRouter {
     ) async -> MaskingContext {
         var allSegmentPieces: [SegmentPieces] = []
         var maskedPacks: [MaskedPack] = []
-        var nameGlossariesPerSegment: [[TermMasker.NameGlossary]] = []
+        var nameGlossariesPerSegment: [[NameGlossary]] = []
 
         for segment in segments {
             let (pieces, glossaryEntries) = termMasker.buildSegmentPieces(
@@ -80,7 +80,7 @@ extension DefaultTranslationRouter {
     struct MaskingContext: Sendable {
         let maskedSegments: [Segment]
         let maskedPacks: [MaskedPack]
-        let nameGlossariesPerSegment: [[TermMasker.NameGlossary]]
+        let nameGlossariesPerSegment: [[NameGlossary]]
         let segmentPieces: [SegmentPieces]
     }
 }
