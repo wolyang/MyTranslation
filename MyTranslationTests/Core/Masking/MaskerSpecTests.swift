@@ -6,8 +6,7 @@ import Testing
 /// SPEC_TERM_DEACTIVATION 7.x 케이스 전용 테스트 모음
 struct MaskerSpecTests {
     private let masker = TermMasker()
-    private let activationFilter = TermActivationFilter()
-
+    
     // Test 1 (Phase 0) 기본 등장 체크
     @Test
     func test1_appearanceFiltersMatchedSources() {
@@ -20,8 +19,7 @@ struct MaskerSpecTests {
             segment: makeSegment("宙人是地球人."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.contains { $0.source == "宙人" })
         #expect(result.glossaryEntries.allSatisfy { $0.source != "ソラト" })
@@ -40,8 +38,7 @@ struct MaskerSpecTests {
             segment: makeSegment("宇宙人宙人来了."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
         #expect(result.pieces.pieces.allSatisfy { if case .term = $0 { return false } else { return true } })
@@ -60,8 +57,7 @@ struct MaskerSpecTests {
             segment: makeSegment("外星人宙人来了."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
     }
@@ -79,8 +75,7 @@ struct MaskerSpecTests {
             segment: makeSegment("宇宙人宙人来了."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.count == 1)
         #expect(result.glossaryEntries.first?.source == "宙人")
@@ -99,8 +94,7 @@ struct MaskerSpecTests {
             segment: makeSegment("宙人来了."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.count == 1)
     }
@@ -117,8 +111,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン登場!"),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.count == 1)
         #expect(result.glossaryEntries.first?.origin == .termStandalone(termKey: "ultraman"))
@@ -136,8 +129,7 @@ struct MaskerSpecTests {
             segment: makeSegment("太郎登場!"),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
     }
@@ -157,8 +149,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン和超人."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.count == 1)
         #expect(result.glossaryEntries.first?.source == "ウルトラマン")
@@ -184,8 +175,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [term1, term2],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.count == 2)
     }
@@ -202,8 +192,7 @@ struct MaskerSpecTests {
             segment: makeSegment("太郎登場!"),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
     }
@@ -229,8 +218,7 @@ struct MaskerSpecTests {
             segment: makeSegment("宇宙人ウルトラマン太郎登場!"),
             matchedTerms: [activator, prohibited],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
     }
@@ -255,8 +243,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [activator, prohibited],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.contains { $0.source == "太郎" })
     }
@@ -279,8 +266,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [term1, term2, term3],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.contains { $0.source == "太郎" })
     }
@@ -298,8 +284,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン登場!"),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
     }
@@ -323,8 +308,7 @@ struct MaskerSpecTests {
             segment: makeSegment("홍길동은 위인이다."),
             matchedTerms: [family, given],
             patterns: [pattern],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true } else { return false } }
         #expect(composer?.source == "홍길동")
@@ -353,8 +337,7 @@ struct MaskerSpecTests {
             segment: makeSegment("太郎さん登場!"),
             matchedTerms: [base],
             patterns: [pattern],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true } else { return false } }
         #expect(composer?.source == "太郎さん")
@@ -388,8 +371,7 @@ struct MaskerSpecTests {
             segment: makeSegment("홍홍은 누구?"),
             matchedTerms: [term],
             patterns: [pattern],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let composers = result.glossaryEntries.filter { if case .composer = $0.origin { return true } else { return false } }
         #expect(composers.isEmpty)
@@ -417,8 +399,7 @@ struct MaskerSpecTests {
             segment: makeSegment("홍길동김철수."),
             matchedTerms: [family1, family2, given1, given2],
             patterns: [makePersonPattern()],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let composers = result.glossaryEntries.filter { if case .composer = $0.origin { return true } else { return false } }
         #expect(composers.count == 4)
@@ -442,8 +423,7 @@ struct MaskerSpecTests {
             segment: makeSegment("홍길동은 위인."),
             matchedTerms: [full, family, given],
             patterns: [pattern],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let entry = result.glossaryEntries.first { $0.source == "홍길동" }
         #expect(entry?.origin == .termStandalone(termKey: "hong-gildong"))
@@ -471,8 +451,7 @@ struct MaskerSpecTests {
             segment: makeSegment("宇宙洪길동."),
             matchedTerms: [family, given],
             patterns: [makePersonPattern()],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.allSatisfy { $0.source != "洪길동" })
     }
@@ -492,8 +471,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン太郎登場!"),
             matchedTerms: [full, left, right],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let termPieces = result.pieces.pieces.compactMap { if case .term(let entry, _) = $0 { return entry } else { return nil } }
         #expect(termPieces.count == 1)
@@ -510,8 +488,7 @@ struct MaskerSpecTests {
             segment: makeSegment("AAA登場!"),
             matchedTerms: [t1, t2],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let termPieces = result.pieces.pieces.compactMap { if case .term(let entry, _) = $0 { return entry } else { return nil } }
         #expect(termPieces.count == 1)
@@ -528,8 +505,7 @@ struct MaskerSpecTests {
             segment: segment,
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         if case .term(_, let range) = result.pieces.pieces.first(where: { if case .term = $0 { return true } else { return false } }) {
             let extracted = String(segment.originalText[range])
@@ -549,8 +525,7 @@ struct MaskerSpecTests {
             segment: makeSegment("太郎和太郎是兄弟."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let termPieces = result.pieces.pieces.filter { if case .term = $0 { return true } else { return false } }
         #expect(termPieces.count == 2)
@@ -591,8 +566,7 @@ struct MaskerSpecTests {
             segment: makeSegment("难道我就要陪你和凯桑在这片什么都没有的地方呆三天嘛！"),
             matchedTerms: [term1, term2],
             patterns: [pattern],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         guard let composer = result.glossaryEntries.first(where:{ if case .composer = $0.origin { return true } else { return false } }) else {
             #expect(Bool(false), "조합어가 생성되지 않았습니다.")
@@ -623,8 +597,7 @@ struct MaskerSpecTests {
             segment: makeSegment("AAA登場!"),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let deduped = Deduplicator.deduplicate(result.glossaryEntries)
         #expect(result.glossaryEntries.count == 1)
@@ -667,8 +640,7 @@ struct MaskerSpecTests {
             segment: makeSegment(""),
             matchedTerms: [],
             patterns: [],
-            matchedSources: [:],
-            termActivationFilter: activationFilter
+            matchedSources: [:]
         )
         #expect(result.pieces.pieces.count == 1)
         if case .text(let text, _) = result.pieces.pieces.first { #expect(text.isEmpty) }
@@ -682,8 +654,7 @@ struct MaskerSpecTests {
             segment: makeSegment("ウルトラマン太郎"),
             matchedTerms: [],
             patterns: [],
-            matchedSources: [:],
-            termActivationFilter: activationFilter
+            matchedSources: [:]
         )
         #expect(result.pieces.pieces.count == 1)
         if case .text(let text, _) = result.pieces.pieces.first { #expect(text == "ウルトラマン太郎") }
@@ -700,8 +671,7 @@ struct MaskerSpecTests {
             segment: makeSegment("CTXAB"),
             matchedTerms: [t1, t2],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.isEmpty)
         #expect(result.pieces.pieces.count == 1)
@@ -719,8 +689,7 @@ struct MaskerSpecTests {
             segment: makeSegment("홍길동"),
             matchedTerms: [family, given],
             patterns: [makePersonPattern()],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let composer = result.glossaryEntries.first { if case .composer = $0.origin { return true } else { return false } }
         #expect(composer?.componentTerms.map(\.source) == ["홍", "길동"])
@@ -763,8 +732,7 @@ struct MaskerSpecTests {
             segment: makeSegment("今日は😊いい天気です."),
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         let termPiece = result.pieces.pieces.first { piece in
             if case .term(let entry, _) = piece { return entry.source == "😊" }
@@ -783,8 +751,7 @@ struct MaskerSpecTests {
             segment: segment,
             matchedTerms: [term],
             patterns: [],
-            matchedSources: matchedSources,
-            termActivationFilter: activationFilter
+            matchedSources: matchedSources
         )
         #expect(result.glossaryEntries.first?.source == "が")
     }
@@ -902,7 +869,6 @@ private func prepareMaskingContextForTest(
     glossaryData: GlossaryData?
 ) async -> TestMaskingContext {
     let termMasker = TermMasker()
-    let termActivationFilter = TermActivationFilter()
 
     var segmentPieces: [SegmentPieces] = []
     var maskedSegments: [Segment] = []
@@ -913,8 +879,7 @@ private func prepareMaskingContextForTest(
             segment: segment,
             matchedTerms: glossaryData?.matchedTerms ?? [],
             patterns: glossaryData?.patterns ?? [],
-            matchedSources: glossaryData?.matchedSourcesByKey ?? [:],
-            termActivationFilter: termActivationFilter
+            matchedSources: glossaryData?.matchedSourcesByKey ?? [:]
         )
         segmentPieces.append(pieces)
         glossaryEntries.append(entries)

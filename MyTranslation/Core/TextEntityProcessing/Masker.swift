@@ -9,6 +9,7 @@ import Foundation
 
 public final class TermMasker {
 
+    private let termMatcher = SegmentTermMatcher()
     private var nextIndex: Int = 1
 
     /// 번역 대상 언어에 맞춰 토큰 주변 공백 삽입 정책을 제어한다.
@@ -16,10 +17,6 @@ public final class TermMasker {
     
 
     public init() { }
-
-    private func deactivatedContexts(of term: Glossary.SDModel.SDTerm) -> [String] {
-        term.deactivatedIn
-    }
 
     private func makeComponentTerm(
         from appearedTerm: AppearedTerm,
@@ -53,8 +50,7 @@ public final class TermMasker {
         segment: Segment,
         matchedTerms: [Glossary.SDModel.SDTerm],
         patterns: [Glossary.SDModel.SDPattern],
-        matchedSources: [String: Set<String>],
-        termActivationFilter: TermActivationFilter
+        matchedSources: [String: Set<String>]
     ) -> (pieces: SegmentPieces, glossaryEntries: [GlossaryEntry]) {
         let text = segment.originalText
 
@@ -74,19 +70,11 @@ public final class TermMasker {
         var sourceToEntry: [String: GlossaryEntry] = [:]
 
         // Phase 0: 등장 + 비활성화 필터링
-        let appearedTerms: [AppearedTerm] = matchedTerms.compactMap { term in
-            let matchedSourceTexts = matchedSources[term.key] ?? []
-            let filteredSources = term.sources.filter { source in
-                guard matchedSourceTexts.contains(source.text), text.contains(source.text) else { return false }
-                return !termActivationFilter.shouldDeactivate(
-                    source: source.text,
-                    deactivatedIn: deactivatedContexts(of: term),
-                    segmentText: text
-                )
-            }
-            guard filteredSources.isEmpty == false else { return nil }
-            return AppearedTerm(sdTerm: term, appearedSources: filteredSources)
-        }
+        let appearedTerms: [AppearedTerm] = termMatcher.findAppearedTerms(
+            segmentText: text,
+            matchedTerms: matchedTerms,
+            matchedSources: matchedSources
+        )
 
         // Phase 1: Standalone Activation
         for appearedTerm in appearedTerms {

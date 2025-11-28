@@ -116,8 +116,7 @@ struct TermMaskerUnitTests {
             segment: segment,
             matchedTerms: [term],
             patterns: [],
-            matchedSources: [term.key: Set([source.text])],
-            termActivationFilter: TermActivationFilter()
+            matchedSources: [term.key: Set([source.text])]
         )
 
         #expect(pieces.originalText == text)
@@ -171,8 +170,7 @@ struct TermMaskerUnitTests {
             segment: segment,
             matchedTerms: [term],
             patterns: [],
-            matchedSources: [term.key: Set([source.text])],
-            termActivationFilter: TermActivationFilter()
+            matchedSources: [term.key: Set([source.text])]
         )
         let pack = masker.maskFromPieces(pieces: pieces, segment: segment)
 
