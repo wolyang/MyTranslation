@@ -21,7 +21,26 @@ struct SheetsTabPickerView: View {
             }
             Section("동기화") {
                 Toggle(isOn: $viewModel.applyDeletions) {
-                    Text("삭제 항목을 반영")
+                    Text("문서에 없는 용어/패턴을 기기에서도 삭제하기")
+                }
+            }
+            Section("병합 정책") {
+                Picker("병합 방식", selection: $viewModel.mergePolicy) {
+                    Text("병합").tag(SheetsImportViewModel.MergePolicy.merge)
+                    Text("덮어쓰기").tag(SheetsImportViewModel.MergePolicy.overwrite)
+                }
+                .pickerStyle(.segmented)
+
+                Group {
+                    if viewModel.mergePolicy == .merge {
+                        Text("기존 데이터와 새 데이터를 병합합니다. 배열 필드는 합치고, 단일 값은 새 값으로 갱신됩니다.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("새 데이터로 완전히 덮어씁니다. 문서에 없는 항목은 기기에서도 제거됩니다.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             Section {

@@ -41,12 +41,14 @@ extension Glossary.SDModel.GlossaryUpserter {
             dst.preMask = src.preMask
             dst.variants = orderedUnique(src.variants)
             dst.deactivatedIn = src.deactivatedIn
-        } else {
-            if dst.target.isEmpty { dst.target = src.target }
+        } else {  // .merge
+            // Single-value fields: overwrite
+            dst.target = src.target
+            dst.isAppellation = src.isAppellation
+            dst.preMask = src.preMask
+            // Array fields: union
             dst.variants = mergeSet(dst.variants, src.variants)
-            if dst.deactivatedIn.isEmpty {
-                dst.deactivatedIn = src.deactivatedIn
-            }
+            dst.deactivatedIn = mergeSet(dst.deactivatedIn, src.deactivatedIn)
         }
 
         upsertSources(term: dst, with: src)
@@ -59,6 +61,7 @@ extension Glossary.SDModel.GlossaryUpserter {
             guard let term = termMap[termKey] else { continue }
 
             if merge == .overwrite {
+                // Clear existing activators before adding new ones
                 let oldActivators = term.activators
                 for oldActivator in oldActivators {
                     if let idx = term.activators.firstIndex(where: { $0.key == oldActivator.key }) {
@@ -66,8 +69,10 @@ extension Glossary.SDModel.GlossaryUpserter {
                     }
                 }
             }
+            // For .merge mode: keep existing activators, add new ones (union behavior)
 
             for activatorKey in activatorKeys {
+                // Skip if activator already exists (for both modes)
                 if term.activators.contains(where: { $0.key == activatorKey }) {
                     continue
                 }
@@ -99,15 +104,15 @@ extension Glossary.SDModel.GlossaryUpserter {
         for js in src.sources {
             seen.insert(js.source)
             if let s = existingByText[js.source] {
-                if merge == .overwrite {
-                    s.prohibitStandalone = js.prohibitStandalone
-                }
+                // Always update prohibitStandalone (it's a single-value field)
+                s.prohibitStandalone = js.prohibitStandalone
             } else {
                 let s = Glossary.SDModel.SDSource(text: js.source, prohibitStandalone: js.prohibitStandalone, term: dst)
                 context.insert(s)
                 dst.sources.append(s)
             }
         }
+        // Only delete unmatched sources in overwrite mode
         if merge == .overwrite {
             for (text, source) in existingByText where !seen.contains(text) {
                 if let idx = dst.sources.firstIndex(where: { $0 === source }) {
@@ -119,33 +124,63 @@ extension Glossary.SDModel.GlossaryUpserter {
     }
 
     private func upsertComponents(term dst: Glossary.SDModel.SDTerm, with src: JSTerm) throws {
-        var existingCompKeys: [String: Glossary.SDModel.SDComponent] = [:]
-        var seen: Set<String> = []
-        for c in dst.components { existingCompKeys[key(of: c)] = c }
-        for jc in src.components {
-            let compKey = key(of: jc)
-            seen.insert(compKey)
-            let comp: Glossary.SDModel.SDComponent
-            if let c = existingCompKeys[compKey] {
-                comp = c
-                if merge == .overwrite {
+        if merge == .overwrite {
+            // Overwrite mode: match by composite key (pattern + role + groups)
+            var existingCompKeys: [String: Glossary.SDModel.SDComponent] = [:]
+            var seen: Set<String> = []
+            for c in dst.components { existingCompKeys[key(of: c)] = c }
+            for jc in src.components {
+                let compKey = key(of: jc)
+                seen.insert(compKey)
+                let comp: Glossary.SDModel.SDComponent
+                if let c = existingCompKeys[compKey] {
+                    comp = c
                     comp.srcTplIdx = jc.srcTplIdx
                     comp.tgtTplIdx = jc.tgtTplIdx
+                } else {
+                    comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
+                    context.insert(comp)
+                    dst.components.append(comp)
                 }
-            } else {
-                comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
-                context.insert(comp)
-                dst.components.append(comp)
+                if let groups = jc.groups {
+                    try ensureGroups(groups, for: comp, pattern: jc.pattern)
+                }
             }
-            if let groups = jc.groups {
-                try ensureGroups(groups, for: comp, pattern: jc.pattern)
+            // Delete unmatched components
+            for (key, old) in existingCompKeys where !seen.contains(key) {
+                if let idx = dst.components.firstIndex(where: { $0 === old }) {
+                    dst.components.remove(at: idx)
+                }
+                context.delete(old)
             }
-        }
-        for (key, old) in existingCompKeys where !seen.contains(key) {
-            if let idx = dst.components.firstIndex(where: { $0 === old }) {
-                dst.components.remove(at: idx)
+        } else {  // .merge
+            // Merge mode: match by pattern name only
+            var existingByPattern: [String: Glossary.SDModel.SDComponent] = [:]
+            for c in dst.components { existingByPattern[c.pattern] = c }
+
+            for jc in src.components {
+                if let existing = existingByPattern[jc.pattern] {
+                    // Pattern exists: update role/indices, merge groups
+                    existing.role = jc.role
+                    existing.srcTplIdx = jc.srcTplIdx
+                    existing.tgtTplIdx = jc.tgtTplIdx
+
+                    // Merge groups (union)
+                    let existingGroups = existing.groupLinks.map { $0.group.name }
+                    let newGroups = jc.groups ?? []
+                    let mergedGroups = mergeSet(existingGroups, newGroups)
+                    try ensureGroups(mergedGroups, for: existing, pattern: jc.pattern)
+                } else {
+                    // Pattern doesn't exist: add new component
+                    let comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
+                    context.insert(comp)
+                    dst.components.append(comp)
+                    if let groups = jc.groups {
+                        try ensureGroups(groups, for: comp, pattern: jc.pattern)
+                    }
+                }
             }
-            context.delete(old)
+            // Keep all existing components (don't delete unmatched)
         }
     }
 

@@ -13,6 +13,11 @@ final class SheetsImportViewModel {
         enum Kind: String, Codable { case term, pattern }
     }
 
+    enum MergePolicy: String, Codable {
+        case merge
+        case overwrite
+    }
+
     let context: ModelContext
     private let adapter: SheetImportAdapter
     private let defaults: UserDefaults
@@ -27,6 +32,11 @@ final class SheetsImportViewModel {
     var errorMessage: String?
     var isProcessing: Bool = false
     var applyDeletions: Bool = false
+    var mergePolicy: MergePolicy = .merge {
+        didSet {
+            defaults.set(mergePolicy.rawValue, forKey: DefaultsKey.mergePolicy)
+        }
+    }
 
     init(
         context: ModelContext,
@@ -38,6 +48,14 @@ final class SheetsImportViewModel {
         self.defaults = defaults
         self.savedTabKinds = Self.loadSavedTabKinds(from: defaults)
         self.spreadsheetURL = defaults.string(forKey: DefaultsKey.spreadsheetURL) ?? ""
+
+        // Load merge policy
+        if let rawPolicy = defaults.string(forKey: DefaultsKey.mergePolicy),
+           let policy = MergePolicy(rawValue: rawPolicy) {
+            self.mergePolicy = policy
+        } else {
+            self.mergePolicy = .merge
+        }
     }
 
     func validateURL() async {
@@ -87,13 +105,15 @@ final class SheetsImportViewModel {
         let termTitles: [String]
         let patternTitles: [String]
         let applyDeletions: Bool
+        let mergePolicy: MergePolicy
     }
 
     private func currentSelection() -> Selection {
         Selection(
             termTitles: titles(for: selectedTermTabs),
             patternTitles: titles(for: selectedPatternTabs),
-            applyDeletions: applyDeletions
+            applyDeletions: applyDeletions,
+            mergePolicy: mergePolicy
         )
     }
 
@@ -158,6 +178,7 @@ final class SheetsImportViewModel {
     private enum DefaultsKey {
         static let spreadsheetURL = "SheetsImport.lastSpreadsheetURL"
         static let tabKinds = "SheetsImport.tabKinds"
+        static let mergePolicy = "SheetsImport.mergePolicy"
     }
 }
 
@@ -180,9 +201,10 @@ struct SheetImportAdapter {
 
     func performDryRun(urlString: String, selection: SheetsImportViewModel.Selection, context: ModelContext) async throws -> Glossary.SDModel.ImportDryRunReport {
         let bundle = try await makeBundle(urlString: urlString, selection: selection)
+        let policy: Glossary.SDModel.ImportMergePolicy = selection.mergePolicy == .merge ? .merge : .overwrite
         let upserter = await Glossary.SDModel.GlossaryUpserter(
             context: context,
-            merge: .overwrite,
+            merge: policy,
             sync: makeSyncPolicy(for: selection)
         )
         return try await upserter.dryRun(bundle: bundle)
@@ -197,9 +219,10 @@ struct SheetImportAdapter {
         _ = report
 
         let bundle = try await makeBundle(urlString: urlString, selection: selection)
+        let policy: Glossary.SDModel.ImportMergePolicy = selection.mergePolicy == .merge ? .merge : .overwrite
         let upserter = await Glossary.SDModel.GlossaryUpserter(
             context: context,
-            merge: .overwrite,
+            merge: policy,
             sync: makeSyncPolicy(for: selection)
         )
         let result = try await upserter.apply(bundle: bundle)

@@ -10,7 +10,17 @@ import SwiftData
 
 extension Glossary.SDModel {
 
-    enum ImportMergePolicy { case keepExisting, overwrite }
+    /// Import merge policies for glossary data
+    ///
+    /// - `merge`: Intelligent field-level merging
+    ///   - Single-value fields (target, isAppellation, preMask): Overwrite with new values
+    ///   - Array fields (variants, sources, tags, activators, deactivatedIn): Union (no duplicates)
+    ///   - Components: Match by pattern name only, merge role/indices, union groups
+    ///
+    /// - `overwrite`: Complete replacement
+    ///   - All fields replaced with new values
+    ///   - Items not in import are removed
+    enum ImportMergePolicy { case merge, overwrite }
 
     struct ImportDryRunReport: Sendable {
         struct Bucket: Sendable {
