@@ -288,6 +288,7 @@ struct SheetImportAdapter {
             "display_name": .displayName,
             "displayname": .displayName,
             "roles": .roles,
+            "role_combinations": .roleCombinations,
             "grouping": .grouping,
             "group_label": .groupLabel,
             "grouplabel": .groupLabel,
@@ -351,6 +352,7 @@ struct SheetImportAdapter {
                     name: name,
                     displayName: header.value(in: row, for: .displayName) ?? "",
                     roles: header.value(in: row, for: .roles) ?? "",
+                    role_combinations: header.value(in: row, for: .roleCombinations) ?? "",
                     grouping: header.value(in: row, for: .grouping) ?? "",
                     groupLabel: header.value(in: row, for: .groupLabel) ?? "",
                     sourceTemplates: header.value(in: row, for: .sourceTemplates) ?? "",
@@ -464,5 +466,5 @@ extension SheetImportAdapter {
     }
 
     enum TermColumn { case key, sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask, activatedBy, deactivatedIn }
-    enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceTemplates, targetTemplate, variantTemplates, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask }
+    enum PatternColumn { case name, displayName, roles, roleCombinations, grouping, groupLabel, sourceTemplates, targetTemplate, variantTemplates, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask }
 }

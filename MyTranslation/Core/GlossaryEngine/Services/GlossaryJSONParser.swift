@@ -84,6 +84,7 @@ struct PatternRow {
     let name: String
     let displayName: String
     let roles: String
+    let role_combinations: String
     let grouping: String
     let groupLabel: String
     let sourceTemplates: String
@@ -128,25 +129,9 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
         var pattern = ""
         var role: String? = nil
         var groups: [String]? = nil
-        var srcIdx: Int? = nil
-        var tgtIdx: Int? = nil
 
         var core = token.trimmingCharacters(in: .whitespaces)
-        // extract #sN / #tM / #N
-        let parts = core.split(separator: "#", omittingEmptySubsequences: false).map(String.init)
-        if let head = parts.first { core = head }
-        for fragment in parts.dropFirst() {
-            let trimmed = fragment.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            if trimmed.hasPrefix("s"), let value = Int(trimmed.dropFirst()) {
-                srcIdx = value
-            } else if trimmed.hasPrefix("t"), let value = Int(trimmed.dropFirst()) {
-                tgtIdx = value
-            } else if let value = Int(trimmed) {
-                srcIdx = value
-                tgtIdx = value
-            }
-        }
+        
         // pattern[:role][-groups]
         let roleSplit = core.split(separator: ":", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
         let patternSegment = roleSplit[0]
@@ -200,27 +185,87 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
     )
 }
 
-func parsePatternRow(_ row: PatternRow) -> JSPattern {
+func parsePatternRow(_ row: PatternRow) -> [JSPattern] {
     func splitSemi(_ s: String) -> [String] { s.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+    // roleCombinations에서 role의 집합을 계산
+    func parseRoleCombination(_ text: String) -> [String] {
+        text.split(separator: "+").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    // template에서 role의 집합을 계산
+    func extractRoles(from template: String) -> Set<String> {
+        var roles: Set<String> = []
+        var current: String = ""
+        var inside = false
+        
+        for ch in template {
+            if ch == "{" {
+                inside = true
+                current = ""
+            } else if ch == "}" {
+                inside = false
+                if !current.isEmpty {
+                    roles.insert(current)
+                }
+            } else if inside {
+                current.append(ch)
+            }
+        }
+        return roles
+    }
 
     let grouping = JSGrouping(rawValue: row.grouping) ?? .required
     
-    return JSPattern(
-        name: row.name,
-        skipPairsIfSameTerm: row.skipSame,
-        sourceTemplates: splitSemi(row.sourceTemplates),
-        targetTemplate: row.targetTemplate,
-        variantTemplates: splitSemi(row.variantTemplates),
-        isAppellation: row.isAppellation,
-        preMask: row.preMask,
-        displayName: row.displayName,
-            roles: splitSemi(row.roles),
-        grouping: grouping,
-        groupLabel: row.groupLabel,
-        defaultProhibitStandalone: row.defProhibit,
-        defaultIsAppellation: row.defIsAppellation,
-        defaultPreMask: row.defPreMask
-    )
+    let roleCombinations = splitSemi(row.role_combinations)
+    if roleCombinations.count > 1 {
+        var patterns: [JSPattern] = []
+        for (i, combination) in roleCombinations.enumerated() {
+            let roles = parseRoleCombination(combination)
+            let combiName = combination.replacingOccurrences(of: "+", with: "_")
+            let sourceTemplates = splitSemi(row.sourceTemplates)
+            let matchedSourceTemplates = sourceTemplates.filter({ extractRoles(from: $0) == Set(roles) })
+            let targetTemplate = splitSemi(row.targetTemplate)[safe: i] ?? row.targetTemplate
+            let variantTemplates = splitSemi(row.variantTemplates)
+            let matchedVariantTemplates = variantTemplates.filter({ extractRoles(from: $0) == Set(roles) })
+            
+            patterns.append(JSPattern(
+                name: row.name + "_" + combiName,
+                skipPairsIfSameTerm: row.skipSame,
+                sourceTemplates: matchedSourceTemplates,
+                targetTemplate: targetTemplate,
+                variantTemplates: matchedVariantTemplates,
+                isAppellation: row.isAppellation,
+                preMask: row.preMask,
+                displayName: row.displayName,
+                roles: roles,
+                grouping: grouping,
+                groupLabel: row.groupLabel,
+                defaultProhibitStandalone: row.defProhibit,
+                defaultIsAppellation: row.defIsAppellation,
+                defaultPreMask: row.defPreMask
+            ))
+        }
+        return patterns
+    } else {
+        return [
+            JSPattern(
+                name: row.name,
+                skipPairsIfSameTerm: row.skipSame,
+                sourceTemplates: splitSemi(row.sourceTemplates),
+                targetTemplate: row.targetTemplate,
+                variantTemplates: splitSemi(row.variantTemplates),
+                isAppellation: row.isAppellation,
+                preMask: row.preMask,
+                displayName: row.displayName,
+                roles: splitSemi(row.roles),
+                grouping: grouping,
+                groupLabel: row.groupLabel,
+                defaultProhibitStandalone: row.defProhibit,
+                defaultIsAppellation: row.defIsAppellation,
+                defaultPreMask: row.defPreMask
+            )
+        ]
+    }
+    
 }
 
 // MARK: - 전체 변환 함수
@@ -241,7 +286,7 @@ func buildGlossaryJSON(
     }
 
     // 2) Patterns
-    let allPatterns = patterns.map { parsePatternRow($0) }
+    let allPatterns = patterns.flatMap { parsePatternRow($0) }
 
     let bundle = JSBundle(terms: allTerms, patterns: allPatterns)
     return bundle
