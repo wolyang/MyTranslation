@@ -17,12 +17,11 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 이 프로젝트는 대략 아래 레이어로 나뉩니다.
 
-* **Application**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
-* **Domain**: 번역/세그먼트/Glossary 등 비즈니스 도메인 모델과 계약(프로토콜)
-* **Presentation**: SwiftUI View + ViewModel (Browser, Glossary, Settings 등)
-* **Services**: 번역 엔진/라우터, 마스킹, Web 렌더링, FM 파이프라인 등
-* **Persistence**: SwiftData 기반 Glossary 저장소, 설정, 캐시/키 관리
-* **Utils**: 공통 유틸리티
+* **App**: 앱 엔트리 포인트, DI 컨테이너(`AppContainer`) 초기화
+* **Features**: Glossary/Browser/Settings UI와 ViewModel 등 사용자 기능
+* **Core**: 번역 라우터/엔진, 마스킹, Web 렌더링, Glossary 엔진, FM 파이프라인 등 핵심 로직
+* **Shared**: 공통 모델/유틸/저장소 정의
+* **Resources**: Info.plist 등 앱 리소스
 
 ### 1. 번역 파이프라인 흐름
 
@@ -31,10 +30,11 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 1. **Content Extraction**
 
    * WKWebView에 JS를 주입해 `data-seg-id`를 붙인 세그먼트 단위 텍스트를 추출
-2. **Masking & Normalization 준비**
+2. **Text Entity Processing 준비**
 
-   * `GlossaryDataProvider`가 페이지 텍스트에서 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
-   * `TermMasker`가 `SegmentPieces`를 생성해 용어 위치를 식별하고, preMask 용어를 토큰으로 치환할 준비를 함
+   * `Glossary.Repository`가 페이지 텍스트에서 매칭된 Term/패턴을 조회
+   * `TextEntityProcessor`가 `buildSegmentPieces()`로 세그먼트별 GlossaryEntry를 생성하고 `SegmentPieces`를 구성
+   * `MaskingEngine`이 preMask 용어를 `__E#N__` 토큰으로 치환하여 `MaskedPack` 생성
    * 정규화(variants→target) 및 언마스킹에 필요한 메타데이터(`TermHighlightMetadata`)를 함께 추적
 3. **Translation Routing & Streaming**
 
@@ -42,7 +42,9 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
    * `AsyncThrowingStream` 기반으로 partial/final 결과를 스트리밍하며, 스트림 페이로드에 하이라이트 메타데이터를 포함
 4. **Normalization & Unmasking**
 
-   * 번역 결과에서 variant를 target으로 정규화하고, 토큰을 원래 용어로 복원하면서 range를 보정
+   * `NormalizationEngine`이 번역 결과에서 variant를 target으로 정규화 (`normalizeWithOrder()`)
+   * `MaskingEngine`이 토큰을 원래 용어로 복원하면서 한글 조사를 자동 보정 (`unmaskWithOrder()`)
+   * 모든 치환 작업에서 range를 추적하여 하이라이트 메타데이터 구성
 5. **Rendering**
 
    * 인라인 교체(InlineReplacer) 또는 오버레이(OverlayRenderer) 방식으로 결과 반영하며, 하이라이트 메타데이터로 용어 배경색을 표시
@@ -52,7 +54,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 ## 주요 컴포넌트/모듈
 
-### 1. Translation Router (`Services/Ochestration/`)
+### 1. Translation Router (`Core/Translation/Router/`)
 
 * `TranslationRouter` 프로토콜과 기본 구현체 `DefaultTranslationRouter`.
 * 역할:
@@ -62,11 +64,12 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
   * AFM, Google, DeepL 등으로 라우팅
   * Glossary 적용을 위한 훅 제공
   * 마스킹 컨텍스트 공유 API(`prepareMaskingContext`, `translateStreamInternal`)로 다중 엔진/오버레이에서 Glossary/SegmentPieces 재사용
+  * `TextEntityProcessor`, `MaskingEngine`, `NormalizationEngine` 활용
 * 스트림 이벤트(`TranslationStreamingContract`) 예:
 
   * `cachedHit` → `requestScheduled` → `partial`/`final` → `failed` → `completed`
 
-### 2. Translation Engines (`Services/Translation/Engines/`)
+### 2. Translation Engines (`Core/Translation/Engines/`)
 
 각 엔진은 `TranslationEngine` 프로토콜을 구현합니다.
 
@@ -76,7 +79,7 @@ MyTranslation은 **SwiftUI로 만든 iOS 번역 브라우저 앱**입니다.
 
 반환 타입은 공통적으로 `AsyncThrowingStream<[TranslationResult], Error>`.
 
-### 3. FM (Foundation Model) Pipeline (`Services/Translation/FM/`)
+### 3. FM (Foundation Model) Pipeline (`Core/Translation/FM/`)
 
 온디바이스 LLM을 이용한 번역 품질 향상 파이프라인.
 
@@ -95,24 +98,24 @@ FMConfig(
 )
 ```
 
-### 4. Glossary System (`Domain/Glossary/`, `Services/Translation/Glossary/`)
+### 4. Glossary System (`Core/GlossaryEngine/`)
 
-데이터 계층과 서비스 계층으로 분리된 SwiftData 기반 Glossary 시스템.
+SwiftData 기반 Glossary 엔진을 Core 레이어로 분리했습니다.
 
-**데이터 계층 (Domain/Glossary/Persistence/)**
-* `GlossaryDataProvider`: 페이지 텍스트로 매칭된 Term/패턴을 조회
+**데이터 계층 (Core/GlossaryEngine/Persistence/)**
+* `Glossary.Repository`: 페이지 텍스트로 매칭된 Term/패턴 조회
 * `GlossarySDModel`: SwiftData 모델 (SDTerm, SDPattern, SDComponent 등)
 * `GlossarySDSourceIndexMaintainer`: Q-gram 인덱스 자동 유지
+* `AutoVariantStoreManager`, `AutoVariantRecord`
 
-**서비스 계층 (Services/Translation/Glossary/)**
-* `GlossaryComposer`: 단독/패턴 조합 엔트리 생성, 세그먼트별 조합 최적화
+**서비스/유틸 (Core/GlossaryEngine/Services/)**
+* `GlossaryJSONParser`, `GlossarySheetImport`, `KeyGenerator`, `GlossaryJSON`
+
+**알고리즘 (Core/GlossaryEngine/Algorithms/)**
+* `AhoCorasick`: 텍스트 매칭
 * `Deduplicator`: GlossaryEntry 중복 병합
 
-**Import (Domain/Glossary/Services/)**
-* `GlossarySheetImport`: Google Sheets 연동
-* `GlossaryJSONParser`: JSON 형식 파싱
-
-### 5. Web Rendering (`Services/WebRendering/`)
+### 5. Web Rendering (`Core/WebRendering/`)
 
 WKWebView 번역 결과 반영.
 
@@ -121,17 +124,46 @@ WKWebView 번역 결과 반영.
 * `OverlayRenderer`: 세그먼트 선택 및 오버레이 기반 렌더링, 용어 하이라이트 반영
 * `SelectionBridge`: 텍스트 선택 이벤트 Swift 쪽으로 전달
 
-### 6. Masking & Normalization (`Services/Translation/Masking/`)
+### 6. Text Entity Processing (`Core/TextEntityProcessing/`)
 
-민감한 용어/인명을 보호하기 위한 마스킹 로직.
+용어/인명을 보호하고 정규화하기 위한 텍스트 엔티티 처리 시스템.
 
-* `GlossaryDataProvider`가 매칭된 Term/패턴을 조회하고, `GlossaryComposer`가 세그먼트별 GlossaryEntry를 생성
-* `TermMasker`: 마스킹/언마스킹 처리, variants 정규화, 하이라이트 range 추적
-  * Phase 4 잔여 일괄 교체: 이미 정규화된 범위는 보호하고, 실제 매칭된 변형만 재사용하며 1글자 변형은 건너뛰어 오정규화를 방지하면서 여분 인스턴스를 일괄 정규화하고 범위를 함께 추적
-* `MaskedPack`: 원문/마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
-* `TermHighlightMetadata`: 원문/정규화 전/최종 번역문 하이라이트 정보
-* **Hangul handling**: 한글 조사 선택을 위해 받침(종성) 여부를 판별하는 `hangulFinalJongInfo()` 로직을 포함해,
-  `이/가`, `을/를`, `은/는`, `과/와`, `으로/로` 등 조사 자동 판정 기능을 제공
+**아키텍처**: 모듈화된 엔진 구조로, 각 엔진은 독립적으로 사용 가능하며 TextEntityProcessor가 오케스트레이션 제공
+
+**Engines (`Core/TextEntityProcessing/Engines/`)**
+* `SegmentTermMatcher`: 용어 검출 (Glossary 매칭 결과 활용)
+* `SegmentEntriesBuilder`: 패턴 기반 GlossaryEntry 구성
+* `SegmentPiecesBuilder`: 세그먼트를 텍스트/용어 조각으로 분할
+* `MaskingEngine`: 토큰화(마스킹)/언마스킹 처리
+  * `maskFromPieces()`: preMask 용어를 `__E#N__` 토큰으로 치환
+  * `unmaskWithOrder()`: 순서 기반 토큰 복원 및 조사 자동 보정
+  * `normalizeTokensAndParticles()`: 잔여 토큰 일괄 정규화
+  * `normalizeDamagedETokens()`: LLM 출력에서 손상된 토큰 복구
+* `NormalizationEngine`: variant → target 정규화
+  * `makeNameGlossariesFromPieces()`: 정규화용 NameGlossary 생성
+  * `normalizeWithOrder()`: 순서 기반 variant 정규화 및 조사 보정
+  * `normalizeVariantsAndParticles()`: 잔여 variant 일괄 정규화 (보호 범위 관리)
+* `TextEntityProcessor`: Orchestration layer
+  * `buildSegmentPieces()`: 용어 검출 → Entry 생성 → Pieces 구성 파이프라인
+
+**Rules (`Core/TextEntityProcessing/Rules/`)**
+* `KoreanParticleRules`: 한글 조사 자동 보정 규칙
+  * `hangulFinalJongInfo()`: 받침(종성) 판별
+  * `chooseJosa()`: 받침에 따른 조사 선택 (`이/가`, `을/를`, `은/는`, `과/와`, `으로/로` 등)
+  * `fixParticles()`: 용어 치환 후 뒤따르는 조사 자동 보정
+  * `replaceWithParticleFix()`: 치환 + 조사 보정 통합 헬퍼
+
+**Models (`Core/TextEntityProcessing/Models/`)**
+* `SegmentPieces`: 세그먼트 내 텍스트/용어 조각 시퀀스
+* `MaskedPack`: 마스킹된 텍스트/락/토큰-엔트리 매핑 묶음
+* `LockInfo`: 토큰 메타데이터 (target, 받침 정보, appellation 여부)
+* `TermRange`: 하이라이트 범위 추적 (masked/normalized 타입 구분)
+
+**주요 특징**:
+* 모듈화: 각 엔진은 독립적으로 사용 가능 (Option B 아키텍처)
+* 순서 기반 처리: 용어 출현 순서를 추적하여 정확한 매칭/치환
+* 보호 범위 관리: 이미 정규화된 범위를 보호하고 1글자 variant는 건너뛰어 오정규화 방지
+* 한글 조사 자동 보정: 받침 판별 및 조사 형태 자동 선택
 
 ### 7. Dependency Injection
 
@@ -139,15 +171,16 @@ WKWebView 번역 결과 반영.
 
   * SwiftData ModelContext
   * 번역 엔진들
-  * Glossary: `GlossaryDataProvider`, `GlossaryComposer`
+  * Glossary: `Glossary.Repository`
   * `DefaultTranslationRouter`
   * FM 파이프라인 구성
-  * Masking: `SegmentPieces` 기반 마스킹/정규화 컨텍스트 조립
+  * Text Entity Processing: `TextEntityProcessor`, `MaskingEngine`, `NormalizationEngine` 조립
 
 ### 8. State Management
 
 * `BrowserViewModel`: 페이지 번역 상태, 언어 설정, `translateStream()`로 스트리밍 제어
 * `GlossaryViewModel`: Glossary CRUD 및 SwiftData 연동
+* `TermEditorViewModel`: Glossary 편집/유효성 검사/Sheets import 연동
 
 ### 9. Persistence & Configuration
 
@@ -157,9 +190,17 @@ WKWebView 번역 결과 반영.
   * `clearAll()`: 전체 캐시 삭제
   * `clearBySegmentIDs(_:)`: 특정 세그먼트 캐시만 선택적 삭제
   * 새로고침 시 캐시 삭제로 항상 최신 번역 보장
+* **HistoryStore**: UserDefaults(JSON)로 방문 기록을 저장하고 중복 URL을 최신 순으로 정리, `HistoryView`에서 날짜별 그룹/검색/삭제·재방문 지원
 * SwiftData: 용어/패턴 저장
 * UserSettings: 번역/엔진/스타일 설정
 * API Keys: `Info.plist` 기반 (Google/DeepL)
+
+### 10. Shared (공통 모델/유틸)
+
+* **Models**: `Segment`, `SegmentPieces`, `BrowsingHistory`, `TranslationOptions`, `TranslationStyle`, `AppLanguage`, `TranslationStreamingContract`, `TermHighlightMetadata`, `GlossaryAddModels`
+* **Persistence**: `CacheStore`, `SwiftDataModel`, `Migrations`, `APIKeys` 등 공통 설정/저장소 정의
+* **Utils**: `Logging`, `URLTools`, `String+Extension`, `Array+Extension`, `TextNormalize`, `LanguageCatalog`
+* **Services**: `HistoryStore` (방문 기록 저장/조회)
 
 ---
 
@@ -169,24 +210,39 @@ WKWebView 번역 결과 반영.
 
 ```
 MyTranslation/
-├── Application/
-├── Domain/
-│   ├── Cache/
-│   ├── Glossary/
+├── Shared/
 │   ├── Models/
+│   ├── Persistence/
+│   ├── Services/
+│   └── Utils/
+├── Core/
 │   ├── Translation/
-│   └── ValueObjects/
-├── Presentation/
+│   │   ├── Router/
+│   │   ├── Engines/
+│   │   ├── FM/
+│   │   └── PostEditor/
+│   ├── TextEntityProcessing/
+│   │   ├── Engines/
+│   │   ├── Rules/
+│   │   └── Models/
+│   ├── WebRendering/
+│   └── GlossaryEngine/
+│       ├── Models/
+│       ├── Persistence/
+│       ├── Services/
+│       └── Algorithms/
+├── Features/
 │   ├── Browser/
 │   ├── Glossary/
+│   │   ├── UI/
+│   │   ├── ViewModels/
+│   │   ├── ImportExport/
+│   │   └── Components/
 │   └── Settings/
-├── Services/
-│   ├── Adapters/
-│   ├── Ochestration/
-│   ├── Translation/
-│   └── WebRendering/
-├── Persistence/
-└── Utils/
+│       └── UI/
+├── App/
+├── Resources/
+└── Assets.xcassets
 ```
 
 ---
@@ -200,11 +256,13 @@ MyTranslation/
 * `GlossaryViewModel`
 * `TranslationRouter` / `DefaultTranslationRouter`
 * `TranslationEngine` (AFM/Google/DeepL)
-* `TermMasker`
+* `TextEntityProcessor` / `MaskingEngine` / `NormalizationEngine`
+* `KoreanParticleRules`
 * `TermHighlightMetadata`
-* `SegmentPieces`
+* `SegmentPieces` / `MaskedPack` / `TermRange`
 * `ContentExtractor` / `InlineReplacer` / `OverlayRenderer`
 * `FMOrchestrator`, `FMPostEditor`, `CrossEngineComparer`, `Reranker`
+* `HistoryStore` / `HistoryView`
 
 ---
 
@@ -222,7 +280,7 @@ xcodebuild -scheme MyTranslation -configuration Release build
 ### Test
 
 ```
-xcodebuild test -scheme MyTranslation -destination 'platform=iOS Simulator,name=iPhone 15'
+xcodebuild test -scheme MyTranslation -destination 'platform=iOS Simulator,name=iPhone 17'
 xcodebuild test -scheme MyTranslation -only-testing:MyTranslationTests
 xcodebuild test -scheme MyTranslation -only-testing:MyTranslationTests/MyTranslationTests/testExample
 ```
@@ -237,7 +295,7 @@ open MyTranslation.xcodeproj
 
 ### 1. Adding a New Translation Engine
 
-1. `Services/Translation/Engines/<EngineName>/` 경로에 클라이언트 생성
+1. `Core/Translation/Engines/<EngineName>/` 경로에 클라이언트 생성
 2. `TranslationEngine` 프로토콜 구현 (스트리밍 지원 필수)
 3. `EngineTag` enum에 엔진 식별자 추가
 4. `AppContainer` 및 `DefaultTranslationRouter`에 등록
@@ -245,7 +303,7 @@ open MyTranslation.xcodeproj
 
 ### 2. Modifying Translation Stream
 
-스트리밍 계약은 `Domain/Translation/TranslationStreamingContract.swift`에 정의되어 있으며 이벤트 순서는 반드시 유지해야 합니다:
+스트리밍 계약은 `Shared/Models/TranslationStreamingContract.swift`에 정의되어 있으며 이벤트 순서는 반드시 유지해야 합니다:
 
 1. `cachedHit`
 2. `requestScheduled`
@@ -253,7 +311,7 @@ open MyTranslation.xcodeproj
 4. `failed`
 5. `completed`
 
-라우팅 로직 변경 시 `DefaultTranslationRouter.translateStream()`을 수정합니다.
+라우팅 로직 변경 시 `DefaultTranslationRouter.translateStream()`을 수정합니다. (위치: `Core/Translation/Router/DefaultTranslationRouter.swift`)
 
 ### 3. Working with Glossary Models
 
@@ -309,64 +367,24 @@ FMConfig(
 
 ## 아키텍처 & 디자인 원칙
 
-이 프로젝트는 전통적인 레이어드 아키텍처에 **클린 아키텍처(Clean Architecture)** 개념을 일부 섞어서 설계하는 것을 지향합니다.
+### 1. 의존성 방향
 
-### 1. 레이어 개념
+* 흐름: **Features → Core → Shared/Resources**. 상위(UI)에서 하위(핵심/공통)로만 의존하도록 유지합니다.
+* Core는 플랫폼 의존성을 최소화하고, Shared는 순수 모델/유틸을 담아 재사용성을 높입니다.
 
-* **Domain 레이어**
+### 2. DI와 결합도
 
-  * 번역, Glossary, 세그먼트, FM 파이프라인 등 "문제 영역 자체"를 표현하는 레이어입니다.
-  * 비즈니스 규칙, 도메인 모델, 값 객체, 인터페이스(프로토콜)를 정의합니다.
-  * 외부 프레임워크(iOS UI, 네트워크 클라이언트, DB 등)에 최대한 의존하지 않도록 합니다.
+* `AppContainer`에서 엔진/라우터/저장소 등을 조립해 Feature 레이어에 주입합니다.
+* ViewModel과 Core 로직은 가능하면 프로토콜에 의존하고, 구체 타입은 조립 단계에만 노출합니다.
 
-* **Application / Services 레이어**
+### 3. 테스트 가능성
 
-  * Domain 레이어의 규칙을 이용해 실제 유스케이스를 수행하는 애플리케이션 서비스 레이어입니다.
-  * `TranslationRouter`, FM 파이프라인 오케스트레이션, Glossary 서비스 등이 여기에 속합니다.
-  * 외부 인프라(네트워크, WebView, 번역 엔진 클라이언트)를 조합해 도메인 규칙을 수행합니다.
+* Shared/Core의 모델/로직은 순수 Swift로 유지하고, WebView/네트워크/엔진은 프로토콜로 추상화해 테스트 대역(Mock)을 쉽게 교체할 수 있게 합니다.
 
-* **Presentation 레이어**
+### 4. 기능 확장 순서
 
-  * SwiftUI View 및 ViewModel로 구성된 레이어입니다.
-  * ViewModel은 가능한 한 UI 상태 관리와 애플리케이션 서비스 호출에만 집중하고,
-    Domain/Services 레이어의 구체 구현에 강하게 결합되지 않도록 합니다.
+1. Shared/Core에 필요한 타입·계약을 정의하고 구현을 추가
+2. AppContainer에서 새 구현을 조립
+3. Features(UI)에서 새 기능을 사용하는 흐름으로 확장
 
-* **Infrastructure 레이어 (Adapters, Persistence, WebRendering 등)**
-
-  * 번역 엔진 API 클라이언트, WKWebView 연동, SwiftData, 로컬 저장소 등
-    "환경 의존적인 것"을 캡슐화하는 레이어입니다.
-  * Domain / Application에서 정의한 인터페이스를 구현하는 어댑터 역할을 합니다.
-
-### 2. 의존성 방향 (Dependency Rule)
-
-* 의존성은 가능한 한 **바깥 → 안쪽**(UI → Services → Domain) 방향으로만 흐르도록 합니다.
-* Domain 레이어는 어떤 상위 레이어(Presentation, Infrastructure)에 대해서도 알지 못해야 합니다.
-* 구체 구현(예: 특정 번역 엔진, 특정 WebView 연동 방식)에 대한 의존성은
-  Domain이 아닌 Services/Infrastructure 레이어에 머무르게 합니다.
-
-### 3. DI(Dependency Injection)와 결합도
-
-* `AppContainer`는 DI 컨테이너로서, 상위 레이어에서 사용할 구체 구현을 조립하는 역할을 합니다.
-* ViewModel / Services는 가능하면 프로토콜(또는 추상 타입)에 의존하게 하고,
-  실제 인스턴스 생성은 `AppContainer`나 팩토리에서 담당하는 것을 권장합니다.
-* 이렇게 하면 번역 엔진 교체, FM 파이프라인 구성을 변경하는 등의 작업을
-  Domain/Presentation 코드를 최소 변경으로 수행할 수 있습니다.
-
-### 4. 테스트 가능성
-
-* Domain 레이어의 타입과 규칙은 **순수 Swift 코드**로 유지해 단위 테스트를 쉽게 합니다.
-* 번역 엔진, WebView, 네트워크 연동 등은 프로토콜로 추상화하고,
-  테스트 환경에서는 인메모리/목(Mock) 구현으로 교체할 수 있게 설계합니다.
-
-### 5. 기능 단위 확장 전략
-
-* 새로운 번역 관련 기능(예: 새로운 후처리 단계, 새로운 Glossary 규칙)을 추가할 때는:
-
-  1. 우선 Domain/Services 레이어에 필요한 타입/인터페이스를 정의하고,
-  2. Infrastructure 레이어에서 실제 구현을 추가한 뒤,
-  3. 마지막으로 Presentation 레이어에서 이를 사용하는 방향으로 확장합니다.
-* 이 순서를 지키면 UI에서 출발해 무작정 아래로 파고드는 것보다
-  구조를 일관되게 유지하기 쉽습니다.
-
-> 위 원칙들은 "완전한 정석 클린 아키텍처" 구현을 강제하기보다는,
-> 현재 코드 구조를 크게 벗어나지 않는 선에서 **의존성 방향과 책임 분리를 의식적으로 유지하기 위한 가이드**입니다.
+이 순서를 따르면 의존성 방향을 깨지 않고 기능을 확장할 수 있습니다.
