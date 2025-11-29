@@ -59,17 +59,22 @@ extension Glossary {
             for i in 0..<(arr.count - n + 1) { out.append(String(arr[i..<(i+n)])) }
             return out
         }
-
-        static func filterJoiners(from joiners: [String], in pageText: String) -> [String] {
-            if joiners.isEmpty { return [""] }
-            if joiners.count <= 1 { return joiners }
-            var result = joiners.filter {
-                pageText.contains($0)
+        
+        static func renderSources(_ tpl: String, termsByRole: [String: SDTerm]) -> [(composed: String, sourcesByRole: [String: String])] {
+            var s = tpl
+            var sources: [(composed: String, sourcesByRole: [String: String])] = []
+            for role in termsByRole.keys {
+                if let term = termsByRole[role] {
+                    for termSource in term.sources {
+                        let replaced = s.replacingOccurrences(of: "{\(role)}", with: termSource)
+                        
+                        // 작업중
+                    }
+                }
             }
-            if joiners.contains("") {
-                result.append("")
-            }
-            return result
+            t = t.replacingOccurrences(of: "{L}", with: L.target)
+            if let R { t = t.replacingOccurrences(of: "{R}", with: R.target) }
+            return t
         }
 
         static func renderSources(_ tpl: String, joiner J: String?, L: SDTerm, R: SDTerm?) -> [(composed: String, left: String, right: String)] {

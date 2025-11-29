@@ -281,7 +281,6 @@ enum PreviewData {
     }()
 
     private static func seed(into context: ModelContext) {
-        // FIXME: Pattern 리팩토링 임시 처리
         let personPattern = Glossary.SDModel.SDPattern(
             name: "person",
             roles: ["family", "given"],
