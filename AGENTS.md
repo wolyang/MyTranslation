@@ -16,12 +16,7 @@
 - 규칙/프로세스를 바꾸고 싶으면 **`AGENT_RULES.md`를 수정**합니다.
 - 프로젝트 설명, 폴더 구조, 핵심 타입/모듈 설명을 바꾸면 **`PROJECT_OVERVIEW.md`를 수정**합니다.
 - 실제 작업(구현/리팩터링/버그픽스 등)을 하면 **`TODO.md`를 업데이트**합니다.
-- Xcode 빌드/테스트 명령은 **Xcode와 iOS 시뮬레이터가 준비된 환경에서만** 실행합니다.  
+- 빌드/테스트는 swift가 아닌 xcodebuild 명령어를 사용하여, 환경에 설치된 iOS 시뮬레이터를 통해 실행합니다.  
   (로컬·CI 환경이 지원하지 않으면, 명령을 실행하지 말고 참고용으로만 사용합니다.)
-- 번역 파이프라인은 `MyTranslation/Core/Translation/` 아래로 이동했습니다. (Router/Engines/FM/PostEditor 하위 디렉터리 구성)
-- Glossary 엔진/저장소는 `MyTranslation/Core/GlossaryEngine/` 아래에 위치합니다. (Models/Persistence/Services/Algorithms 하위 디렉터리)
-- Glossary UI/ViewModel/ImportExport는 `MyTranslation/Features/Glossary/` 아래에 위치합니다.
-- Browser UI/ViewModel은 `MyTranslation/Features/Browser/` 아래에 위치합니다.
-- Settings UI는 `MyTranslation/Features/Settings/` 아래에 위치합니다.
 
 자세한 규칙과 체크리스트는 `AGENT_RULES.md`를 반드시 참고하세요.
