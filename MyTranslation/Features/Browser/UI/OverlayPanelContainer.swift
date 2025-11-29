@@ -75,6 +75,14 @@ private struct OverlayPanelPositioner: View {
             x = margin
         }
 
+        // 화면 경계 보정: 패널이 화면 밖으로 나가지 않도록
+        if y + size.height > containerSize.height - margin {
+            y = containerSize.height - margin - size.height
+        }
+        if y < margin {
+            y = margin
+        }
+
         let frame = CGRect(origin: CGPoint(x: x + containerOrigin.x, y: y + containerOrigin.y), size: size)
         reportFrameIfNeeded(frame)
         return CGPoint(x: x + size.width / 2, y: y + size.height / 2)
