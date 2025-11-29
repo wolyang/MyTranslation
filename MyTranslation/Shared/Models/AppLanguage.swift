@@ -65,6 +65,26 @@ public struct AppLanguage: Hashable, Codable, Sendable, Identifiable {
         guard let languageCode = languageCode?.lowercased() else { return false }
         return ["zh", "ja", "ko"].contains(languageCode)
     }
+
+    /// 언어별 세그먼트 추출 설정을 반환한다.
+    public var extractConfig: SegmentExtractConfig {
+        guard let languageCode = languageCode?.lowercased() else {
+            return SegmentExtractConfig(preferredLength: 80, maxLength: 150)
+        }
+
+        switch languageCode {
+        case "zh": // 중국어
+            return SegmentExtractConfig(preferredLength: 80, maxLength: 150)
+        case "ja": // 일본어 (한자가 많아 비교적 짧음)
+            return SegmentExtractConfig(preferredLength: 60, maxLength: 120)
+        case "ko": // 한국어
+            return SegmentExtractConfig(preferredLength: 80, maxLength: 150)
+        case "en", "es", "fr", "de", "it", "pt": // 서양 언어들 (단어가 길고 공백 기반)
+            return SegmentExtractConfig(preferredLength: 100, maxLength: 200)
+        default:
+            return SegmentExtractConfig(preferredLength: 80, maxLength: 150)
+        }
+    }
 }
 
 /// 자동 감지/수동 지정 여부를 함께 보관하는 출발 언어 선택 상태.

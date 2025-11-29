@@ -11,7 +11,7 @@ import Foundation
 enum ExtractorError: Error { case noHTML, noBodyText }
 
 final class WKContentExtractor: ContentExtractor {
-    public func extract(using exec: WebViewScriptExecutor, url: URL) async throws -> [Segment] {
+    public func extract(using exec: WebViewScriptExecutor, url: URL, config: SegmentExtractConfig) async throws -> [Segment] {
         let snapshotScript = "window.MT && MT_COLLECT_BLOCK_SNAPSHOTS ? MT_COLLECT_BLOCK_SNAPSHOTS() : '[]';"
         let value = try await exec.runJS(snapshotScript)
         guard let data = value.data(using: .utf8) else { throw ExtractorError.noBodyText }
@@ -34,7 +34,7 @@ final class WKContentExtractor: ContentExtractor {
             }
 
             let baseOffset = globalCursor
-            let slices = segmentSlices(in: block.text)
+            let slices = segmentSlices(in: block.text, preferredLength: config.preferredLength, maxLength: config.maxLength)
             for slice in slices {
                 let globalStart = baseOffset + slice.start
                 let globalEnd = baseOffset + slice.end
@@ -77,7 +77,7 @@ final class WKContentExtractor: ContentExtractor {
         return segments
     }
 
-    private func segmentSlices(in text: String) -> [TextSlice] {
+    private func segmentSlices(in text: String, preferredLength: Int, maxLength: Int) -> [TextSlice] {
         guard text.isEmpty == false else { return [] }
         let chars = Array(text)
         let count = chars.count
@@ -108,8 +108,6 @@ final class WKContentExtractor: ContentExtractor {
 
         let sentenceTerminators: Set<Character> = [".", "!", "?", "。", "！", "？"]
         let hardDelimiters: Set<Character> = [";", "；", ":", "："]
-        let preferredLength = 600
-        let maxLength = 800
 
         func findBreakPoint(in range: Range<Int>, upperBound: Int) -> Int? {
             guard range.lowerBound < range.upperBound else { return nil }

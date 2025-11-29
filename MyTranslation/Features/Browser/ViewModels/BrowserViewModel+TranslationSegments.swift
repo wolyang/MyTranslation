@@ -32,7 +32,10 @@ extension BrowserViewModel {
                !state.segments.isEmpty {
                 segments = state.segments
             } else {
-                segments = try await extractor.extract(using: executor, url: url)
+                // 소스 언어에 맞는 추출 설정 사용
+                let sourceLanguage = languagePreference.source.resolved ?? AppLanguage(code: "en")
+                let config = sourceLanguage.extractConfig
+                segments = try await extractor.extract(using: executor, url: url, config: config)
             }
             noBodyTextRetryCount = 0
 
