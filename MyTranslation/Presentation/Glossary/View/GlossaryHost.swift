@@ -1,6 +1,7 @@
 // File: GlossaryHost.swift
-import SwiftUI
 import SwiftData
+import SwiftUI
+import UniformTypeIdentifiers
 
 /// `GlossaryTabView`를 시트나 풀스크린 컨텍스트에서 노출할 때 닫기 버튼을 제공하는 래퍼입니다.
 struct GlossaryHost: View {
@@ -13,6 +14,9 @@ struct GlossaryHost: View {
     @State private var activeSheet: GlossaryTabView.ActiveSheet? = nil
     @State private var showResetConfirm: Bool = false
     @State private var resetErrorMessage: String? = nil
+    @State private var exportErrorMessage: String? = nil
+    @State private var isExporting: Bool = false
+    @State private var exportDocument: GlossaryJSONDocument = .empty
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -43,6 +47,11 @@ struct GlossaryHost: View {
             } message: {
                 Text(resetErrorMessage ?? "")
             }
+            .alert("내보내기 실패", isPresented: Binding(get: { exportErrorMessage != nil }, set: { if !$0 { exportErrorMessage = nil } })) {
+                Button("확인", role: .cancel) { exportErrorMessage = nil }
+            } message: {
+                Text(exportErrorMessage ?? "")
+            }
         }
         .sheet(item: $activeSheet, onDismiss: { Task { await homeViewModel.reloadAll() } }) { sheet in
             switch sheet {
@@ -54,6 +63,13 @@ struct GlossaryHost: View {
                 SheetsImportCoordinatorView(modelContext: modelContext)
             }
         }
+        .fileExporter(
+            isPresented: $isExporting,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: GlossaryConstants.exportFileName,
+            onCompletion: handleExportResult
+        )
         .interactiveDismissDisabled(false)
     }
 
@@ -68,6 +84,9 @@ struct GlossaryHost: View {
             .accessibilityLabel("용어집 닫기")
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
+            Button("JSON 내보내기") {
+                exportGlossary()
+            }
             Button("용어집 초기화") {
                 showResetConfirm = true
             }
@@ -82,6 +101,23 @@ struct GlossaryHost: View {
             try await homeViewModel.resetGlossary()
         } catch {
             resetErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func exportGlossary() {
+        do {
+            let exporter = GlossaryJSONExporter(context: modelContext)
+            let data = try exporter.exportData()
+            exportDocument = GlossaryJSONDocument(data: data)
+            isExporting = true
+        } catch {
+            exportErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func handleExportResult(_ result: Result<URL, Error>) {
+        if case .failure(let error) = result {
+            exportErrorMessage = error.localizedDescription
         }
     }
 }
