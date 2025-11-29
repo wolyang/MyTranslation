@@ -9,39 +9,13 @@ extension Glossary.SDModel.GlossaryUpserter {
         for meta in try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>()) { metaMap[meta.name] = meta }
         for js in items {
             let dst = patternMap[js.name] ?? Glossary.SDModel.SDPattern(name: js.name)
-            if let l = js.left {
-                dst.leftRole = l.role
-                dst.leftTagsAll = l.tagsAll ?? []
-                dst.leftTagsAny = l.tagsAny ?? []
-                dst.leftIncludeTerms = try fetchTerms(for: l.includeTermKeys)
-                dst.leftExcludeTerms = try fetchTerms(for: l.excludeTermKeys)
-            } else {
-                dst.leftRole = nil
-                dst.leftTagsAll = []
-                dst.leftTagsAny = []
-                dst.leftIncludeTerms = []
-                dst.leftExcludeTerms = []
-            }
-            if let r = js.right {
-                dst.rightRole = r.role
-                dst.rightTagsAll = r.tagsAll ?? []
-                dst.rightTagsAny = r.tagsAny ?? []
-                dst.rightIncludeTerms = try fetchTerms(for: r.includeTermKeys)
-                dst.rightExcludeTerms = try fetchTerms(for: r.excludeTermKeys)
-            } else {
-                dst.rightRole = nil
-                dst.rightTagsAll = []
-                dst.rightTagsAny = []
-                dst.rightIncludeTerms = []
-                dst.rightExcludeTerms = []
-            }
+            dst.roles = js.roles
             dst.skipPairsIfSameTerm = js.skipPairsIfSameTerm
             dst.sourceTemplates = js.sourceTemplates
-            dst.targetTemplates = js.targetTemplates
-            dst.sourceJoiners = js.sourceJoiners.isEmpty ? [""] : js.sourceJoiners
+            dst.targetTemplate = js.targetTemplate
+            dst.variantTemplates = js.variantTemplates
             dst.isAppellation = js.isAppellation
             dst.preMask = js.preMask
-            dst.needPairCheck = js.needPairCheck
             if patternMap[js.name] == nil { context.insert(dst); patternMap[js.name] = dst }
             try upsertPatternMeta(js, metaMap: &metaMap)
         }
@@ -56,7 +30,6 @@ extension Glossary.SDModel.GlossaryUpserter {
         if let meta = metaMap[js.name] {
             if merge == .overwrite {
                 meta.displayName = displayName
-                meta.roles = js.roles
                 meta.grouping = grouping
                 meta.groupLabel = groupLabel
                 meta.defaultProhibitStandalone = js.defaultProhibitStandalone
@@ -66,7 +39,6 @@ extension Glossary.SDModel.GlossaryUpserter {
                 if meta.displayName == meta.name || meta.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     meta.displayName = displayName
                 }
-                if meta.roles.isEmpty { meta.roles = js.roles }
                 meta.grouping = grouping
                 if meta.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || meta.groupLabel == Glossary.SDModel.Defaults.groupLabel {
                     meta.groupLabel = groupLabel
@@ -76,7 +48,6 @@ extension Glossary.SDModel.GlossaryUpserter {
             let created = Glossary.SDModel.SDPatternMeta(
                 name: js.name,
                 displayName: displayName,
-                roles: js.roles,
                 grouping: grouping,
                 groupLabel: groupLabel,
                 defaultProhibitStandalone: js.defaultProhibitStandalone,

@@ -181,7 +181,7 @@ extension TermEditorViewModel {
             } else {
                 roleForTerm = nil
             }
-            let component = Glossary.SDModel.SDComponent(pattern: patternModel.name, role: roleForTerm, srcTplIdx: 0, tgtTplIdx: 0, term: term)
+            let component = Glossary.SDModel.SDComponent(pattern: patternModel.name, role: roleForTerm, term: term)
             context.insert(component)
             term.components.append(component)
             if pattern.grouping != .none {

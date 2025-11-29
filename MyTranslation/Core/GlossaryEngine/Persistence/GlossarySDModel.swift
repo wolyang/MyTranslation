@@ -90,17 +90,13 @@ extension Glossary.SDModel {
         // 이 Term가 어떤 패턴에서 어떤 역할/그룹/템플릿 인덱스를 쓰는지
         var pattern: String                      // ex) "person", "cp", "ultraAffix"
         var role: String?                        // "family", "given", nil(무역할)
-        var srcTplIdx: Int?                      // 미지정 = 0
-        var tgtTplIdx: Int?                      // 미지정 = 0
         @Relationship var term: SDTerm
 
         @Relationship(deleteRule: .cascade) var groupLinks: [SDComponentGroup] = []
 
-        init(pattern: String, role: String? = nil, srcTplIdx: Int? = nil, tgtTplIdx: Int? = nil, term: SDTerm) {
+        init(pattern: String, role: String? = nil, term: SDTerm) {
             self.pattern = pattern
             self.role = role
-            self.srcTplIdx = srcTplIdx
-            self.tgtTplIdx = tgtTplIdx
             self.term = term
         }
     }
@@ -162,52 +158,29 @@ extension Glossary.SDModel {
     public final class SDPattern {
         @Attribute(.unique) var name: String          // "person", "cp", "ultraman"...
 
-        // Selector(Left) — 전부 칼럼/관계
-        var leftRole: String?
-        var leftTagsAll: [String]
-        var leftTagsAny: [String]
-        @Relationship var leftIncludeTerms: [SDTerm]
-        @Relationship var leftExcludeTerms: [SDTerm]
-
-        // Selector(Right)
-        var rightRole: String?
-        var rightTagsAll: [String]
-        var rightTagsAny: [String]
-        @Relationship var rightIncludeTerms: [SDTerm]
-        @Relationship var rightExcludeTerms: [SDTerm]
+        // 역할
+        var roles: [String] = []
 
         // 실행 옵션
         var skipPairsIfSameTerm: Bool = true
 
         // 템플릿 슬롯
-        var sourceTemplates: [String]          // ex) ["{L_source}{J}{R_source}", ...]
-        var targetTemplates: [String]          // ex) ["{L_target} {R_target}", "{R_target} {L_target}"]
-        var sourceJoiners: [String]                // ex) [" ", "・"]
+        var sourceTemplates: [String]           // ex) ["{family} {given}", ...]
+        var targetTemplate: String              // ex) "{family} {given}"
+        var variantTemplates: [String]          // ex) ["{family}{given}", "{family}·{given}", ...]
         
         var isAppellation: Bool
         var preMask: Bool
         
-        var needPairCheck: Bool
-        
-        init(name: String, leftRole: String? = nil, leftTagsAll: [String] = [], leftTagsAny: [String] = [], leftIncludeTerms: [SDTerm] = [], leftExcludeTerms: [SDTerm] = [], rightRole: String? = nil, rightTagsAll: [String] = [], rightTagsAny: [String] = [], rightIncludeTerms: [SDTerm] = [], rightExcludeTerms: [SDTerm] = [], skipPairsIfSameTerm: Bool = true, sourceTemplates: [String] = [""], targetTemplates: [String] = [""], sourceJoiners: [String] = [""], isAppellation: Bool = false, preMask: Bool = true, needPairCheck: Bool = false) {
+        init(name: String, roles: [String] = [], skipPairsIfSameTerm: Bool = true, sourceTemplates: [String] = [""], targetTemplate: String = "", variantTemplates: [String] = [""], isAppellation: Bool = false, preMask: Bool = true) {
             self.name = name
-            self.leftRole = leftRole
-            self.leftTagsAll = leftTagsAll
-            self.leftTagsAny = leftTagsAny
-            self.leftIncludeTerms = leftIncludeTerms
-            self.leftExcludeTerms = leftExcludeTerms
-            self.rightRole = rightRole
-            self.rightTagsAll = rightTagsAll
-            self.rightTagsAny = rightTagsAny
-            self.rightIncludeTerms = rightIncludeTerms
-            self.rightExcludeTerms = rightExcludeTerms
+            self.roles = roles
             self.skipPairsIfSameTerm = skipPairsIfSameTerm
             self.sourceTemplates = sourceTemplates
-            self.targetTemplates = targetTemplates
-            self.sourceJoiners = sourceJoiners
+            self.targetTemplate = targetTemplate
+            self.variantTemplates = variantTemplates
             self.isAppellation = isAppellation
             self.preMask = preMask
-            self.needPairCheck = needPairCheck
         }
     }
 
@@ -219,9 +192,6 @@ extension Glossary.SDModel {
         @Attribute(.unique) var name: String          // SDPattern.name과 동일
         var displayName: String
 
-        // 역할 슬롯(예: person=["family","given"], cp=[])
-        var roles: [String] = []
-
         // 그룹 사용 정책
         var grouping: SDPatternGrouping = SDPatternGrouping.optional
         var groupLabel: String = "그룹"
@@ -231,10 +201,9 @@ extension Glossary.SDModel {
         var defaultIsAppellation: Bool = false
         var defaultPreMask: Bool = false
         
-        init(name: String, displayName: String, roles: [String], grouping: SDPatternGrouping, groupLabel: String, defaultProhibitStandalone: Bool, defaultIsAppellation: Bool, defaultPreMask: Bool) {
+        init(name: String, displayName: String, grouping: SDPatternGrouping, groupLabel: String, defaultProhibitStandalone: Bool, defaultIsAppellation: Bool, defaultPreMask: Bool) {
             self.name = name
             self.displayName = displayName
-            self.roles = roles
             self.grouping = grouping
             self.groupLabel = groupLabel
             self.defaultProhibitStandalone = defaultProhibitStandalone

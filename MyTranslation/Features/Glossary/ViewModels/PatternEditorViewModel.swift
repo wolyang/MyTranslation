@@ -43,19 +43,22 @@ final class PatternEditorViewModel {
             originalID = pattern.name
             self.patternID = pattern.name
             displayName = meta?.displayName ?? pattern.name
-            let metaRoles = meta?.roles ?? []
+            // FIXME: Pattern 리팩토링 임시 처리
+            let metaRoles = pattern.roles
             if metaRoles.count >= 2 {
                 leftRole = metaRoles[0]
                 rightRole = metaRoles[1]
             } else {
-                leftRole = pattern.leftRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? metaRoles.first ?? ""
-                rightRole = pattern.rightRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? (metaRoles.dropFirst().first ?? "")
+                // FIXME: Pattern 리팩토링 임시 처리
+                leftRole = /*pattern.leftRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? metaRoles.first ?? */""
+                rightRole = ""//pattern.rightRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? (metaRoles.dropFirst().first ?? "")
             }
             grouping = meta?.grouping ?? .none
             groupLabel = meta?.groupLabel ?? "그룹"
-            sourceJoiners = pattern.sourceJoiners.joined(separator: ";")
+            // FIXME: Pattern 리팩토링 임시 처리
+            sourceJoiners = ""//pattern.sourceJoiners.joined(separator: ";")
             sourceTemplates = pattern.sourceTemplates.joined(separator: ";")
-            targetTemplates = pattern.targetTemplates.joined(separator: ";")
+            targetTemplates = pattern.targetTemplate//s.joined(separator: ";")
             skipPairsIfSameTerm = pattern.skipPairsIfSameTerm
             isAppellation = pattern.isAppellation
             preMask = pattern.preMask
@@ -132,20 +135,21 @@ final class PatternEditorViewModel {
         pattern.isAppellation = isAppellation
         pattern.preMask = preMask
         pattern.sourceTemplates = sourceTemplateArray
-        pattern.targetTemplates = trimmedTargetTemplates
-        pattern.sourceJoiners = sourceJoinerArray
-        pattern.leftRole = trimmedLeftRole.isEmpty ? nil : trimmedLeftRole
-        pattern.rightRole = trimmedRightRole.isEmpty ? nil : trimmedRightRole
+        // FIXME: Pattern 리팩토링 임시 처리
+        pattern.targetTemplate = trimmedTargetTemplates[0]
+        pattern.roles = roleList
+//        pattern.sourceJoiners = sourceJoinerArray
+//        pattern.leftRole = trimmedLeftRole.isEmpty ? nil : trimmedLeftRole
+//        pattern.rightRole = trimmedRightRole.isEmpty ? nil : trimmedRightRole
 
         let meta: Glossary.SDModel.SDPatternMeta
         if let existing = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>(predicate: #Predicate { $0.name == trimmedID })).first {
             meta = existing
         } else {
-            meta = Glossary.SDModel.SDPatternMeta(name: trimmedID, displayName: displayName.isEmpty ? trimmedID : displayName, roles: roleList, grouping: grouping, groupLabel: groupLabel, defaultProhibitStandalone: defaultProhibit, defaultIsAppellation: defaultIsAppellation, defaultPreMask: defaultPreMask)
+            meta = Glossary.SDModel.SDPatternMeta(name: trimmedID, displayName: displayName.isEmpty ? trimmedID : displayName, grouping: grouping, groupLabel: groupLabel, defaultProhibitStandalone: defaultProhibit, defaultIsAppellation: defaultIsAppellation, defaultPreMask: defaultPreMask)
             context.insert(meta)
         }
         meta.displayName = displayName.isEmpty ? trimmedID : displayName
-        meta.roles = roleList
         meta.grouping = grouping
         meta.groupLabel = groupLabel
         meta.defaultProhibitStandalone = defaultProhibit

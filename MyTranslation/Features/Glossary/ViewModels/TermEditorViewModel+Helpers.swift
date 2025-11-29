@@ -46,13 +46,8 @@ extension TermEditorViewModel {
         return patterns.map { pattern in
             let meta = metaMap[pattern.name]
             let displayName = meta?.displayName.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? pattern.name
-            let metaRoles = meta?.roles ?? []
-            let roleOptions: [String]
-            if !metaRoles.isEmpty {
-                roleOptions = metaRoles
-            } else {
-                roleOptions = pattern.roleListFromSelectors
-            }
+            let metaRoles = pattern.roles // FIXME: Pattern 리팩토링 임시 처리
+            let roleOptions: [String] = metaRoles
             let grouping = meta?.grouping ?? .none
             let groupLabel = meta?.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "그룹"
             let groupOptions = (groupsMap[pattern.name] ?? []).map { GroupOption(id: $0.uid, name: $0.name) }.sorted { $0.name < $1.name }
@@ -63,16 +58,11 @@ extension TermEditorViewModel {
                 groupLabel: groupLabel,
                 roleOptions: roleOptions,
                 sourceTemplates: pattern.sourceTemplates,
-                targetTemplates: pattern.targetTemplates,
+                targetTemplate: pattern.targetTemplate,
+                variantTemplates: pattern.variantTemplates,
                 groups: groupOptions
             )
         }.sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
-    }
-
-    static func normalizeTemplateIndex(_ index: Int, templates: [String]) -> Int {
-        guard !templates.isEmpty else { return 0 }
-        let clamped = max(0, min(index, templates.count - 1))
-        return clamped
     }
 }
 
@@ -81,11 +71,5 @@ private extension Optional where Wrapped == String {
         guard let self else { return nil }
         let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
-internal extension Glossary.SDModel.SDPattern {
-    var roleListFromSelectors: [String] {
-        [leftRole.nilIfEmpty, rightRole.nilIfEmpty].compactMap { $0 }
     }
 }

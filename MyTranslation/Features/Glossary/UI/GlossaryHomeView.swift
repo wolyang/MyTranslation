@@ -281,24 +281,22 @@ enum PreviewData {
     }()
 
     private static func seed(into context: ModelContext) {
+        // FIXME: Pattern 리팩토링 임시 처리
         let personPattern = Glossary.SDModel.SDPattern(
             name: "person",
-            leftRole: "family",
-            rightRole: "given",
+            roles: ["family", "given"],
             skipPairsIfSameTerm: false,
             sourceTemplates: ["{L}{R}"],
-            targetTemplates: ["{L} {R}"],
-            sourceJoiners: [" "],
+            targetTemplate: "{L} {R}",
+            variantTemplates: ["{L} {R}"],
             isAppellation: false,
-            preMask: false,
-            needPairCheck: false
+            preMask: false
         )
         context.insert(personPattern)
 
         let personMeta = Glossary.SDModel.SDPatternMeta(
             name: "person",
             displayName: "인물",
-            roles: ["family", "given"],
             grouping: .optional,
             groupLabel: "호칭",
             defaultProhibitStandalone: false,
@@ -322,8 +320,8 @@ enum PreviewData {
         context.insert(givenSource)
         context.insert(given)
 
-        let familyComponent = Glossary.SDModel.SDComponent(pattern: "person", role: "family", srcTplIdx: 0, tgtTplIdx: 0, term: family)
-        let givenComponent = Glossary.SDModel.SDComponent(pattern: "person", role: "given", srcTplIdx: 0, tgtTplIdx: 0, term: given)
+        let familyComponent = Glossary.SDModel.SDComponent(pattern: "person", role: "family", term: family)
+        let givenComponent = Glossary.SDModel.SDComponent(pattern: "person", role: "given", term: given)
         context.insert(familyComponent)
         context.insert(givenComponent)
         family.components = [familyComponent]

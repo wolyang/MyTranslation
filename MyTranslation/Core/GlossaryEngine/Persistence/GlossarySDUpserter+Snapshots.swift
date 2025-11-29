@@ -23,21 +23,16 @@ extension Glossary.SDModel.GlossaryUpserter {
         let pattern: String
         let roleKey: String
         let groupKey: String
-        let srcTplIdx: Int?
-        let tgtTplIdx: Int?
     }
 
     struct PatternSnapshot: Hashable {
         let name: String
-        let left: SelectorSnapshot
-        let right: SelectorSnapshot
         let skipPairsIfSameTerm: Bool
         let sourceTemplates: [String]
-        let targetTemplates: [String]
-        let sourceJoiners: [String]
+        let targetTemplate: String
+        let variantTemplates: [String]
         let isAppellation: Bool
         let preMask: Bool
-        let needPairCheck: Bool
         let displayName: String
         let roles: [String]
         let grouping: Glossary.SDModel.SDPatternGrouping
@@ -45,14 +40,6 @@ extension Glossary.SDModel.GlossaryUpserter {
         let defaultProhibitStandalone: Bool
         let defaultIsAppellation: Bool
         let defaultPreMask: Bool
-    }
-
-    struct SelectorSnapshot: Hashable {
-        let role: String?
-        let tagsAll: [String]
-        let tagsAny: [String]
-        let includeKeys: [String]
-        let excludeKeys: [String]
     }
 
     // MARK: - Snapshot builders
@@ -63,9 +50,7 @@ extension Glossary.SDModel.GlossaryUpserter {
             return ComponentSnapshot(
                 pattern: comp.pattern,
                 roleKey: normalizedRoleKey(comp.role),
-                groupKey: groupKey(of: groups),
-                srcTplIdx: comp.srcTplIdx,
-                tgtTplIdx: comp.tgtTplIdx
+                groupKey: groupKey(of: groups)
             )
         })
         let activators = Set(term.activators.map { $0.key })
@@ -88,9 +73,7 @@ extension Glossary.SDModel.GlossaryUpserter {
             ComponentSnapshot(
                 pattern: comp.pattern,
                 roleKey: normalizedRoleKey(comp.role),
-                groupKey: groupKey(of: comp.groups),
-                srcTplIdx: comp.srcTplIdx,
-                tgtTplIdx: comp.tgtTplIdx
+                groupKey: groupKey(of: comp.groups)
             )
         })
         let activators = Set(normalizedActivatorKeys(term.activatedByKeys, termKey: term.key))
@@ -109,17 +92,14 @@ extension Glossary.SDModel.GlossaryUpserter {
     func patternSnapshot(of pattern: Glossary.SDModel.SDPattern, meta: Glossary.SDModel.SDPatternMeta?) -> PatternSnapshot {
         PatternSnapshot(
             name: pattern.name,
-            left: selectorSnapshot(role: pattern.leftRole, tagsAll: pattern.leftTagsAll, tagsAny: pattern.leftTagsAny, include: pattern.leftIncludeTerms, exclude: pattern.leftExcludeTerms),
-            right: selectorSnapshot(role: pattern.rightRole, tagsAll: pattern.rightTagsAll, tagsAny: pattern.rightTagsAny, include: pattern.rightIncludeTerms, exclude: pattern.rightExcludeTerms),
             skipPairsIfSameTerm: pattern.skipPairsIfSameTerm,
             sourceTemplates: pattern.sourceTemplates,
-            targetTemplates: pattern.targetTemplates,
-            sourceJoiners: pattern.sourceJoiners,
+            targetTemplate: pattern.targetTemplate,
+            variantTemplates: pattern.variantTemplates,
             isAppellation: pattern.isAppellation,
             preMask: pattern.preMask,
-            needPairCheck: pattern.needPairCheck,
             displayName: meta?.displayName ?? pattern.name,
-            roles: meta?.roles ?? [],
+            roles: pattern.roles,
             grouping: meta?.grouping ?? .optional,
             groupLabel: meta?.groupLabel ?? Glossary.SDModel.Defaults.groupLabel,
             defaultProhibitStandalone: meta?.defaultProhibitStandalone ?? true,
@@ -135,15 +115,12 @@ extension Glossary.SDModel.GlossaryUpserter {
         let groupLabel = trimmedLabel.isEmpty ? Glossary.SDModel.Defaults.groupLabel : trimmedLabel
         return PatternSnapshot(
             name: pattern.name,
-            left: selectorSnapshot(pattern.left),
-            right: selectorSnapshot(pattern.right),
             skipPairsIfSameTerm: pattern.skipPairsIfSameTerm,
             sourceTemplates: pattern.sourceTemplates,
-            targetTemplates: pattern.targetTemplates,
-            sourceJoiners: pattern.sourceJoiners.isEmpty ? [""] : pattern.sourceJoiners,
+            targetTemplate: pattern.targetTemplate,
+            variantTemplates: pattern.variantTemplates,
             isAppellation: pattern.isAppellation,
             preMask: pattern.preMask,
-            needPairCheck: pattern.needPairCheck,
             displayName: displayName,
             roles: pattern.roles,
             grouping: Glossary.SDModel.SDPatternGrouping(rawValue: pattern.grouping.rawValue) ?? .optional,
@@ -151,29 +128,6 @@ extension Glossary.SDModel.GlossaryUpserter {
             defaultProhibitStandalone: pattern.defaultProhibitStandalone,
             defaultIsAppellation: pattern.defaultIsAppellation,
             defaultPreMask: pattern.defaultPreMask
-        )
-    }
-
-    private func selectorSnapshot(_ selector: JSTermSelector?) -> SelectorSnapshot {
-        guard let selector else {
-            return SelectorSnapshot(role: nil, tagsAll: [], tagsAny: [], includeKeys: [], excludeKeys: [])
-        }
-        return SelectorSnapshot(
-            role: selector.role,
-            tagsAll: (selector.tagsAll ?? []).sorted(),
-            tagsAny: (selector.tagsAny ?? []).sorted(),
-            includeKeys: (selector.includeTermKeys ?? []).sorted(),
-            excludeKeys: (selector.excludeTermKeys ?? []).sorted()
-        )
-    }
-
-    private func selectorSnapshot(role: String?, tagsAll: [String], tagsAny: [String], include: [Glossary.SDModel.SDTerm], exclude: [Glossary.SDModel.SDTerm]) -> SelectorSnapshot {
-        SelectorSnapshot(
-            role: role,
-            tagsAll: tagsAll.sorted(),
-            tagsAny: tagsAny.sorted(),
-            includeKeys: include.map { $0.key }.sorted(),
-            excludeKeys: exclude.map { $0.key }.sorted()
         )
     }
 

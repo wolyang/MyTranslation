@@ -44,9 +44,7 @@ struct GlossaryJSONExporter {
                 return JSComponent(
                     pattern: comp.pattern,
                     role: sanitized(comp.role),
-                    groups: groupNames.isEmpty ? nil : groupNames,
-                    srcTplIdx: comp.srcTplIdx,
-                    tgtTplIdx: comp.tgtTplIdx
+                    groups: groupNames.isEmpty ? nil : groupNames
                 )
             }
 
@@ -67,69 +65,21 @@ struct GlossaryJSONExporter {
     }
 
     private func makeJSPattern(_ pattern: Glossary.SDModel.SDPattern, meta: Glossary.SDModel.SDPatternMeta?) -> JSPattern {
-        let leftSelector = selector(
-            role: pattern.leftRole,
-            tagsAll: pattern.leftTagsAll,
-            tagsAny: pattern.leftTagsAny,
-            include: pattern.leftIncludeTerms,
-            exclude: pattern.leftExcludeTerms
-        )
-        let rightSelector = selector(
-            role: pattern.rightRole,
-            tagsAll: pattern.rightTagsAll,
-            tagsAny: pattern.rightTagsAny,
-            include: pattern.rightIncludeTerms,
-            exclude: pattern.rightExcludeTerms
-        )
-
         return JSPattern(
             name: pattern.name,
-            left: leftSelector,
-            right: rightSelector,
             skipPairsIfSameTerm: pattern.skipPairsIfSameTerm,
-            sourceJoiners: pattern.sourceJoiners,
             sourceTemplates: pattern.sourceTemplates,
-            targetTemplates: pattern.targetTemplates,
+            targetTemplate: pattern.targetTemplate,
+            variantTemplates: pattern.variantTemplates,
             isAppellation: pattern.isAppellation,
             preMask: pattern.preMask,
             displayName: meta?.displayName ?? pattern.name,
-            roles: meta?.roles ?? [],
+            roles: pattern.roles,
             grouping: mapGrouping(meta?.grouping),
             groupLabel: meta?.groupLabel ?? "그룹",
             defaultProhibitStandalone: meta?.defaultProhibitStandalone ?? false,
             defaultIsAppellation: meta?.defaultIsAppellation ?? false,
-            defaultPreMask: meta?.defaultPreMask ?? false,
-            needPairCheck: pattern.needPairCheck
-        )
-    }
-
-    private func selector(
-        role: String?,
-        tagsAll: [String],
-        tagsAny: [String],
-        include: [Glossary.SDModel.SDTerm],
-        exclude: [Glossary.SDModel.SDTerm]
-    ) -> JSTermSelector? {
-        let normalizedRole = sanitized(role)
-        let tagsAll = sortedUnique(tagsAll)
-        let tagsAny = sortedUnique(tagsAny)
-        let includeKeys = sortedUnique(include.map { $0.key })
-        let excludeKeys = sortedUnique(exclude.map { $0.key })
-
-        if normalizedRole == nil,
-           tagsAll.isEmpty,
-           tagsAny.isEmpty,
-           includeKeys.isEmpty,
-           excludeKeys.isEmpty {
-            return nil
-        }
-
-        return JSTermSelector(
-            role: normalizedRole,
-            tagsAll: tagsAll.isEmpty ? nil : tagsAll,
-            tagsAny: tagsAny.isEmpty ? nil : tagsAny,
-            includeTermKeys: includeKeys.isEmpty ? nil : includeKeys,
-            excludeTermKeys: excludeKeys.isEmpty ? nil : excludeKeys
+            defaultPreMask: meta?.defaultPreMask ?? false
         )
     }
 

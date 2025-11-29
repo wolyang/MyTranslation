@@ -50,8 +50,9 @@ final class GlossaryHomeViewModel {
             let L = rawTerm
             // 패턴이 이 Term를 어떤 역할로 참조하는지에 따라 템플릿 렌더링을 다르게 처리한다.
             let tplIndex = comp.tgtTemplateIndex ?? 0
-            let template = pattern.pattern.targetTemplates.indices.contains(tplIndex) ? pattern.pattern.targetTemplates[tplIndex] : pattern.pattern.targetTemplates.first ?? "{L}"
-            if pattern.pattern.rightRole == nil {
+            // FIXME: Pattern 리팩토링 임시 처리
+            let template = pattern.pattern.targetTemplate
+            if pattern.pattern.roles.count == 1 {
                 return Glossary.Util.renderTarget(template, L: L, R: nil)
             }
             // 그룹 내 다른 Term 탐색은 외부에서 처리되므로 우선 자기 자신만 반영
@@ -189,7 +190,8 @@ final class GlossaryHomeViewModel {
             clone.sources.append(dup)
         }
         for comp in term.components {
-                let dup = Glossary.SDModel.SDComponent(pattern: comp.pattern, role: comp.role, srcTplIdx: comp.srcTplIdx, tgtTplIdx: comp.tgtTplIdx, term: clone)
+            // FIXME: Pattern 리팩토링 임시 처리
+            let dup = Glossary.SDModel.SDComponent(pattern: comp.pattern, role: comp.role, term: clone)
             context.insert(dup)
             clone.components.append(dup)
             for link in comp.groupLinks {
@@ -226,13 +228,13 @@ final class GlossaryHomeViewModel {
                 id: pattern.name,
                 name: pattern.name,
                 displayName: meta?.displayName ?? pattern.name,
-                roles: meta?.roles ?? [],
+                roles: pattern.roles,// FIXME: Pattern 리팩토링 임시 처리
                 grouping: meta?.grouping ?? .none,
                 groupLabel: meta?.groupLabel ?? "그룹",
                 isAppellation: pattern.isAppellation,
                 preMask: pattern.preMask,
-                leftRole: pattern.leftRole,
-                rightRole: pattern.rightRole,
+                leftRole: pattern.roles[safe: 0],// FIXME: Pattern 리팩토링 임시 처리
+                rightRole: pattern.roles[safe:1],// FIXME: Pattern 리팩토링 임시 처리
                 pattern: pattern,
                 meta: meta
             )
@@ -248,8 +250,8 @@ final class GlossaryHomeViewModel {
                     pattern: comp.pattern,
                     role: comp.role,
                     groups: comp.groupLinks.map({ .init(uid: $0.group.uid, name: groupLookup[$0.group.uid]?.name ?? "") }),
-                    srcTemplateIndex: comp.srcTplIdx,
-                    tgtTemplateIndex: comp.tgtTplIdx
+                    srcTemplateIndex: 0,// FIXME: Pattern 리팩토링 임시 처리
+                    tgtTemplateIndex: 0// FIXME: Pattern 리팩토링 임시 처리
                 )
             }
             let tags = term.termTagLinks.compactMap { $0.tag.name }

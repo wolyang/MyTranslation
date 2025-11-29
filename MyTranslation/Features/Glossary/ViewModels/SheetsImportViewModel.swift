@@ -291,11 +291,12 @@ struct SheetImportAdapter {
             "grouping": .grouping,
             "group_label": .groupLabel,
             "grouplabel": .groupLabel,
-            "source_joiners": .sourceJoiners,
             "source_templates": .sourceTemplates,
-            "target_templates": .targetTemplates,
-            "left": .left,
-            "right": .right,
+            "source_tpls": .sourceTemplates,
+            "target_template": .targetTemplate,
+            "tgt_tpl": .targetTemplate,
+            "variant_templates": .variantTemplates,
+            "vrt_tpls": .variantTemplates,
             "skip_same": .skipSame,
             "skip_pairs_if_same_term": .skipSame,
             "is_appellation": .isAppellation,
@@ -304,8 +305,7 @@ struct SheetImportAdapter {
             "default_is_appellation": .defaultIsAppellation,
             "default_premask": .defaultPreMask,
             "default_premask_flag": .defaultPreMask,
-            "default_pre_mask": .defaultPreMask,
-            "need_pair_check": .needPairCheck
+            "default_pre_mask": .defaultPreMask
         ]
 
         for title in selection.termTitles {
@@ -353,18 +353,15 @@ struct SheetImportAdapter {
                     roles: header.value(in: row, for: .roles) ?? "",
                     grouping: header.value(in: row, for: .grouping) ?? "",
                     groupLabel: header.value(in: row, for: .groupLabel) ?? "",
-                    sourceJoiners: header.value(in: row, for: .sourceJoiners, trim: false) ?? "",
                     sourceTemplates: header.value(in: row, for: .sourceTemplates) ?? "",
-                    targetTemplates: header.value(in: row, for: .targetTemplates) ?? "",
-                    left: header.value(in: row, for: .left) ?? "",
-                    right: header.value(in: row, for: .right) ?? "",
+                    targetTemplate: header.value(in: row, for: .targetTemplate) ?? "",
+                    variantTemplates: header.value(in: row, for: .variantTemplates) ?? "",
                     skipSame: parseBool(header.value(in: row, for: .skipSame)),
                     isAppellation: parseBool(header.value(in: row, for: .isAppellation)),
                     preMask: parseBool(header.value(in: row, for: .preMask)),
                     defProhibit: parseBool(header.value(in: row, for: .defaultProhibit)),
                     defIsAppellation: parseBool(header.value(in: row, for: .defaultIsAppellation)),
-                    defPreMask: parseBool(header.value(in: row, for: .defaultPreMask)),
-                    needPairCheck: parseBool(header.value(in: row, for: .needPairCheck))
+                    defPreMask: parseBool(header.value(in: row, for: .defaultPreMask))
                 )
             }
             patternRows.append(contentsOf: entries)
@@ -467,5 +464,5 @@ extension SheetImportAdapter {
     }
 
     enum TermColumn { case key, sourcesOK, sourcesNG, target, variants, tags, components, isAppellation, preMask, activatedBy, deactivatedIn }
-    enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceJoiners, sourceTemplates, targetTemplates, left, right, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask, needPairCheck }
+    enum PatternColumn { case name, displayName, roles, grouping, groupLabel, sourceTemplates, targetTemplate, variantTemplates, skipSame, isAppellation, preMask, defaultProhibit, defaultIsAppellation, defaultPreMask }
 }

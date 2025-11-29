@@ -86,18 +86,15 @@ struct PatternRow {
     let roles: String
     let grouping: String
     let groupLabel: String
-    let sourceJoiners: String
     let sourceTemplates: String
-    let targetTemplates: String
-    let left: String
-    let right: String
+    let targetTemplate: String
+    let variantTemplates: String
     let skipSame: Bool
     let isAppellation: Bool
     let preMask: Bool
     let defProhibit: Bool
     let defIsAppellation: Bool
     let defPreMask: Bool
-    let needPairCheck: Bool
 }
 
 struct AppellationRow {
@@ -177,7 +174,7 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
             }
             groups = ordered
         }
-        return JSComponent(pattern: pattern, role: role, groups: groups, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx)
+        return JSComponent(pattern: pattern, role: role, groups: groups)
     }
 
     var keySet = used
@@ -203,51 +200,17 @@ func parseTermRow(sheetName: String, row: TermRow, used: inout Set<String>, refI
     )
 }
 
-func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPattern {
+func parsePatternRow(_ row: PatternRow) -> JSPattern {
     func splitSemi(_ s: String) -> [String] { s.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
-    func splitJoiners(_ s: String) -> [String] {
-        s.split(separator: ";", omittingEmptySubsequences: false)
-            .map(String.init)   // 트리밍 안 함, 빈 문자열도 그대로 둠
-    }
-
-    let leftDSL = parseSelectorDSL(row.left)
-    let rightDSL = parseSelectorDSL(row.right)
-
-    func toSelector(_ dsl: SelectorParseResult) -> JSTermSelector? {
-        if dsl.role == nil, dsl.tagsAll == nil, dsl.tagsAny == nil, dsl.includeRefs.isEmpty, dsl.excludeRefs.isEmpty { return nil }
-        let includeKeys = dsl.includeRefs.compactMap { tok -> String? in
-            if tok.lowercased().hasPrefix("ref:") {
-                return resolve(tok)
-            } else {
-                return tok // 이미 key로 간주
-            }
-        }
-        let excludeKeys = dsl.excludeRefs.compactMap { tok -> String? in
-            if tok.lowercased().hasPrefix("ref:") {
-                return resolve(tok)
-            } else {
-                return tok
-            }
-        }
-        return JSTermSelector(
-            role: dsl.role,
-            tagsAll: dsl.tagsAll,
-            tagsAny: dsl.tagsAny,
-            includeTermKeys: includeKeys.isEmpty ? nil : includeKeys,
-            excludeTermKeys: excludeKeys.isEmpty ? nil : excludeKeys
-        )
-    }
 
     let grouping = JSGrouping(rawValue: row.grouping) ?? .required
     
     return JSPattern(
         name: row.name,
-        left: toSelector(leftDSL),
-        right: toSelector(rightDSL),
         skipPairsIfSameTerm: row.skipSame,
-        sourceJoiners: splitJoiners(row.sourceJoiners),
         sourceTemplates: splitSemi(row.sourceTemplates),
-        targetTemplates: splitSemi(row.targetTemplates),
+        targetTemplate: row.targetTemplate,
+        variantTemplates: splitSemi(row.variantTemplates),
         isAppellation: row.isAppellation,
         preMask: row.preMask,
         displayName: row.displayName,
@@ -256,8 +219,7 @@ func parsePatternRow(_ row: PatternRow, resolve: (String) -> String?) -> JSPatte
         groupLabel: row.groupLabel,
         defaultProhibitStandalone: row.defProhibit,
         defaultIsAppellation: row.defIsAppellation,
-        defaultPreMask: row.defPreMask,
-        needPairCheck: row.needPairCheck
+        defaultPreMask: row.defPreMask
     )
 }
 
@@ -278,32 +240,8 @@ func buildGlossaryJSON(
         }
     }
 
-    // 2) Patterns (ref 해석 클로저)
-    let resolve: (String) -> String? = { ref in
-        if let k = refIndex.refToKey[ref] { return k }
-        if ref.lowercased().hasPrefix("ref:") {
-            // ref:Sheet:Target → 미해결 (오타 가능) → nil 반환
-            return nil
-        }
-        return ref // 이미 key일 수 있음
-    }
-    let allPatterns = patterns.map { parsePatternRow($0, resolve: resolve) }
-
-    // 4) 드라이런 경고(간단): 미해결 ref 수집
-    var unresolvedRefs: [String] = []
-    func collectUnresolved(from dsl: SelectorParseResult) {
-        for tok in dsl.includeRefs + dsl.excludeRefs where tok.lowercased().hasPrefix("ref:") {
-            if resolve(tok) == nil { unresolvedRefs.append(tok) }
-        }
-    }
-    // 재파싱으로 수집
-    for p in patterns {
-        collectUnresolved(from: parseSelectorDSL(p.left))
-        collectUnresolved(from: parseSelectorDSL(p.right))
-    }
-    if !unresolvedRefs.isEmpty {
-        print("[Import][Warn] Unresolved refs: \(Set(unresolvedRefs))")
-    }
+    // 2) Patterns
+    let allPatterns = patterns.map { parsePatternRow($0) }
 
     let bundle = JSBundle(terms: allTerms, patterns: allPatterns)
     return bundle

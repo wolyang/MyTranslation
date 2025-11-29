@@ -76,7 +76,8 @@ final class TermEditorViewModel {
         let groupLabel: String
         let roleOptions: [String]
         let sourceTemplates: [String]
-        let targetTemplates: [String]
+        let targetTemplate: String
+        let variantTemplates: [String]
         let groups: [GroupOption]
 
         var hasRoles: Bool { !roleOptions.isEmpty }
@@ -86,7 +87,7 @@ final class TermEditorViewModel {
         let pattern: Glossary.SDModel.SDPattern
         let meta: Glossary.SDModel.SDPatternMeta?
         let groups: [Glossary.SDModel.SDGroup]
-        var roles: [String] { meta?.roles ?? [] }
+        var roles: [String] { pattern.roles }
         var defaultProhibitStandalone: Bool { meta?.defaultProhibitStandalone ?? true }
         var defaultIsAppellation: Bool { meta?.defaultIsAppellation ?? false }
         var defaultPreMask: Bool { meta?.defaultPreMask ?? false }
@@ -95,7 +96,7 @@ final class TermEditorViewModel {
         var roleOptions: [String] {
             let metaRoles = roles
             if !metaRoles.isEmpty { return metaRoles }
-            return pattern.roleListFromSelectors
+            return []
         }
     }
 
@@ -157,7 +158,7 @@ final class TermEditorViewModel {
     }
 
     func targetTemplates(for id: String?) -> [String] {
-        patternOption(for: id)?.targetTemplates ?? []
+        patternOption(for: id)?.variantTemplates ?? [] // FIXME: Pattern 리팩토링 임시 처리
     }
 
     func addActivatorTerm(key: String) {
@@ -224,9 +225,7 @@ final class TermEditorViewModel {
                     customName = existingGroups.first?.name ?? ""
                 }
                 let sourceTemplates = option?.sourceTemplates ?? []
-                let targetTemplates = option?.targetTemplates ?? []
-                let srcIdx = TermEditorViewModel.normalizeTemplateIndex(comp.srcTplIdx ?? 0, templates: sourceTemplates)
-                let tgtIdx = TermEditorViewModel.normalizeTemplateIndex(comp.tgtTplIdx ?? 0, templates: targetTemplates)
+                let targetTemplates = option?.variantTemplates ?? [] // FIXME: Pattern 리팩토링 임시 처리
                 let role = comp.role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return ComponentDraft(
                     existingID: comp.persistentModelID,
@@ -234,8 +233,8 @@ final class TermEditorViewModel {
                     roleName: role,
                     selectedGroupUID: selectedUID,
                     customGroupName: customName,
-                    srcTemplateIndex: srcIdx,
-                    tgtTemplateIndex: tgtIdx
+                    srcTemplateIndex: 0, // FIXME: Pattern 리팩토링 임시 처리
+                    tgtTemplateIndex: 0 // FIXME: Pattern 리팩토링 임시 처리
                 )
             }
         } else if let pattern {

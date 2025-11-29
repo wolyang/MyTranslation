@@ -135,10 +135,8 @@ extension Glossary.SDModel.GlossaryUpserter {
                 let comp: Glossary.SDModel.SDComponent
                 if let c = existingCompKeys[compKey] {
                     comp = c
-                    comp.srcTplIdx = jc.srcTplIdx
-                    comp.tgtTplIdx = jc.tgtTplIdx
                 } else {
-                    comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
+                    comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, term: dst)
                     context.insert(comp)
                     dst.components.append(comp)
                 }
@@ -162,8 +160,6 @@ extension Glossary.SDModel.GlossaryUpserter {
                 if let existing = existingByPattern[jc.pattern] {
                     // Pattern exists: update role/indices, merge groups
                     existing.role = jc.role
-                    existing.srcTplIdx = jc.srcTplIdx
-                    existing.tgtTplIdx = jc.tgtTplIdx
 
                     // Merge groups (union)
                     let existingGroups = existing.groupLinks.map { $0.group.name }
@@ -172,7 +168,7 @@ extension Glossary.SDModel.GlossaryUpserter {
                     try ensureGroups(mergedGroups, for: existing, pattern: jc.pattern)
                 } else {
                     // Pattern doesn't exist: add new component
-                    let comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, srcTplIdx: jc.srcTplIdx, tgtTplIdx: jc.tgtTplIdx, term: dst)
+                    let comp = Glossary.SDModel.SDComponent(pattern: jc.pattern, role: jc.role, term: dst)
                     context.insert(comp)
                     dst.components.append(comp)
                     if let groups = jc.groups {

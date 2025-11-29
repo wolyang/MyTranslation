@@ -52,10 +52,6 @@ extension TermEditorViewModel {
             let trimmedRole = draft.roleName.trimmingCharacters(in: .whitespaces)
             component.role = trimmedRole.isEmpty ? nil : trimmedRole
             if let option = patternOptionMap[patternID] {
-                let normalizedSrc = TermEditorViewModel.normalizeTemplateIndex(draft.srcTemplateIndex, templates: option.sourceTemplates)
-                let normalizedTgt = TermEditorViewModel.normalizeTemplateIndex(draft.tgtTemplateIndex, templates: option.targetTemplates)
-                component.srcTplIdx = normalizedSrc
-                component.tgtTplIdx = normalizedTgt
                 for link in component.groupLinks {
                     context.delete(link)
                 }
@@ -80,9 +76,7 @@ extension TermEditorViewModel {
                   let option = patternOptionMap[patternID] else { continue }
             let role = draft.roleName.trimmingCharacters(in: .whitespaces)
             let roleValue = role.isEmpty ? nil : role
-            let srcIdx = TermEditorViewModel.normalizeTemplateIndex(draft.srcTemplateIndex, templates: option.sourceTemplates)
-            let tgtIdx = TermEditorViewModel.normalizeTemplateIndex(draft.tgtTemplateIndex, templates: option.targetTemplates)
-            let component = Glossary.SDModel.SDComponent(pattern: patternID, role: roleValue, srcTplIdx: srcIdx, tgtTplIdx: tgtIdx, term: term)
+            let component = Glossary.SDModel.SDComponent(pattern: patternID, role: roleValue, term: term)
             context.insert(component)
             term.components.append(component)
             if let name = try resolvedGroupName(from: draft, option: option) {

@@ -16,7 +16,7 @@ final class SegmentEntriesBuilder {
 
         for pattern in patterns {
             let usesR = pattern.sourceTemplates.contains { $0.contains("{R}") }
-                || pattern.targetTemplates.contains { $0.contains("{R}") }
+                || [pattern.targetTemplate].contains { $0.contains("{R}") } // FIXME: Pattern 리팩토링 임시 처리
 
             if usesR {
                 let pairs = matchedPairs(for: pattern, appearedTerms: appearedTerms)
@@ -48,8 +48,9 @@ final class SegmentEntriesBuilder {
 
         for appearedTerm in appearedTerms {
             for component in appearedTerm.components where component.pattern == pattern.name {
-                let isLeft = matchesRole(component.role, required: pattern.leftRole)
-                let isRight = matchesRole(component.role, required: pattern.rightRole)
+                // FIXME: Pattern 리팩토링 임시 처리
+                let isLeft = true//matchesRole(component.role, required: pattern.leftRole)
+                let isRight = true//matchesRole(component.role, required: pattern.rightRole)
 
                 if component.groupLinks.isEmpty == false { hasAnyGroup = true }
 
@@ -103,7 +104,8 @@ final class SegmentEntriesBuilder {
         var out: [AppearedComponent] = []
         for appearedTerm in appearedTerms {
             for component in appearedTerm.components where component.pattern == pattern.name {
-                if matchesRole(component.role, required: pattern.leftRole) {
+                // FIXME: Pattern 리팩토링 임시 처리
+                if let role = component.role, pattern.roles.contains(role) /*matchesRole(component.role, required: pattern.leftRole)*/ {
                     out.append(AppearedComponent(component: component, appearedTerm: appearedTerm))
                 }
             }
@@ -117,7 +119,8 @@ final class SegmentEntriesBuilder {
         segmentText: String
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
-        let joiners = Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+        // FIXME: Pattern 리팩토링 임시 처리
+        let joiners = [""]//Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
 
         for (lComp, rComp) in pairs {
             let leftTerm = lComp.appearedTerm
@@ -126,8 +129,9 @@ final class SegmentEntriesBuilder {
             let srcTplIdx = lComp.srcTplIdx ?? rComp.srcTplIdx ?? 0
             let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
             let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}{J}{R}"
-            let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L} {R}"
-            let variants: [String] = Glossary.Util.renderVariants(tgtTpl, joiners: pattern.sourceJoiners, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+            // FIXME: Pattern 리팩토링 임시 처리
+            let tgtTpl = pattern.targetTemplate/*s[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L} {R}"*/
+            let variants: [String] = Glossary.Util.renderVariants(tgtTpl, joiners: [""], L: leftTerm.sdTerm, R: rightTerm.sdTerm)
 
             for joiner in joiners {
                 let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
@@ -145,7 +149,7 @@ final class SegmentEntriesBuilder {
                                 composerId: pattern.name,
                                 leftKey: leftTerm.key,
                                 rightKey: rightTerm.key,
-                                needPairCheck: pattern.needPairCheck
+                                needPairCheck: false //pattern.needPairCheck // FIXME: Pattern 리팩토링 임시 처리
                             ),
                             componentTerms: [
                                 GlossaryEntry.ComponentTerm(
@@ -176,7 +180,7 @@ final class SegmentEntriesBuilder {
         segmentText: String
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
-        let joiners = Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+        let joiners = Glossary.Util.filterJoiners(from: [""]/*pattern.sourceJoiners*/, in: segmentText) // FIXME: Pattern 리팩토링 임시 처리
 
         for lComp in lefts {
             let term = lComp.appearedTerm
@@ -184,7 +188,7 @@ final class SegmentEntriesBuilder {
             let srcTplIdx = lComp.srcTplIdx ?? 0
             let tgtTplIdx = lComp.tgtTplIdx ?? 0
             let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}"
-            let tgtTpl = pattern.targetTemplates[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L}"
+            let tgtTpl = pattern.targetTemplate/*s[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L}"*/ // FIXME: Pattern 리팩토링 임시 처리
             let tgt = Glossary.Util.renderTarget(tgtTpl, L: term.sdTerm, R: nil)
             let variants = Glossary.Util.renderVariants(tgtTpl, joiners: joiners, L: term.sdTerm, R: nil)
 
