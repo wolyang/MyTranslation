@@ -68,34 +68,38 @@
 ```
 
 - 제거되는 필드
+
   - `joiners`
   - `srcTplIdx` / `tgtTplIdx` (Pattern 레벨에서 더 이상 사용하지 않음)
 
 - 기본 규칙
-  1. **source_templates**
+
+  1. **source\_templates**
      - 원문에서 나타날 수 있는 모든 패턴 문자열.
      - 비어있지 않으면 **source 매칭은 반드시 이 배열만 사용**.
-  2. **target_template**
+  2. **target\_template**
      - canonical 번역 패턴.
-  3. **variant_templates**
+  3. **variant\_templates**
      - 번역 결과에서 추가로 등장할 수 있는 패턴들.
      - 비어 있으면 Pattern은 `target_template`만을 기준으로 정규화 variants를 생성.
   4. `preMask == true`인 Pattern은:
-     - source_templates만 사용해 마스킹 대상만 결정.
+     - source\_templates만 사용해 마스킹 대상만 결정.
      - 정규화 variants는 생성하지 않음.
 
 #### 2.1.2. Term JSON/Sheet와의 관계
 
 - Term 단위에서 이미:
+
   - `variants` (중국어 표기 variants, 한글 표기 variants 등)
   - 역할(role: family/given/suffix 등)
-  - preMask 여부
-  를 관리.
+  - preMask 여부 를 관리.
 
 - Pattern은 더 이상 Term별 템플릿 인덱스를 참조하지 않고,
-  - **“이 패턴이 어떤 역할를 어떤 순서로 나열하는가”**만 템플릿 문자열로 표현.
+
+  - \*\*“이 패턴이 어떤 역할를 어떤 순서로 나열하는가”\*\*만 템플릿 문자열로 표현.
 
 - **단일 Term 패턴 (예: ultraman, simple appellation)**
+
   - `variant_templates`가 비어 있는 경우,
   - 정규화 단계에서 `target_template`에 Term의 variants를 직접 대입하여 variants 생성.
 
@@ -106,6 +110,7 @@
 #### 2.2.1. SDPattern
 
 - 필드 변경
+
   - 제거
     - `joiners: String?`
     - `srcTplIdx: Int?`
@@ -120,12 +125,14 @@
 #### 2.2.2. SDTerm / SDComponent
 
 - SDComponent에서 템플릿 인덱스를 참조하던 필드 제거
+
   - `srcTplIdx`, `tgtTplIdx` 제거
   - 그 외 패턴에 대한 연결은 Pattern → Component(들) 관계로만 유지.
-  - 각 SDPattern은 **하나의 source_template/target_template 조합 개념**으로 쓰되,
+  - 각 SDPattern은 **하나의 source\_template/target\_template 조합 개념**으로 쓰되,
     - 실제로는 `sourceTemplates` / `variantTemplates`로 “문자열 레벨” 변형을 관리.
 
 - SDTerm은 기존 구조 유지
+
   - Term의 `variants`, `role`, `isPreMasked` 등은 그대로.
 
 ---
@@ -135,6 +142,7 @@
 ### 3.1. GlossaryJSONParser / Sheet Import
 
 1. **Google Sheet 스키마 업데이트**
+
    - Pattern 시트:
      - `source_templates` 열: 세미콜론(`;`)으로 구분된 템플릿 리스트
      - `target_template` 열: canonical target 템플릿
@@ -143,12 +151,14 @@
    - 기존 `joiners`, `srcTplIdx`, `tgtTplIdx` 열 제거
 
 2. **Sheet → JSON 변환 로직 수정**
+
    - 한 셀의 `source_templates` / `variant_templates`를 `;` 기준으로 split → `[String]`.
    - 공백/빈 문자열 처리 규칙 정의
      - 빈 셀 → 빈 배열
      - split 후 빈 토큰 제거.
 
 3. **GlossaryJSONParser**
+
    - Pattern 디코딩/인코딩에서 새 스키마 사용.
    - joiners/템플릿 인덱스 관련 로직 삭제.
 
@@ -166,6 +176,7 @@
 ### 4.1. SegmentTermMatcher / SegmentEntriesBuilder
 
 1. **SegmentTermMatcher**
+
    - 기존: Pattern + Term + tplIdx/joiners 조합으로 후보 문자열 생성 후 매칭.
    - 변경 후:
      - 원문 매칭은 항상 `pattern.sourceTemplates` 기준.
@@ -173,6 +184,7 @@
      - preMask 패턴인지 아닌지는 `pattern.preMask`로만 판단.
 
 2. **SegmentEntriesBuilder**
+
    - GlossaryEntry(또는 내부 Entry DTO) 생성 시
      - Pattern가 가진 `sourceTemplates` / `targetTemplate` / `variantTemplates`만 참조.
      - Term 단위 정보 (variants, role, appellation 여부 등)는 그대로 사용.
@@ -180,6 +192,7 @@
 ### 4.2. MaskingEngine
 
 - `preMask == true` 패턴은 **마스킹에만 사용**
+
   - `pattern.sourceTemplates`에서 매칭된 구간을 `__E#N__` 토큰으로 치환.
   - 해당 Pattern에 대해서는 **정규화 variants를 생성하지 않음**.
 
@@ -189,7 +202,7 @@
 
 1. **variants 생성 전략 변경**
 
-   **Case A. 패턴에 `variantTemplates`가 있는 경우 (복수 target 패턴)**
+   \*\*Case A. 패턴에 \*\*\*\*`variantTemplates`\*\***가 있는 경우 (복수 target 패턴)**
 
    - `variantTemplates` + `targetTemplate` 전체를 **target-side 템플릿 목록**으로 사용:
      - `allTargetTemplates = [targetTemplate] + variantTemplates`
@@ -197,7 +210,7 @@
      - Term들의 canonical/variants를 꽂아서 정규화용 `surfaceVariants`를 생성.
    - canonicalTarget은 항상 `targetTemplate`에 canonical Term만 꽂은 결과.
 
-   **Case B. 패턴에 `variantTemplates`가 없는 경우 (단일 target 패턴)**
+   \*\*Case B. 패턴에 \*\*\*\*`variantTemplates`\*\***가 없는 경우 (단일 target 패턴)**
 
    - Term이 하나만 사용되는 패턴이라면:
      - `targetTemplate`에 Term의 **모든 variants**를 꽂아서 `surfaceVariants`를 생성.
@@ -220,69 +233,126 @@
 ### 5.1. GlossaryEntry 구조 재확인
 
 - GlossaryEntry가 최소한 아래 정보들을 필요로 한다고 가정:
+
   - patternKey / termKey
   - pattern의 targetTemplate / variantTemplates
   - term의 canonical/variants
   - preMask 여부, appellation 여부 등 메타데이터
 
 - 기존에 `tplIdx` 기반으로 어떤 템플릿을 선택했는지 기록했다면, 이제는:
+
   - **Pattern 자체가 템플릿 조합을 다 포함**하므로, Entry에는 **템플릿 인덱스 필요 없음**.
 
-### 5.2. NameGlossary / Appellation 처리
+### 5.2.   Appellation 처리
 
 - 이름 패턴(예: `{family}{given}`, `{given}{family}` 등)에서 성/이름 순서 변형을 다루기 위해:
   - 원문: `source_templates`에 순서 바뀐 패턴을 모두 기록.
   - 번역문: 순서 바뀐 패턴을 `variant_templates`로 기록.
-- NameGlossary 생성 시:
-  - Pattern의 target-side 템플릿들을 이용해 이름 관련 표면형을 생성.
-  - preMask 패턴(예: `{L}{R} → __E#N__` 류)이면 NameGlossary에는 참여시키지 않음.
 
 ---
 
 ## 6. 구현 순서 제안
 
 1. **모델/스키마 변경부터**
+
    1. `SDPattern` 수정 (SwiftData 모델)
    2. Pattern DTO/JSON 스키마 (`JSPattern` 등) 수정
    3. Code compile이 깨지는 부분을 최소한으로 임시 주석 처리
 
 2. **Import 계층 수정 (Sheet/JSON → SDPattern)**
+
    1. `GlossarySheetImport`에서 Pattern 로딩 로직 수정
    2. `GlossaryJSONParser`에서 Pattern 디코딩/인코딩 수정
    3. 간단한 유닛 테스트 / 임시 Playground로 parsing 검증
 
 3. **TextEntityProcessing 연동 수정**
+
    1. `SegmentTermMatcher`에서 Pattern 매칭 시 `source_templates`만 사용하도록 변경
    2. `SegmentEntriesBuilder`에서 Pattern/Term 조합 로직에서 tplIdx/joiners 제거
    3. `MaskingEngine`에서 preMask 패턴만 사용되도록 필터링 확인
 
 4. **NormalizationEngine 리팩터링**
+
    1. 정규화 variants 생성 진입점에서 Pattern 구조에 맞게 분기 (Case A/B)
    2. `joiners` / tplIdx 관련 코드 제거
    3. NameGlossary 관련 부분이 Pattern 변경과 맞물려 있는지 점검
 
 5. **전체 파이프라인 연동 테스트**
+
    1. 단일 Term 패턴 (ultraman 등)에 대한 end-to-end 테스트
    2. 이름 패턴 (성/이름 순서 변형) e2e 테스트
    3. preMask-only 패턴 (appellation preMask 등) e2e 테스트
 
 6. **정리 및 정리 주석 추가**
+
    - Pattern의 역할/필드 의미를 파일 상단에 주석으로 명확히 기술
    - 과거 `joiners`, `srcTplIdx`, `tgtTplIdx` 관련 TODO/주석 제거
 
 ---
 
-## 7. 추가로 고려할 점 (추후 작업 후보)
+## 7. role-combinations & slot 개념 추가
 
-1. **roles 기반 템플릿으로의 확장**
-   - `{L}` / `{R}`를 `{family}` / `{given}` / `{suffix}` 등 role로 치환하는 리팩토링은
-     - 이번 구조 변경 후에, Pattern 템플릿 문자열만 role로 바꾸는 방향으로 수행.
+### 7.1. role-combinations(역할 조합) 개념
 
-2. **스키마 버전 명시**
-   - Glossary JSON에 `schema_version` 필드를 추가해, 추후 구조 변경 시 버전별 대응 여지를 남김.
+Pattern은 `{role}` 플레이스홀더만 갖고 있고, 실제 GlossaryEntry를 만들 때는 **어떤 role들이 동시에 등장해야 패턴이 발동하는지**를 명시적으로 판단해야 한다. 이를 간단히 표현하는 구조가 **role-combinations**.
 
-3. **preMask 패턴의 관리**
-   - preMask 전용 Pattern을 별도 kind로 구분하거나, 시트에서 시각적으로 구분해 유지보수성을 높일 수 있음.
+- 예: 이름 패턴 `{family}{given}`의 경우
+  ```
+  role_combinations = ["family+given"]
+  ```
+- 예: 접두/이름/접미 조합 `{prefix}{name}{suffix}`
+  ```
+  role_combinations = ["prefix+name+suffix"]
+  ```
+
+#### 역할
+- 매칭 직전 단계에서 `appearedTerms`로부터 역할(role) 단위로 그룹화.
+- role-combinations에 정의된 역할 집합과 정확히 일치하는 Term 집합만 패턴 조합 대상으로 사용.
+- role-combinations는 패턴 정의 시 사람이 지정할 수도 있고, 템플릿에서 자동 추출할 수도 있음.
+
+### 7.2. slot 개념
+
+role만으로는 `{name}{name}`처럼 **같은 role이 두 번 등장하는 패턴**을 처리할 수 없다. 예를 들어:
+
+- TermA(sources: ["지드", "제드"])
+- TermB(sources: ["제로", "사이로"])
+- 패턴: `{name}{name}`
+
+이 경우 다음과 같은 조합을 만들려면:
+
+```
+지드제로 / 지드사이로 / 제드제로 / 제드사이로
+제로지드 / 제로제드 / 사이로지드 / 사이로제드
+```
+
+role 단위("name")만으로는 “앞자리 name”, “뒷자리 name”을 구분할 수 없음.  
+그래서 패턴 매칭/엔트리 생성 플로우 **내부에서만 사용하는 일회용 개념**이 slot이다.
+
+#### slot 생성 규칙 (패턴 파싱 시, SDPattern에는 저장하지 않음)
+- `{name}{name}` → `{name_1}{name_2}` 로 변환
+- SlotInfo 형태로 다음을 얻음:
+  ```
+  rewrittenTemplate = "{name_1}{name_2}"
+  slotOrder = ["name_1", "name_2"]
+  slotToRole = ["name_1": "name", "name_2": "name"]
+  ```
+
+#### slot 사용 범위
+- **오직 조합 생성(matchedComponents → makeTuplesWithSlots)**과  
+  **GlossaryEntry 생성(renderSources/renderTarget)** 단계에서만 사용
+- 외부 JSON/Sheet/SwiftData 모델에는 slot을 저장하지 않음
+- Term은 계속 role만 들고 있고, slot은 내부 계산에만 쓰고 폐기됨
+
+#### 장점
+- 같은 role이 여러 번 등장하는 n항 패턴을 자연스럽게 처리 가능
+- skipSameTerm, group 매칭까지 slot 단위로 적용 가능
+- Pattern/Term 스키마는 단순하게 유지됨
+
+### 7.3. role-combinations와 slot의 저장 위치
+- role-combinations는 사용자의 편의를 위해 구글 시트에서만 사용되며, import 시에 각 combination으로 쪼개어 따로따로 SwiftData로 저장한다.
+- slot은 그 역할이 템플릿에서 **몇 번 등장하는지와 등장 순서를 보존**하기 위해 도입
+- slot명 및 role → slot 매핑은 조합 생성기의 지역 변수로만 존재하며 데이터상으로 저장하지 않는다.
+
 
 ---
 
