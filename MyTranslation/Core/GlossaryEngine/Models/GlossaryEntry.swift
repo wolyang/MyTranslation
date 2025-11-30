@@ -30,12 +30,12 @@ public struct GlossaryEntry: Sendable, Hashable {
 
     public enum Origin: Sendable, Hashable {
         case termStandalone(termKey: String)
-        /// composerId/needPairCheck는 패턴 제어를 위해 포함하며, leftKey는 필수(L-only 패턴은 rightKey가 nil).
-        case composer(composerId: String, leftKey: String, rightKey: String?, needPairCheck: Bool)
+        /// composerId는 패턴 제어를 위해 포함하며, termKeys는 1개 이상 필수
+        case composer(composerId: String, termKeys: [String])
     }
     public var origin: Origin
 
-    /// 조합 엔트리의 구성 Term 정보(standalone은 1개, composer는 L/R 각각 포함).
+    /// 조합 엔트리의 구성 Term 정보(standalone은 1개, composer는 모두 포함).
     public var componentTerms: [ComponentTerm] = []
 
     public init(

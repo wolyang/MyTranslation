@@ -15,28 +15,64 @@ final class SegmentEntriesBuilder {
         var allEntries: [GlossaryEntry] = []
 
         for pattern in patterns {
-            
-            let usesR = pattern.sourceTemplates.contains { $0.contains("{R}") }
-                || [pattern.targetTemplate].contains { $0.contains("{R}") } // FIXME: Pattern 리팩토링 임시 처리
-
-            if usesR {
-                let pairs = matchedPairs(for: pattern, appearedTerms: appearedTerms)
-                allEntries.append(contentsOf: buildEntriesFromPairs(
-                    pairs: pairs,
-                    pattern: pattern,
-                    segmentText: segmentText
-                ))
-            } else {
-                let lefts = matchedLeftComponents(for: pattern, appearedTerms: appearedTerms)
-                allEntries.append(contentsOf: buildEntriesFromLefts(
-                    lefts: lefts,
-                    pattern: pattern,
-                    segmentText: segmentText
-                ))
-            }
+            let matched = matchedComponents(for: pattern, appearedTerms: appearedTerms)
+            allEntries.append(contentsOf: buildEntriesFromTuples(tuples: matched, pattern: pattern).filter({ entry in
+                segmentText.contains(entry.source)
+            }))
         }
 
         return allEntries
+    }
+    
+    /// "{name}{name}" 같은 role 기반 템플릿을
+    /// "{name_1}{name_2}" 같은 slot 기반 템플릿으로 바꾸고,
+    /// slot 순서와 slot→role 매핑을 돌려준다.
+    struct SlotInfo {
+        let rewrittenTemplate: String       // 예: "{name_1}{name_2}"
+        let slotOrder: [String]            // 예: ["name_1", "name_2"]
+        let slotToRole: [String: String]   // 예: ["name_1": "name", "name_2": "name"]
+    }
+
+    func rewriteTemplateWithSlots(_ template: String) -> SlotInfo {
+        var result = ""
+        var roleCounts: [String: Int] = [:]
+        var slotOrder: [String] = []
+        var slotToRole: [String: String] = [:]
+
+        var inside = false
+        var currentRole = ""
+
+        for ch in template {
+            if ch == "{" {
+                inside = true
+                currentRole = ""
+                result.append("{")
+            } else if ch == "}" {
+                inside = false
+                let role = currentRole
+
+                let count = (roleCounts[role] ?? 0) + 1
+                roleCounts[role] = count
+
+                let slot = "\(role)_\(count)"   // name_1, name_2 같은 형태
+
+                slotOrder.append(slot)
+                slotToRole[slot] = role
+
+                result.append(slot)
+                result.append("}")
+            } else if inside {
+                currentRole.append(ch)
+            } else {
+                result.append(ch)
+            }
+        }
+
+        return SlotInfo(
+            rewrittenTemplate: result,
+            slotOrder: slotOrder,
+            slotToRole: slotToRole
+        )
     }
 
     /// 공통: roles 순서대로 cartesian product를 만들어 [[role: AppearedComponent]] 반환
@@ -85,35 +121,69 @@ final class SegmentEntriesBuilder {
         return results
     }
 
-    /// n항 패턴 조합 생성 (그룹 없음 + 그룹 있음 통합)
-    ///
-    /// - componentsByRole: role → 해당 role에 속한 AppearedComponent 리스트
-    /// - roles: 패턴이 요구하는 role 순서 (예: ["prefix", "name", "suffix"])
-    /// - skipIfSameTerm: 한 조합 안에 같은 appearedTerm.key가 두 번 이상 나오지 않게 할지 여부
-    /// - useGroups: 이 패턴이 group 기반 매칭을 사용하는지 여부
-    func makeComponentTuples(
+    /// role별 AppearedComponent들을, slot 정보에 맞춰
+    /// [[slot: AppearedComponent]] 조합으로 펼친다.
+    /// - componentsByRole: "name" 같은 role 기준으로 모인 컴포넌트들
+    /// - slotOrder: ["name_1", "name_2", ...] 같은 slot 순서
+    /// - slotToRole: ["name_1": "name", "name_2": "name", ...]
+    /// - skipSameTerm: 같은 AppearedTerm.key를 한 튜플 안에서 중복 사용하지 않을지 여부
+    /// - useGroups: true면 같은 group.uid 안에서만 조합을 만든다
+    func makeTuplesWithSlots(
         componentsByRole: [String: [AppearedComponent]],
-        roles: [String],
-        skipIfSameTerm: Bool,
+        slotOrder: [String],
+        slotToRole: [String: String],
+        skipSameTerm: Bool,
         useGroups: Bool
     ) -> [[String: AppearedComponent]] {
-        // 그룹을 사용하지 않는 패턴: 그냥 cartesian product
+
+        // MARK: - 그룹을 쓰지 않는 경우: 단순 카테시안 곱
         guard useGroups else {
-            return cartesianTuples(
-                roles: roles,
-                componentsByRole: componentsByRole,
-                skipIfSameTerm: skipIfSameTerm
-            )
+            var results: [[String: AppearedComponent]] = []
+            var current: [String: AppearedComponent] = [:]
+            var usedTermKeys: Set<String> = []
+
+            func dfs(_ index: Int) {
+                if index == slotOrder.count {
+                    results.append(current)
+                    return
+                }
+
+                let slot = slotOrder[index]
+                guard let role = slotToRole[slot],
+                      let candidates = componentsByRole[role],
+                      !candidates.isEmpty else {
+                    return
+                }
+
+                for comp in candidates {
+                    let key = comp.appearedTerm.key
+                    if skipSameTerm, usedTermKeys.contains(key) {
+                        continue
+                    }
+
+                    current[slot] = comp
+                    if skipSameTerm { usedTermKeys.insert(key) }
+
+                    dfs(index + 1)
+
+                    if skipSameTerm { usedTermKeys.remove(key) }
+                    current.removeValue(forKey: slot)
+                }
+            }
+
+            dfs(0)
+            return results
         }
 
-        // 그룹을 사용하는 패턴: groupId별로 role → [AppearedComponent] 를 만들고,
-        // 각 group에 대해 cartesianTuples를 돌린 뒤 전부 합친다.
+        // MARK: - 그룹을 사용하는 경우
+        // groupId → (role → [AppearedComponent]) 맵을 만든다.
         typealias RoleMap = [String: [AppearedComponent]]
         var byGroup: [String: RoleMap] = [:]
 
         for (role, comps) in componentsByRole {
             for comp in comps {
-                for gid in comp.groupLinks.map({ $0.group.uid }) {
+                for link in comp.groupLinks {
+                    let gid = link.group.uid
                     var roleMap = byGroup[gid] ?? [:]
                     roleMap[role, default: []].append(comp)
                     byGroup[gid] = roleMap
@@ -123,32 +193,63 @@ final class SegmentEntriesBuilder {
 
         var allResults: [[String: AppearedComponent]] = []
 
+        // 각 groupId마다 slotOrder를 기준으로 DFS
         for (_, roleMap) in byGroup {
-            // 이 그룹에서 모든 roles를 채울 수 없는 경우는 스킵
-            let hasAllRoles = roles.allSatisfy { roleMap[$0]?.isEmpty == false }
-            if !hasAllRoles {
-                continue
+            // 이 그룹 안에서 모든 slot이 최소 1개 이상의 후보를 가질 수 있는지 체크
+            let groupCanFillAllSlots = slotOrder.allSatisfy { slot in
+                guard let role = slotToRole[slot],
+                      let cs = roleMap[role] else { return false }
+                return !cs.isEmpty
+            }
+            if !groupCanFillAllSlots { continue }
+
+            var current: [String: AppearedComponent] = [:]
+            var usedTermKeys: Set<String> = []
+
+            func dfs(_ index: Int) {
+                if index == slotOrder.count {
+                    allResults.append(current)
+                    return
+                }
+
+                let slot = slotOrder[index]
+                guard let role = slotToRole[slot],
+                      let candidates = roleMap[role],
+                      !candidates.isEmpty else {
+                    return
+                }
+
+                for comp in candidates {
+                    let key = comp.appearedTerm.key
+                    if skipSameTerm, usedTermKeys.contains(key) {
+                        continue
+                    }
+
+                    current[slot] = comp
+                    if skipSameTerm { usedTermKeys.insert(key) }
+
+                    dfs(index + 1)
+
+                    if skipSameTerm { usedTermKeys.remove(key) }
+                    current.removeValue(forKey: slot)
+                }
             }
 
-            let tuples = cartesianTuples(
-                roles: roles,
-                componentsByRole: roleMap,
-                skipIfSameTerm: skipIfSameTerm
-            )
-            allResults.append(contentsOf: tuples)
+            dfs(0)
         }
 
         return allResults
     }
 
+
     
-    private func matchedComponents(
+    private func collectComponentsByRole(
         for pattern: Glossary.SDModel.SDPattern,
         appearedTerms: [AppearedTerm]
-    ) -> [[String: AppearedComponent]] {
+    ) -> (hasAnyGroup: Bool, componentsByRole: [String: [AppearedComponent]]) {
         let roles = pattern.roles
         // pattern에는 role이 최소 1개 존재해야함
-        guard let firstRole = roles.first else { return [] }
+        guard let firstRole = roles.first else { return (false, [:]) }
         let isSoloPattern = roles.count == 1
         
         var componentsByRole: [String: [AppearedComponent]] = [:]
@@ -173,224 +274,110 @@ final class SegmentEntriesBuilder {
             }
         }
         
-        return makeComponentTuples(componentsByRole: componentsByRole, roles: roles, skipIfSameTerm: pattern.skipPairsIfSameTerm, useGroups: hasAnyGroup)
+        return (hasAnyGroup, componentsByRole)
     }
+    
+    /// SDPattern과 appearedTerms를 바탕으로
+    /// slot 기준 n항 조합 [[slot: AppearedComponent]]를 만든다.
+    func matchedComponents(
+        for pattern: Glossary.SDModel.SDPattern,
+        appearedTerms: [AppearedTerm]
+    ) -> [[String: AppearedComponent]] {
 
-//    private func matchedPairs(
-//        for pattern: Glossary.SDModel.SDPattern,
-//        appearedTerms: [AppearedTerm]
-//    ) -> [(AppearedComponent, AppearedComponent)] {
-//        var lefts: [AppearedComponent] = []
-//        var rights: [AppearedComponent] = []
-//        var hasAnyGroup = false
-//
-//        for appearedTerm in appearedTerms {
-//            for component in appearedTerm.components where component.pattern == pattern.name {
-//                // FIXME: Pattern 리팩토링 임시 처리
-//                let isLeft = true//matchesRole(component.role, required: pattern.leftRole)
-//                let isRight = true//matchesRole(component.role, required: pattern.rightRole)
-//
-//                if component.groupLinks.isEmpty == false { hasAnyGroup = true }
-//
-//                let appearedComponent = AppearedComponent(component: component, appearedTerm: appearedTerm)
-//                if isLeft { lefts.append(appearedComponent) }
-//                if isRight { rights.append(appearedComponent) }
-//            }
-//        }
-//
-//        if hasAnyGroup == false {
-//            var pairs: [(AppearedComponent, AppearedComponent)] = []
-//            for l in lefts {
-//                for r in rights where (!pattern.skipPairsIfSameTerm || l.appearedTerm.key != r.appearedTerm.key) {
-//                    pairs.append((l, r))
-//                }
-//            }
-//            return pairs
-//        }
-//
-//        var leftByGroup: [String: [AppearedComponent]] = [:]
-//        var rightByGroup: [String: [AppearedComponent]] = [:]
-//
-//        for component in lefts {
-//            for g in component.groupLinks.map({ $0.group.uid }) {
-//                leftByGroup[g, default: []].append(component)
-//            }
-//        }
-//        for component in rights {
-//            for g in component.groupLinks.map({ $0.group.uid }) {
-//                rightByGroup[g, default: []].append(component)
-//            }
-//        }
-//
-//        var pairs: [(AppearedComponent, AppearedComponent)] = []
-//        for g in leftByGroup.keys {
-//            guard let ls = leftByGroup[g], let rs = rightByGroup[g] else { continue }
-//            for l in ls {
-//                for r in rs where (!pattern.skipPairsIfSameTerm || l.appearedTerm.key != r.appearedTerm.key) {
-//                    pairs.append((l, r))
-//                }
-//            }
-//        }
-//
-//        return pairs
-//    }
-//
-//    private func matchedLeftComponents(
-//        for pattern: Glossary.SDModel.SDPattern,
-//        appearedTerms: [AppearedTerm]
-//    ) -> [AppearedComponent] {
-//        var out: [AppearedComponent] = []
-//        for appearedTerm in appearedTerms {
-//            for component in appearedTerm.components where component.pattern == pattern.name {
-//                // FIXME: Pattern 리팩토링 임시 처리
-//                if let role = component.role, pattern.roles.contains(role) /*matchesRole(component.role, required: pattern.leftRole)*/ {
-//                    out.append(AppearedComponent(component: component, appearedTerm: appearedTerm))
-//                }
-//            }
-//        }
-//        return out
-//    }
+        // 1) role 기준으로 AppearedComponent 모으기
+        //    예: "name" → [comp1, comp2, ...]
+        let (hasAnyGroup, componentsByRole) = collectComponentsByRole(
+            for: pattern,
+            appearedTerms: appearedTerms
+        )
+
+        // role 기준 템플릿을 slot 템플릿으로 재작성해서
+        // slotOrder, slotToRole 정보를 얻는다.
+        let slotInfo = rewriteTemplateWithSlots(pattern.targetTemplate)
+        // slotInfo:
+        //  - rewrittenTemplate: "{name}{name}" → "{name_1}{name_2}"
+        //  - slotOrder: ["name_1", "name_2"]
+        //  - slotToRole: ["name_1": "name", "name_2": "name"]
+
+        // 3) slot + group + skipSameTerm 규칙을 적용해서
+        //    [[slot: AppearedComponent]] 튜플들을 만든다.
+        let tuplesBySlot = makeTuplesWithSlots(
+            componentsByRole: componentsByRole,
+            slotOrder: slotInfo.slotOrder,
+            slotToRole: slotInfo.slotToRole,
+            skipSameTerm: pattern.skipPairsIfSameTerm,
+            useGroups: hasAnyGroup
+        )
+
+        return tuplesBySlot
+    }
     
     private func buildEntriesFromTuples(
-        tuples: [[String: AppearedComponent]],
-        pattern: Glossary.SDModel.SDPattern,
-        segmentText: String
+        tuples: [[String: AppearedComponent]],          // slot -> AppearedComponent
+        pattern: Glossary.SDModel.SDPattern
     ) -> [GlossaryEntry] {
         var entries: [GlossaryEntry] = []
-        for tuple in tuples {
-            let sourceTemplates = pattern.sourceTemplates
-            for sourceTemplate in sourceTemplates {
-                let src = 
-            }
-        }
-    }
 
-    private func buildEntriesFromPairs(
-        pairs: [(AppearedComponent, AppearedComponent)],
-        pattern: Glossary.SDModel.SDPattern,
-        segmentText: String
-    ) -> [GlossaryEntry] {
-        var entries: [GlossaryEntry] = []
-        // FIXME: Pattern 리팩토링 임시 처리
-        let joiners = [""]//Glossary.Util.filterJoiners(from: pattern.sourceJoiners, in: segmentText)
+        // canonical + variant 템플릿
+        let targetTemplates: [String] = [pattern.targetTemplate] + pattern.variantTemplates
 
-        for (lComp, rComp) in pairs {
-            let leftTerm = lComp.appearedTerm
-            let rightTerm = rComp.appearedTerm
+        for componentsBySlot in tuples {
+            // 1) target / variants 생성
+            let target = Glossary.Util.renderTarget(
+                pattern.targetTemplate,
+                componentsBySlot: componentsBySlot
+            )
 
-            let srcTplIdx = lComp.srcTplIdx ?? rComp.srcTplIdx ?? 0
-            let tgtTplIdx = lComp.tgtTplIdx ?? rComp.tgtTplIdx ?? 0
-            let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}{J}{R}"
-            // FIXME: Pattern 리팩토링 임시 처리
-            let tgtTpl = pattern.targetTemplate/*s[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L} {R}"*/
-            let variants: [String] = Glossary.Util.renderVariants(tgtTpl, joiners: [""], L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+            let variants = Glossary.Util.renderVariants(
+                templates: targetTemplates,
+                componentsBySlot: componentsBySlot
+            )
 
-            for joiner in joiners {
-                let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
-                let tgt = Glossary.Util.renderTarget(tgtTpl, L: leftTerm.sdTerm, R: rightTerm.sdTerm)
+            // 2) sourceTemplates * source-variants 조합만큼 GlossaryEntry 생성
+            for srcTpl in pattern.sourceTemplates {
+                let renderedSources = Glossary.Util.renderSources(
+                    srcTpl,
+                    componentsBySlot: componentsBySlot
+                )
 
-                for src in srcs {
-                    entries.append(
-                        GlossaryEntry(
-                            source: src.composed,
-                            target: tgt,
-                            variants: variants,
-                            preMask: pattern.preMask,
-                            isAppellation: pattern.isAppellation,
-                            origin: .composer(
-                                composerId: pattern.name,
-                                leftKey: leftTerm.key,
-                                rightKey: rightTerm.key,
-                                needPairCheck: false //pattern.needPairCheck // FIXME: Pattern 리팩토링 임시 처리
-                            ),
-                            componentTerms: [
-                                GlossaryEntry.ComponentTerm(
-                                    key: leftTerm.key,
-                                    target: leftTerm.target,
-                                    variants: leftTerm.variants,
-                                    source: src.left
-                                ),
-                                GlossaryEntry.ComponentTerm(
-                                    key: rightTerm.key,
-                                    target: rightTerm.target,
-                                    variants: rightTerm.variants,
-                                    source: src.right
-                                )
-                            ]
+                for rendered in renderedSources {
+                    // 3) 이 entry 전용 componentTerms 생성
+                    var componentTerms: [GlossaryEntry.ComponentTerm] = []
+
+                    for (slot, comp) in componentsBySlot {
+                        let term = comp.appearedTerm
+                        let partSource = rendered.sourcesBySlot[slot] ?? term.appearedSources.first?.text ?? ""
+
+                        componentTerms.append(
+                            GlossaryEntry.ComponentTerm(
+                                key: term.key,
+                                target: term.target,
+                                variants: term.variants,
+                                source: partSource
+                            )
                         )
+                    }
+
+                    let ordered = componentTerms.sorted { $0.key < $1.key }
+
+                    let entry = GlossaryEntry(
+                        source: rendered.composed,
+                        target: target,
+                        variants: variants,
+                        preMask: pattern.preMask,
+                        isAppellation: pattern.isAppellation,
+                        origin: .composer(
+                            composerId: pattern.name,
+                            termKeys: ordered.map({ $0.key })
+                        ),
+                        componentTerms: componentTerms
                     )
+
+                    entries.append(entry)
                 }
             }
         }
 
         return entries
-    }
-
-    private func buildEntriesFromLefts(
-        lefts: [AppearedComponent],
-        pattern: Glossary.SDModel.SDPattern,
-        segmentText: String
-    ) -> [GlossaryEntry] {
-        var entries: [GlossaryEntry] = []
-        let joiners = Glossary.Util.filterJoiners(from: [""]/*pattern.sourceJoiners*/, in: segmentText) // FIXME: Pattern 리팩토링 임시 처리
-
-        for lComp in lefts {
-            let term = lComp.appearedTerm
-
-            let srcTplIdx = lComp.srcTplIdx ?? 0
-            let tgtTplIdx = lComp.tgtTplIdx ?? 0
-            let srcTpl = pattern.sourceTemplates[safe: srcTplIdx] ?? pattern.sourceTemplates.first ?? "{L}"
-            let tgtTpl = pattern.targetTemplate/*s[safe: tgtTplIdx] ?? pattern.targetTemplates.first ?? "{L}"*/ // FIXME: Pattern 리팩토링 임시 처리
-            let tgt = Glossary.Util.renderTarget(tgtTpl, L: term.sdTerm, R: nil)
-            let variants = Glossary.Util.renderVariants(tgtTpl, joiners: joiners, L: term.sdTerm, R: nil)
-
-            for joiner in joiners {
-                let srcs = Glossary.Util.renderSources(srcTpl, joiner: joiner, L: term.sdTerm, R: nil)
-
-                for src in srcs {
-                    entries.append(
-                        GlossaryEntry(
-                            source: src.composed,
-                            target: tgt,
-                            variants: variants,
-                            preMask: pattern.preMask,
-                            isAppellation: pattern.isAppellation,
-                            origin: .composer(
-                                composerId: pattern.name,
-                                leftKey: term.key,
-                                rightKey: nil,
-                                needPairCheck: false
-                            ),
-                            componentTerms: [
-                                GlossaryEntry.ComponentTerm(
-                                    key: term.key,
-                                    target: term.target,
-                                    variants: term.variants,
-                                    source: src.left
-                                )
-                            ]
-                        )
-                    )
-                }
-            }
-        }
-
-        return entries
-    }
-
-    private func matchesRole(_ componentRole: String?, required: String?) -> Bool {
-        guard
-            let requiredRole = required?.trimmingCharacters(in: .whitespacesAndNewlines),
-            requiredRole.isEmpty == false
-        else {
-            return true
-        }
-        guard
-            let role = componentRole?.trimmingCharacters(in: .whitespacesAndNewlines),
-            role.isEmpty == false
-        else {
-            return false
-        }
-        return role == requiredRole
     }
 }

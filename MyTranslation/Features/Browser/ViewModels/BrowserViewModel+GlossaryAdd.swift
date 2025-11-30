@@ -161,8 +161,7 @@ enum GlossaryAddCandidateUtil {
                     appearanceOrder: index,
                     similarity: score
                 ))
-            case let .composer(_, leftKey, rightKey, _):
-                let keys = [leftKey, rightKey].compactMap { $0 }
+            case let .composer(_, keys):
                 guard keys.isEmpty == false else { continue }
                 for key in keys {
                     guard

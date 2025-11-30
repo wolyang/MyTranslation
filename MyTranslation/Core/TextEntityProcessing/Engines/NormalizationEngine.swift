@@ -49,10 +49,7 @@ public struct NormalizationEngine {
             }.count
             expectedCountsByTarget[target, default: 0] += count
 
-            if case let .composer(_, leftKey, rightKey, _) = entry.origin {
-                var termKeys: [String] = [leftKey]
-                if let r = rightKey { termKeys.append(r) }
-
+            if case let .composer(_, termKeys) = entry.origin {
                 var fallbacks: [NameGlossary.FallbackTerm] = []
                 for key in termKeys {
                     guard let fallbackEntry = allEntries.first(where: {
