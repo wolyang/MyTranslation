@@ -57,7 +57,7 @@ struct GlossaryImportTests {
             target: target,
             variants: variants,
             tags: tags,
-            components: [JSComponent(pattern: "person", role: "name", groups: nil, srcTplIdx: nil, tgtTplIdx: nil)],
+            components: [JSComponent(pattern: "person", role: "name", groups: nil)],
             isAppellation: false,
             preMask: false,
             deactivatedIn: deactivatedIn,
@@ -74,7 +74,7 @@ struct GlossaryImportTests {
         existing.variants = ["Alpha", "A"]
         existing.preMask = false
         let source = Glossary.SDModel.SDSource(text: "Alpha", prohibitStandalone: false, term: existing)
-        let component = Glossary.SDModel.SDComponent(pattern: "person", role: "name", srcTplIdx: nil, tgtTplIdx: nil, term: existing)
+        let component = Glossary.SDModel.SDComponent(pattern: "person", role: "name", term: existing)
         let tag = Glossary.SDModel.SDTag(name: "hero")
         let link = Glossary.SDModel.SDTermTagLink(term: existing, tag: tag)
         existing.sources.append(source)

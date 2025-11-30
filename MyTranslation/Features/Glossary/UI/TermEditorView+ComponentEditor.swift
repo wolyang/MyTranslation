@@ -77,16 +77,17 @@ extension TermEditorView {
                     )
                 }
 
-                templatePicker(
+                templateList(
                     title: "원문 템플릿",
-                    templates: viewModel.sourceTemplates(for: patternID),
-                    selection: component.srcTemplateIndex
+                    templates: viewModel.sourceTemplates(for: patternID)
                 )
-                templatePicker(
-                    title: "번역 템플릿",
-                    templates: viewModel.targetTemplates(for: patternID),
-                    selection: component.tgtTemplateIndex
-                )
+                if let target = viewModel.targetTemplate(for: patternID) {
+                    templateList(title: "번역 템플릿", templates: [target])
+                }
+                let variants = viewModel.variantTemplates(for: patternID)
+                if !variants.isEmpty {
+                    templateList(title: "번역 변형 템플릿", templates: variants)
+                }
             } else {
                 Text("패턴을 선택하면 역할, 그룹, 템플릿을 설정할 수 있습니다.")
                     .font(.footnote)
@@ -103,21 +104,20 @@ extension TermEditorView {
         }
     }
 
-    func templatePicker(title: String, templates: [String], selection: Binding<Int>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if templates.isEmpty {
-                Text("사용 가능한 템플릿이 없습니다.")
+    @ViewBuilder
+    func templateList(title: String, templates: [String]) -> some View {
+        if templates.isEmpty {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else {
-                Picker(title, selection: selection) {
-                    ForEach(Array(templates.enumerated()), id: \.offset) { item in
-                        Text("\(item.offset + 1): \(item.element)")
-                            .lineLimit(2)
-                            .tag(item.offset)
-                    }
+                ForEach(Array(templates.enumerated()), id: \.offset) { item in
+                    Text("\(item.offset + 1). \(item.element)")
+                        .font(.subheadline)
+                        .lineLimit(2)
                 }
-                .pickerStyle(.menu)
             }
         }
     }

@@ -63,8 +63,6 @@ final class TermEditorViewModel {
         var roleName: String
         var selectedGroupUID: String?
         var customGroupName: String
-        var srcTemplateIndex: Int
-        var tgtTemplateIndex: Int
 
         var isNew: Bool { existingID == nil }
     }
@@ -157,8 +155,15 @@ final class TermEditorViewModel {
         patternOption(for: id)?.sourceTemplates ?? []
     }
 
-    func targetTemplates(for id: String?) -> [String] {
-        patternOption(for: id)?.variantTemplates ?? [] // FIXME: Pattern 리팩토링 임시 처리
+    func targetTemplate(for id: String?) -> String? {
+        guard let template = patternOption(for: id)?.targetTemplate.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return nil
+        }
+        return template.isEmpty ? nil : template
+    }
+
+    func variantTemplates(for id: String?) -> [String] {
+        patternOption(for: id)?.variantTemplates ?? []
     }
 
     func addActivatorTerm(key: String) {
@@ -224,17 +229,13 @@ final class TermEditorViewModel {
                     selectedUID = nil
                     customName = existingGroups.first?.name ?? ""
                 }
-                let sourceTemplates = option?.sourceTemplates ?? []
-                let targetTemplates = option?.variantTemplates ?? [] // FIXME: Pattern 리팩토링 임시 처리
                 let role = comp.role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return ComponentDraft(
                     existingID: comp.persistentModelID,
                     patternID: patternID,
                     roleName: role,
                     selectedGroupUID: selectedUID,
-                    customGroupName: customName,
-                    srcTemplateIndex: 0, // FIXME: Pattern 리팩토링 임시 처리
-                    tgtTemplateIndex: 0 // FIXME: Pattern 리팩토링 임시 처리
+                    customGroupName: customName
                 )
             }
         } else if let pattern {

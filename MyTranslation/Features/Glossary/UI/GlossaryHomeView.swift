@@ -285,9 +285,9 @@ enum PreviewData {
             name: "person",
             roles: ["family", "given"],
             skipPairsIfSameTerm: false,
-            sourceTemplates: ["{L}{R}"],
-            targetTemplate: "{L} {R}",
-            variantTemplates: ["{L} {R}"],
+            sourceTemplates: ["{family}{given}", "{family} {given}"],
+            targetTemplate: "{family} {given}",
+            variantTemplates: ["{given} {family}"],
             isAppellation: false,
             preMask: false
         )

@@ -46,7 +46,7 @@ extension TermEditorViewModel {
         return patterns.map { pattern in
             let meta = metaMap[pattern.name]
             let displayName = meta?.displayName.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? pattern.name
-            let metaRoles = pattern.roles // FIXME: Pattern 리팩토링 임시 처리
+            let metaRoles = pattern.roles
             let roleOptions: [String] = metaRoles
             let grouping = meta?.grouping ?? .none
             let groupLabel = meta?.groupLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "그룹"

@@ -33,32 +33,28 @@ struct PatternEditorView: View {
                     }
                 }
                 Section("역할") {
-                    Text("역할을 사용하지 않는다면 두 필드를 모두 비워두세요. 하나만 입력하면 저장할 수 없습니다.")
+                    Text("세미콜론(;)으로 구분해 역할 슬롯을 입력하세요. 비워두면 역할 없는 패턴으로 처리됩니다.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    LabeledContent("왼쪽 역할") {
-                        TextField("예: family", text: $viewModel.leftRole)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    LabeledContent("오른쪽 역할") {
-                        TextField("예: given", text: $viewModel.rightRole)
+                    LabeledContent("역할 목록") {
+                        TextField("예: family;given", text: $viewModel.rolesText)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
                 Section("템플릿") {
-                    LabeledContent("원문 조인자") {
-                        TextField("세미콜론(;)으로 구분", text: $viewModel.sourceJoiners)
-                            .textFieldStyle(.roundedBorder)
-                    }
                     LabeledContent("원문 템플릿") {
                         TextField("세미콜론(;)으로 구분", text: $viewModel.sourceTemplates)
                             .textFieldStyle(.roundedBorder)
                     }
                     LabeledContent("번역 템플릿") {
-                        TextField("세미콜론(;)으로 구분", text: $viewModel.targetTemplates)
+                        TextField("단일 템플릿", text: $viewModel.targetTemplate)
                             .textFieldStyle(.roundedBorder)
                     }
-                    TemplatePreviewView(sourceTemplates: $viewModel.sourceTemplates, targetTemplates: $viewModel.targetTemplates)
+                    LabeledContent("번역 변형 템플릿") {
+                        TextField("세미콜론(;)으로 구분", text: $viewModel.variantTemplates)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    TemplatePreviewView(rolesText: $viewModel.rolesText, targetTemplate: $viewModel.targetTemplate, variantTemplates: $viewModel.variantTemplates)
                 }
                 Section("옵션") {
                     Toggle("동일 용어 페어 건너뛰기", isOn: $viewModel.skipPairsIfSameTerm)
@@ -119,8 +115,10 @@ struct PatternEditorView: View {
 }
 
 struct TemplatePreviewView: View {
+    @Binding var rolesText: String
     @Binding var sourceTemplates: String
-    @Binding var targetTemplates: String
+    @Binding var targetTemplate: String
+    @Binding var variantTemplates: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -134,12 +132,56 @@ struct TemplatePreviewView: View {
     }
 
     private func renderTargetPreview() -> String {
-        let target = targetTemplates.split(separator: ";").map { String($0) }.first ?? "{L}"
-        let sampleL = "홍"
-        let sampleR = "길동"
-        var output = target.replacingOccurrences(of: "{L}", with: sampleL)
-        output = output.replacingOccurrences(of: "{R}", with: sampleR)
-        return output
+        let roles = rolesText
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let target = targetTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let templates = [target] + variantTemplates
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard let first = templates.first(where: { !$0.isEmpty }) else { return "{role} 템플릿" }
+        return fill(template: first, roles: roles)
+    }
+
+    private func fill(template: String, roles: [String]) -> String {
+        let slots = extractSlots(from: template)
+        let samples = ["홍", "길동", "샘플"]
+        var rendered = template
+        for (idx, slot) in slots.enumerated() {
+            let replacement: String
+            if let roleIndex = roles.firstIndex(of: slot), roleIndex < samples.count {
+                replacement = samples[roleIndex]
+            } else {
+                replacement = samples[idx % samples.count]
+            }
+            rendered = rendered.replacingOccurrences(of: "{\(slot)}", with: replacement)
+        }
+        return rendered
+    }
+
+    private func extractSlots(from template: String) -> [String] {
+        var slots: [String] = []
+        var current = ""
+        var inside = false
+
+        for ch in template {
+            if ch == "{" {
+                inside = true
+                current = ""
+            } else if ch == "}" {
+                if inside, !current.isEmpty {
+                    slots.append(current)
+                }
+                inside = false
+            } else if inside {
+                current.append(ch)
+            }
+        }
+
+        return slots
     }
 }
 

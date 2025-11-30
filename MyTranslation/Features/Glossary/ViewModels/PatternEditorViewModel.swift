@@ -17,13 +17,12 @@ final class PatternEditorViewModel {
 
     var patternID: String
     var displayName: String
-    var leftRole: String
-    var rightRole: String
+    var rolesText: String
     var grouping: Glossary.SDModel.SDPatternGrouping
     var groupLabel: String
-    var sourceJoiners: String
     var sourceTemplates: String
-    var targetTemplates: String
+    var targetTemplate: String
+    var variantTemplates: String
     var skipPairsIfSameTerm: Bool
     var isAppellation: Bool
     var preMask: Bool
@@ -43,22 +42,12 @@ final class PatternEditorViewModel {
             originalID = pattern.name
             self.patternID = pattern.name
             displayName = meta?.displayName ?? pattern.name
-            // FIXME: Pattern 리팩토링 임시 처리
-            let metaRoles = pattern.roles
-            if metaRoles.count >= 2 {
-                leftRole = metaRoles[0]
-                rightRole = metaRoles[1]
-            } else {
-                // FIXME: Pattern 리팩토링 임시 처리
-                leftRole = /*pattern.leftRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? metaRoles.first ?? */""
-                rightRole = ""//pattern.rightRole?.trimmingCharacters(in: .whitespacesAndNewlines) ?? (metaRoles.dropFirst().first ?? "")
-            }
+            rolesText = pattern.roles.joined(separator: ";")
             grouping = meta?.grouping ?? .none
             groupLabel = meta?.groupLabel ?? "그룹"
-            // FIXME: Pattern 리팩토링 임시 처리
-            sourceJoiners = ""//pattern.sourceJoiners.joined(separator: ";")
             sourceTemplates = pattern.sourceTemplates.joined(separator: ";")
-            targetTemplates = pattern.targetTemplate//s.joined(separator: ";")
+            targetTemplate = pattern.targetTemplate
+            variantTemplates = pattern.variantTemplates.joined(separator: ";")
             skipPairsIfSameTerm = pattern.skipPairsIfSameTerm
             isAppellation = pattern.isAppellation
             preMask = pattern.preMask
@@ -69,13 +58,12 @@ final class PatternEditorViewModel {
             originalID = nil
             self.patternID = ""
             displayName = ""
-            leftRole = ""
-            rightRole = ""
+            rolesText = ""
             grouping = .none
             groupLabel = "그룹"
-            sourceJoiners = ""
             sourceTemplates = ""
-            targetTemplates = ""
+            targetTemplate = ""
+            variantTemplates = ""
             skipPairsIfSameTerm = true
             isAppellation = false
             preMask = false
@@ -104,20 +92,25 @@ final class PatternEditorViewModel {
             errorMessage = "ID를 입력하세요."
             return
         }
-        let trimmedTargetTemplates = targetTemplates.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard !trimmedTargetTemplates.isEmpty else {
+        let sourceTemplateArray = sourceTemplates.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !sourceTemplateArray.isEmpty else {
+            errorMessage = "원문 템플릿을 하나 이상 입력하세요."
+            return
+        }
+        let canonicalTarget = targetTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !canonicalTarget.isEmpty else {
             errorMessage = "타깃 템플릿을 입력하세요."
             return
         }
-        let sourceJoinerArray = sourceJoiners.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let sourceTemplateArray = sourceTemplates.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let trimmedLeftRole = leftRole.trimmingCharacters(in: .whitespaces)
-        let trimmedRightRole = rightRole.trimmingCharacters(in: .whitespaces)
-        if trimmedLeftRole.isEmpty != trimmedRightRole.isEmpty {
-            errorMessage = "좌우 역할은 모두 입력하거나 모두 비워야 합니다."
-            return
-        }
-        let roleList: [String] = trimmedLeftRole.isEmpty ? [] : [trimmedLeftRole, trimmedRightRole]
+        let roleList = rolesText
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let variantList = variantTemplates
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
         let pattern: Glossary.SDModel.SDPattern
         if let originalID,
            let existing = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPattern>(predicate: #Predicate { $0.name == originalID })).first {
@@ -135,12 +128,9 @@ final class PatternEditorViewModel {
         pattern.isAppellation = isAppellation
         pattern.preMask = preMask
         pattern.sourceTemplates = sourceTemplateArray
-        // FIXME: Pattern 리팩토링 임시 처리
-        pattern.targetTemplate = trimmedTargetTemplates[0]
+        pattern.targetTemplate = canonicalTarget
+        pattern.variantTemplates = variantList
         pattern.roles = roleList
-//        pattern.sourceJoiners = sourceJoinerArray
-//        pattern.leftRole = trimmedLeftRole.isEmpty ? nil : trimmedLeftRole
-//        pattern.rightRole = trimmedRightRole.isEmpty ? nil : trimmedRightRole
 
         let meta: Glossary.SDModel.SDPatternMeta
         if let existing = try context.fetch(FetchDescriptor<Glossary.SDModel.SDPatternMeta>(predicate: #Predicate { $0.name == trimmedID })).first {

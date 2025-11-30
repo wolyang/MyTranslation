@@ -10,9 +10,7 @@ extension TermEditorViewModel {
                 patternID: nil,
                 roleName: "",
                 selectedGroupUID: nil,
-                customGroupName: "",
-                srcTemplateIndex: 0,
-                tgtTemplateIndex: 0
+                customGroupName: ""
             )
         )
     }
@@ -31,8 +29,6 @@ extension TermEditorViewModel {
         componentDrafts[index].roleName = ""
         componentDrafts[index].selectedGroupUID = nil
         componentDrafts[index].customGroupName = ""
-        componentDrafts[index].srcTemplateIndex = 0
-        componentDrafts[index].tgtTemplateIndex = 0
     }
 
     func updateComponents(for term: Glossary.SDModel.SDTerm) throws {

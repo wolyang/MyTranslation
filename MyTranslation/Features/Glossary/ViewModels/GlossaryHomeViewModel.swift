@@ -14,8 +14,6 @@ final class GlossaryHomeViewModel {
         let groupLabel: String
         let isAppellation: Bool
         let preMask: Bool
-        let leftRole: String?
-        let rightRole: String?
         let pattern: Glossary.SDModel.SDPattern
         let meta: Glossary.SDModel.SDPatternMeta?
     }
@@ -25,8 +23,6 @@ final class GlossaryHomeViewModel {
             let pattern: String
             let role: String?
             let groups: [Group]
-            let srcTemplateIndex: Int?
-            let tgtTemplateIndex: Int?
 
             struct Group: Hashable { let uid: String; let name: String }
         }
@@ -47,16 +43,13 @@ final class GlossaryHomeViewModel {
             guard let comp = components.first(where: { $0.pattern == pattern.id }) else {
                 return target
             }
-            let L = rawTerm
-            // 패턴이 이 Term를 어떤 역할로 참조하는지에 따라 템플릿 렌더링을 다르게 처리한다.
-            let tplIndex = comp.tgtTemplateIndex ?? 0
-            // FIXME: Pattern 리팩토링 임시 처리
             let template = pattern.pattern.targetTemplate
-            if pattern.pattern.roles.count == 1 {
-                return Glossary.Util.renderTarget(template, L: L, R: nil)
-            }
-            // 그룹 내 다른 Term 탐색은 외부에서 처리되므로 우선 자기 자신만 반영
-            return Glossary.Util.renderTarget(template, L: L, R: nil)
+            let roleToFill = comp.role ?? pattern.roles.first
+            guard let roleToFill else { return target }
+
+            // 단일 Term가 맡은 role 자리에만 target을 채워 넣고, 나머지는 플레이스홀더 그대로 둔다.
+            let filled = template.replacingOccurrences(of: "{\(roleToFill)}", with: rawTerm.target)
+            return filled
         }
     }
 
@@ -190,7 +183,6 @@ final class GlossaryHomeViewModel {
             clone.sources.append(dup)
         }
         for comp in term.components {
-            // FIXME: Pattern 리팩토링 임시 처리
             let dup = Glossary.SDModel.SDComponent(pattern: comp.pattern, role: comp.role, term: clone)
             context.insert(dup)
             clone.components.append(dup)
@@ -228,13 +220,11 @@ final class GlossaryHomeViewModel {
                 id: pattern.name,
                 name: pattern.name,
                 displayName: meta?.displayName ?? pattern.name,
-                roles: pattern.roles,// FIXME: Pattern 리팩토링 임시 처리
+                roles: pattern.roles,
                 grouping: meta?.grouping ?? .none,
                 groupLabel: meta?.groupLabel ?? "그룹",
                 isAppellation: pattern.isAppellation,
                 preMask: pattern.preMask,
-                leftRole: pattern.roles[safe: 0],// FIXME: Pattern 리팩토링 임시 처리
-                rightRole: pattern.roles[safe:1],// FIXME: Pattern 리팩토링 임시 처리
                 pattern: pattern,
                 meta: meta
             )
@@ -249,9 +239,7 @@ final class GlossaryHomeViewModel {
                 return .init(
                     pattern: comp.pattern,
                     role: comp.role,
-                    groups: comp.groupLinks.map({ .init(uid: $0.group.uid, name: groupLookup[$0.group.uid]?.name ?? "") }),
-                    srcTemplateIndex: 0,// FIXME: Pattern 리팩토링 임시 처리
-                    tgtTemplateIndex: 0// FIXME: Pattern 리팩토링 임시 처리
+                    groups: comp.groupLinks.map({ .init(uid: $0.group.uid, name: groupLookup[$0.group.uid]?.name ?? "") })
                 )
             }
             let tags = term.termTagLinks.compactMap { $0.tag.name }
