@@ -62,30 +62,29 @@ extension Glossary {
         
         // MARK: - placeholder 추출 (slot 이름)
 
-                /// 예: "{name_1}{name_2}" -> ["name_1", "name_2"]
-                /// (여기서는 slot = 템플릿에 적힌 placeholder 이름을 그대로 사용)
-                static func extractSlots(from template: String) -> [String] {
-                    var slots: [String] = []
-                    var current = ""
-                    var inside = false
+        /// 예: "{name_1}{name_2}" -> ["name_1", "name_2"]
+        /// (여기서는 slot = 템플릿에 적힌 placeholder 이름을 그대로 사용)
+        static func extractSlots(from template: String) -> [String] {
+            var slots: [String] = []
+            var current = ""
+            var inside = false
 
-                    for ch in template {
-                        if ch == "{" {
-                            inside = true
-                            current = ""
-                        } else if ch == "}" {
-                            if inside, !current.isEmpty {
-                                slots.append(current)
-                            }
-                            inside = false
-                        } else if inside {
-                            current.append(ch)
-                        }
+            for ch in template {
+                if ch == "{" {
+                    inside = true
+                    current = ""
+                } else if ch == "}" {
+                    if inside, !current.isEmpty {
+                        slots.append(current)
                     }
-
-                    // 같은 slot이 여러 번 나오더라도 한 번만 있으면 충분
-                    return Array(Set(slots))
+                    inside = false
+                } else if inside {
+                    current.append(ch)
                 }
+            }
+
+            return slots
+        }
 
         // MARK: - Target 렌더링
 
